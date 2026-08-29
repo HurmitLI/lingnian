@@ -100,6 +100,27 @@ export type ElderMemoryContext = {
   }>;
 };
 
+export type Reminder = {
+  id: string;
+  elder_id: string;
+  topic_key: string;
+  remind_at: string;
+  status: "scheduled" | "due" | "shown_once" | "dismissed" | "paused_by_preference";
+  show_count: number;
+};
+
+export type MemoryBook = {
+  id: string;
+  elder_id: string;
+  version: number;
+  title: string;
+  content_sha256: string;
+  story_manifest: Array<{ story_id: string; life_stage: string }>;
+  created_by: string;
+  status: string;
+  created_at: string;
+};
+
 export type SessionDetail = {
   session: MemorySession;
   media_assets: MediaAsset[];

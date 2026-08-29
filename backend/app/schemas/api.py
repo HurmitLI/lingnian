@@ -211,6 +211,49 @@ class ElderMemoryContext(BaseModel):
     confirmed_facts: list[MemoryFactRead]
 
 
+class ReminderCreate(BaseModel):
+    topic_key: str = Field(min_length=1, max_length=80)
+    remind_at: datetime
+    idempotency_key: str = Field(min_length=1, max_length=100)
+
+    @field_validator("remind_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("提醒时间必须包含时区。")
+        return value
+
+
+class ReminderRead(ORMModel):
+    id: str
+    elder_id: str
+    topic_key: str
+    remind_at: datetime
+    status: str
+    idempotency_key: str
+    last_shown_at: datetime | None
+    show_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class MemoryBookCreate(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    created_by: str = Field(min_length=1, max_length=80)
+
+
+class MemoryBookRead(ORMModel):
+    id: str
+    elder_id: str
+    version: int
+    title: str
+    content_sha256: str
+    story_manifest: list
+    created_by: str
+    status: str
+    created_at: datetime
+
+
 class ModelConsentCreate(BaseModel):
     actor_label: str = Field(min_length=1, max_length=80)
     purpose: str = Field(default="story_organization", pattern="^story_organization$")

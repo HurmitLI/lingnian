@@ -80,6 +80,12 @@ class ElderProfile(TimestampMixin, Base):
     memory_facts: Mapped[list[MemoryFact]] = relationship(
         back_populates="elder", cascade="all, delete-orphan"
     )
+    reminders: Mapped[list[Reminder]] = relationship(
+        back_populates="elder", cascade="all, delete-orphan"
+    )
+    memory_books: Mapped[list[MemoryBook]] = relationship(
+        back_populates="elder", cascade="all, delete-orphan"
+    )
 
 
 class MemorySession(TimestampMixin, Base):
@@ -342,3 +348,41 @@ class MemoryFact(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(24), default="active")
 
     elder: Mapped[ElderProfile] = relationship(back_populates="memory_facts")
+
+
+class Reminder(TimestampMixin, Base):
+    __tablename__ = "reminders"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    elder_id: Mapped[str] = mapped_column(
+        ForeignKey("elder_profiles.id", ondelete="CASCADE")
+    )
+    topic_key: Mapped[str] = mapped_column(String(80))
+    remind_at: Mapped[datetime] = mapped_column()
+    status: Mapped[str] = mapped_column(String(24), default="scheduled")
+    idempotency_key: Mapped[str] = mapped_column(String(100), unique=True)
+    last_shown_at: Mapped[datetime | None] = mapped_column()
+    show_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    elder: Mapped[ElderProfile] = relationship(back_populates="reminders")
+
+
+class MemoryBook(TimestampMixin, Base):
+    __tablename__ = "memory_books"
+    __table_args__ = (
+        UniqueConstraint("elder_id", "version", name="uq_elder_memory_book_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    elder_id: Mapped[str] = mapped_column(
+        ForeignKey("elder_profiles.id", ondelete="CASCADE")
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(200))
+    markdown_content: Mapped[str] = mapped_column(Text)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    story_manifest: Mapped[list] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(24), default="ready")
+
+    elder: Mapped[ElderProfile] = relationship(back_populates="memory_books")

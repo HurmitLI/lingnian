@@ -113,6 +113,16 @@ blockquote { margin: 24px 0; padding: 8px 0 8px 22px; border-left: 3px solid var
 .review-warning { border-left: 3px solid var(--gold); background: #fff4d6; padding: 12px 15px; margin-top: 14px; border-radius: 0 10px 10px 0; }
 .review-warning p { margin: 6px 0 0; color: #6b5526; }
 
+.due-reminder { display: flex; justify-content: space-between; align-items: center; gap: 18px; border: 1px solid #d2b46c; border-radius: 12px; background: #fff6dc; padding: 16px; margin-bottom: 18px; }
+.due-reminder p { color: #6b5526; margin: 6px 0 0; }
+.archive-tools-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.local-reminder-form, .memory-book-panel { display: grid; align-content: start; gap: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fbf8f0; padding: 18px; }
+.local-reminder-form h3, .memory-book-panel h3 { margin: 0; font-size: 20px; }
+.local-reminder-form .button, .memory-book-panel > .button { justify-self: start; }
+.book-list { display: grid; gap: 8px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.book-list > div { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.book-list .button { min-height: 36px; padding: 6px 0; }
+
 .timeline-list { position: relative; margin-left: 8px; border-left: 1px solid var(--line); padding-left: 28px; }
 .timeline-list article { position: relative; padding: 0 0 34px; }
 .timeline-list article::before { content: ""; position: absolute; left: -34px; top: 5px; width: 11px; height: 11px; border-radius: 50%; background: var(--red); border: 3px solid var(--paper); }
@@ -125,11 +135,12 @@ blockquote { margin: 24px 0; padding: 8px 0 8px 22px; border-left: 3px solid var
   main { width: min(100% - 22px, 1020px); padding-top: 24px; }
   .hero { align-items: flex-start; flex-direction: column; }
   .privacy-badge { align-self: flex-start; }
-  .form-grid, .evidence-grid, .recovery-form { grid-template-columns: 1fr; }
+  .form-grid, .evidence-grid, .recovery-form, .archive-tools-grid { grid-template-columns: 1fr; }
   .security-status { grid-template-columns: 1fr; }
   .stage-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .file-line { align-items: flex-start; flex-direction: column; }
   .topic-list label { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .due-reminder, .book-list > div { align-items: flex-start; flex-direction: column; }
 }
 
 @media (max-width: 410px) {

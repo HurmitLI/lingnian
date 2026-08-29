@@ -3,12 +3,14 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import SecurityPanel from "@/app/security-panel";
-import { api, mediaUrl } from "@/lib/api";
+import { api, apiDownload, mediaUrl } from "@/lib/api";
 import type {
   ElderProfile,
   ElderMemoryContext,
   Health,
   ModelConsent,
+  MemoryBook,
+  Reminder,
   SessionDetail,
   TimelineItem,
   WorkflowTask,
@@ -38,6 +40,8 @@ export default function Home() {
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [memoryContext, setMemoryContext] = useState<ElderMemoryContext | null>(null);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [memoryBooks, setMemoryBooks] = useState<MemoryBook[]>([]);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioPreview, setAudioPreview] = useState<string | null>(null);
   const [correctedText, setCorrectedText] = useState("");
@@ -87,6 +91,16 @@ export default function Home() {
       `/api/v1/elder-profiles/${profileId}/memory-context`,
     );
     setMemoryContext(result);
+  }, []);
+
+  const loadArchiveTools = useCallback(async (profileId: string) => {
+    if (!profileId) return;
+    const [reminderResult, bookResult] = await Promise.all([
+      api<Reminder[]>(`/api/v1/elder-profiles/${profileId}/reminders`),
+      api<MemoryBook[]>(`/api/v1/elder-profiles/${profileId}/memory-books`),
+    ]);
+    setReminders(reminderResult);
+    setMemoryBooks(bookResult);
   }, []);
 
   const loadSession = useCallback(async (sessionId: string) => {
@@ -149,13 +163,17 @@ export default function Home() {
     let cancelled = false;
     async function syncTimeline() {
       try {
-        const [timelineResult, contextResult] = await Promise.all([
+        const [timelineResult, contextResult, reminderResult, bookResult] = await Promise.all([
           api<TimelineItem[]>(`/api/v1/elder-profiles/${selectedProfileId}/timeline`),
           api<ElderMemoryContext>(`/api/v1/elder-profiles/${selectedProfileId}/memory-context`),
+          api<Reminder[]>(`/api/v1/elder-profiles/${selectedProfileId}/reminders`),
+          api<MemoryBook[]>(`/api/v1/elder-profiles/${selectedProfileId}/memory-books`),
         ]);
         if (!cancelled) {
           setTimeline(timelineResult);
           setMemoryContext(contextResult);
+          setReminders(reminderResult);
+          setMemoryBooks(bookResult);
         }
       } catch (value) {
         if (!cancelled) showError(value);
@@ -457,7 +475,90 @@ export default function Home() {
         },
       );
       await loadMemoryContext(selectedProfile.id);
+      await loadArchiveTools(selectedProfile.id);
       setNotice(preference === "avoid" ? `以后不会再主动询问“${topicKey}”。` : `“${topicKey}”的话题偏好已更新。`);
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createLocalReminder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedProfile) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const localTime = String(form.get("remindAt") ?? "");
+    if (!localTime) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/v1/elder-profiles/${selectedProfile.id}/reminders`, {
+        method: "POST",
+        body: JSON.stringify({
+          topic_key: form.get("topicKey"),
+          remind_at: new Date(localTime).toISOString(),
+          idempotency_key: crypto.randomUUID(),
+        }),
+      });
+      await loadArchiveTools(selectedProfile.id);
+      formElement.reset();
+      setNotice("本机提醒已保存；不会发送微信、短信或系统通知。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function acknowledgeReminder(reminderId: string) {
+    if (!selectedProfile) return;
+    setBusy(true);
+    try {
+      await api(`/api/v1/reminders/${reminderId}/shown`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      await loadArchiveTools(selectedProfile.id);
+      setNotice("这条提醒已经温和显示一次，不会反复打扰。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function generateMemoryBook() {
+    if (!selectedProfile) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/v1/elder-profiles/${selectedProfile.id}/memory-books`, {
+        method: "POST",
+        body: JSON.stringify({ created_by: "本机家庭管理员" }),
+      });
+      await loadArchiveTools(selectedProfile.id);
+      setNotice("新的文字回忆录版本已生成，只包含人工确认的故事。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadMemoryBook(book: MemoryBook) {
+    setBusy(true);
+    setError("");
+    try {
+      const download = await apiDownload(`/api/v1/memory-books/${book.id}/markdown`);
+      const url = URL.createObjectURL(download.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = download.filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice(`回忆录第 ${book.version} 版已下载。`);
     } catch (value) {
       showError(value);
     } finally {
@@ -471,6 +572,7 @@ export default function Home() {
     memoryContext?.preferences.find((item) => item.topic_key === stage)?.preference ?? "welcome";
   const stageCoverage = (stage: string) =>
     memoryContext?.coverage.find((item) => item.life_stage === stage);
+  const dueReminders = reminders.filter((item) => item.status === "due");
 
   return (
     <main>
@@ -614,8 +716,39 @@ export default function Home() {
       )}
 
       {selectedProfile && (
+        <section className="card archive-tools-card">
+          <div className="section-heading"><span>04</span><div><h2>本机提醒与文字回忆录</h2><p>提醒只在念念页面显示；回忆录只收录人工确认的故事。</p></div></div>
+          {dueReminders.map((item) => (
+            <div className="due-reminder" role="status" key={item.id}>
+              <div><strong>可以温和问一次“{item.topic_key}”了</strong><p>这是你之前设定的本机提醒，不会自动联系任何人。</p></div>
+              <button className="button secondary" disabled={busy} onClick={() => acknowledgeReminder(item.id)}>我知道了，不再重复提醒</button>
+            </div>
+          ))}
+          <div className="archive-tools-grid">
+            <form className="local-reminder-form" onSubmit={createLocalReminder}>
+              <h3>添加应用内提醒</h3>
+              <label className="field"><span>话题</span><select name="topicKey">{LIFE_STAGES.map((stage) => <option key={stage} value={stage} disabled={topicPreference(stage) === "avoid"}>{stage}{topicPreference(stage) === "avoid" ? "（不要再问）" : ""}</option>)}</select></label>
+              <label className="field"><span>提醒时间</span><input name="remindAt" type="datetime-local" required /></label>
+              <button className="button secondary" disabled={busy}>保存本机提醒</button>
+              <p className="hint">不使用微信、短信、邮件或 macOS 系统通知。</p>
+            </form>
+            <div className="memory-book-panel">
+              <h3>文字回忆录</h3>
+              <p className="hint">每次生成一个新版本，旧版本不会被覆盖。Markdown 文件可长期恢复和迁移。</p>
+              <button className="button primary" disabled={busy || !memoryContext?.confirmed_facts.length} onClick={generateMemoryBook}>生成新版本</button>
+              <div className="book-list">
+                {memoryBooks.length === 0 ? <p className="empty">还没有回忆录版本。</p> : memoryBooks.map((book) => (
+                  <div key={book.id}><span>第 {book.version} 版 · {book.story_manifest.length} 篇故事</span><button className="button quiet" disabled={busy} onClick={() => downloadMemoryBook(book)}>下载 Markdown</button></div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {selectedProfile && (
         <section className="card timeline-card">
-          <div className="section-heading"><span>04</span><div><h2>{selectedProfile.preferred_name}的时间线</h2><p>这里只显示经过人工确认的故事。</p></div></div>
+          <div className="section-heading"><span>05</span><div><h2>{selectedProfile.preferred_name}的时间线</h2><p>这里只显示经过人工确认的故事。</p></div></div>
           {timeline.length === 0 ? <p className="empty">还没有已确认的故事。</p> : <div className="timeline-list">{timeline.map((item) => <article key={item.story.id}><time>{new Date(item.story.confirmed_at).toLocaleDateString("zh-CN")}</time><h3>{item.story.title}</h3><p>{item.story.body}</p>{mediaUrl(item.audio_url) && <audio controls src={mediaUrl(item.audio_url) ?? undefined} />}</article>)}</div>}
         </section>
       )}

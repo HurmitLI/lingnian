@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
@@ -17,12 +18,14 @@ from app.models import (
     ElderProfile,
     FamilyArchive,
     MediaAsset,
+    MemoryBook,
     MemoryFact,
     MemorySession,
     ModelConsentEvent,
     Person,
     PersonRelationship,
     QuestionPrompt,
+    Reminder,
     Story,
     StoryDraft,
     TimelineEvent,
@@ -47,11 +50,15 @@ from app.schemas.api import (
     ModelConsentRead,
     OrganizationTaskCreate,
     MemoryFactRead,
+    MemoryBookCreate,
+    MemoryBookRead,
     PersonCreate,
     PersonRead,
     PersonRelationshipCreate,
     PersonRelationshipRead,
     QuestionPromptRead,
+    ReminderCreate,
+    ReminderRead,
     RecoveryPackageCreate,
     SecurityInitializeRequest,
     SessionDetail,
@@ -72,7 +79,12 @@ from app.services.archive.assets import (
     store_audio_upload,
     verify_asset_integrity,
 )
-from app.services.memory import ensure_question_bank, select_question
+from app.services.memory import (
+    ensure_question_bank,
+    markdown_sha256,
+    render_memory_book,
+    select_question,
+)
 from app.services.privacy import (
     STORY_ORGANIZATION_PURPOSE,
     corrected_text_sha256,
@@ -122,6 +134,32 @@ def media_read(asset: MediaAsset) -> MediaAssetRead:
         status=asset.status,
         is_original=asset.is_original,
         content_url=f"/api/v1/media-assets/{asset.id}/content",
+    )
+
+
+def reminder_read(reminder: Reminder) -> ReminderRead:
+    def as_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+    display_status = reminder.status
+    if (
+        reminder.status == "scheduled"
+        and reminder.remind_at <= datetime.now(UTC).replace(tzinfo=None)
+    ):
+        display_status = "due"
+    return ReminderRead(
+        id=reminder.id,
+        elder_id=reminder.elder_id,
+        topic_key=reminder.topic_key,
+        remind_at=as_utc(reminder.remind_at),
+        status=display_status,
+        idempotency_key=reminder.idempotency_key,
+        last_shown_at=as_utc(reminder.last_shown_at),
+        show_count=reminder.show_count,
+        created_at=as_utc(reminder.created_at),
+        updated_at=as_utc(reminder.updated_at),
     )
 
 
@@ -451,6 +489,16 @@ def upsert_topic_preference(
             **values,
         )
         db.add(preference)
+    if payload.preference == "avoid":
+        reminders = db.scalars(
+            select(Reminder).where(
+                Reminder.elder_id == profile_id,
+                Reminder.topic_key == normalized_topic,
+                Reminder.status.in_(["scheduled", "due"]),
+            )
+        ).all()
+        for reminder in reminders:
+            reminder.status = "paused_by_preference"
     db.commit()
     db.refresh(preference)
     return preference
@@ -522,6 +570,196 @@ def get_elder_memory_context(
             for item in profile.memory_facts
             if item.status == "active"
         ],
+    )
+
+
+@router.post(
+    "/elder-profiles/{profile_id}/reminders",
+    response_model=ReminderRead,
+    status_code=201,
+)
+def create_reminder(
+    profile_id: str,
+    payload: ReminderCreate,
+    db: Session = Depends(get_db),
+) -> ReminderRead:
+    require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    existing = db.scalar(
+        select(Reminder).where(Reminder.idempotency_key == payload.idempotency_key)
+    )
+    if existing:
+        if existing.elder_id != profile_id:
+            raise DomainError(
+                "REMINDER_IDEMPOTENCY_CONFLICT", "这个提醒请求标识已经被其他档案使用。", 409
+            )
+        return reminder_read(existing)
+    preference = db.scalar(
+        select(TopicPreference).where(
+            TopicPreference.elder_id == profile_id,
+            TopicPreference.topic_key == payload.topic_key.strip(),
+        )
+    )
+    if preference and preference.preference == "avoid":
+        raise DomainError(
+            "REMINDER_BLOCKED_BY_PREFERENCE",
+            "讲述者已经选择不要再问这个话题，不能创建提醒。",
+            409,
+        )
+    remind_at = payload.remind_at.astimezone(UTC).replace(tzinfo=None)
+    reminder = Reminder(
+        elder_id=profile_id,
+        topic_key=payload.topic_key.strip(),
+        remind_at=remind_at,
+        status="scheduled",
+        idempotency_key=payload.idempotency_key,
+        show_count=0,
+    )
+    db.add(reminder)
+    db.commit()
+    db.refresh(reminder)
+    return reminder_read(reminder)
+
+
+@router.get(
+    "/elder-profiles/{profile_id}/reminders", response_model=list[ReminderRead]
+)
+def list_reminders(
+    profile_id: str, db: Session = Depends(get_db)
+) -> list[ReminderRead]:
+    require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    reminders = db.scalars(
+        select(Reminder)
+        .where(Reminder.elder_id == profile_id)
+        .order_by(Reminder.remind_at.desc())
+    ).all()
+    return [reminder_read(item) for item in reminders]
+
+
+@router.get(
+    "/elder-profiles/{profile_id}/reminders/due",
+    response_model=list[ReminderRead],
+)
+def list_due_reminders(
+    profile_id: str, db: Session = Depends(get_db)
+) -> list[ReminderRead]:
+    require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    current_utc = datetime.now(UTC).replace(tzinfo=None)
+    reminders = db.scalars(
+        select(Reminder)
+        .where(
+            Reminder.elder_id == profile_id,
+            Reminder.status == "scheduled",
+            Reminder.remind_at <= current_utc,
+        )
+        .order_by(Reminder.remind_at)
+    ).all()
+    return [reminder_read(item) for item in reminders]
+
+
+@router.post("/reminders/{reminder_id}/shown", response_model=ReminderRead)
+def mark_reminder_shown(
+    reminder_id: str, db: Session = Depends(get_db)
+) -> ReminderRead:
+    reminder = require(
+        db, Reminder, reminder_id, "REMINDER_NOT_FOUND", "没有找到这个本机提醒。"
+    )
+    if reminder.status == "scheduled":
+        reminder.status = "shown_once"
+        reminder.show_count += 1
+        reminder.last_shown_at = datetime.now(UTC).replace(tzinfo=None)
+        db.commit()
+        db.refresh(reminder)
+    return reminder_read(reminder)
+
+
+@router.post("/reminders/{reminder_id}/dismiss", response_model=ReminderRead)
+def dismiss_reminder(
+    reminder_id: str, db: Session = Depends(get_db)
+) -> ReminderRead:
+    reminder = require(
+        db, Reminder, reminder_id, "REMINDER_NOT_FOUND", "没有找到这个本机提醒。"
+    )
+    reminder.status = "dismissed"
+    db.commit()
+    db.refresh(reminder)
+    return reminder_read(reminder)
+
+
+@router.post(
+    "/elder-profiles/{profile_id}/memory-books",
+    response_model=MemoryBookRead,
+    status_code=201,
+)
+def create_memory_book(
+    profile_id: str,
+    payload: MemoryBookCreate,
+    db: Session = Depends(get_db),
+) -> MemoryBook:
+    profile = require(
+        db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。"
+    )
+    stories = sorted(profile.stories, key=lambda item: item.confirmed_at)
+    if not stories:
+        raise DomainError(
+            "NO_CONFIRMED_STORIES", "至少需要一篇人工确认的故事才能生成回忆录。", 409
+        )
+    version = (
+        db.scalar(
+            select(func.max(MemoryBook.version)).where(MemoryBook.elder_id == profile.id)
+        )
+        or 0
+    ) + 1
+    title = payload.title.strip() if payload.title else f"{profile.preferred_name}的家庭回忆录"
+    markdown_content, manifest = render_memory_book(profile, stories, title=title)
+    book = MemoryBook(
+        elder_id=profile.id,
+        version=version,
+        title=title,
+        markdown_content=markdown_content,
+        content_sha256=markdown_sha256(markdown_content),
+        story_manifest=manifest,
+        created_by=payload.created_by.strip(),
+        status="ready",
+    )
+    db.add(book)
+    db.commit()
+    db.refresh(book)
+    return book
+
+
+@router.get(
+    "/elder-profiles/{profile_id}/memory-books", response_model=list[MemoryBookRead]
+)
+def list_memory_books(
+    profile_id: str, db: Session = Depends(get_db)
+) -> list[MemoryBook]:
+    require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    return list(
+        db.scalars(
+            select(MemoryBook)
+            .where(MemoryBook.elder_id == profile_id)
+            .order_by(MemoryBook.version.desc())
+        ).all()
+    )
+
+
+@router.get("/memory-books/{book_id}/markdown")
+def download_memory_book_markdown(
+    book_id: str, db: Session = Depends(get_db)
+) -> Response:
+    book = require(
+        db, MemoryBook, book_id, "MEMORY_BOOK_NOT_FOUND", "没有找到这个回忆录版本。"
+    )
+    if markdown_sha256(book.markdown_content) != book.content_sha256:
+        raise DomainError(
+            "MEMORY_BOOK_INTEGRITY_FAILED", "回忆录文件完整性校验失败，已阻止下载。", 409
+        )
+    return Response(
+        content=book.markdown_content.encode("utf-8"),
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="niannian-memory-book-v{book.version}.md"'
+        },
     )
 
 
