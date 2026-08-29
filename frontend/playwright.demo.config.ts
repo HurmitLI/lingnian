@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const publicBaseUrl = process.env.DEMO_E2E_BASE_URL;
+
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "demo-access.spec.ts",
@@ -9,7 +11,7 @@ export default defineConfig({
   retries: 0,
   reporter: [["list"]],
   use: {
-    baseURL: "http://127.0.0.1:3022",
+    baseURL: publicBaseUrl ?? "http://127.0.0.1:3022",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
@@ -26,7 +28,7 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
+  webServer: publicBaseUrl ? undefined : {
     command: "../scripts/start_demo_e2e.sh",
     url: "http://127.0.0.1:3022/demo-login",
     reuseExistingServer: false,

@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 -p 3011",
     "build": "next build",
+    "build:vefaas": "./scripts/prepare_vefaas_output.sh",
     "start": "next start --hostname 127.0.0.1 -p 3011",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

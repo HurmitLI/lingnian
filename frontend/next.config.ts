@@ -7,6 +7,7 @@ const phoneDevOrigins = (process.env.NIANNIAN_ALLOWED_DEV_ORIGINS ?? "")
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1", ...phoneDevOrigins],
+  output: "standalone",
   reactStrictMode: true,
   async rewrites() {
     const backendUrl = process.env.NIANNIAN_BACKEND_URL ?? "http://127.0.0.1:8011";
