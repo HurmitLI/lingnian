@@ -201,6 +201,9 @@ class WorkflowTask(TimestampMixin, Base):
     attempt: Mapped[int] = mapped_column(Integer, default=1)
     error_code: Mapped[str | None] = mapped_column(String(80))
     output_ref: Mapped[str | None] = mapped_column(String(36))
+    model_consent_event_id: Mapped[str | None] = mapped_column(
+        ForeignKey("model_consent_events.id", ondelete="RESTRICT")
+    )
 
     session: Mapped[MemorySession] = relationship(back_populates="tasks")
 

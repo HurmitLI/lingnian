@@ -17,6 +17,7 @@ from app.models import (
     FamilyArchive,
     MediaAsset,
     MemorySession,
+    ModelConsentEvent,
     Person,
     Story,
     StoryDraft,
@@ -36,12 +37,16 @@ from app.schemas.api import (
     MediaAssetRead,
     MemorySessionCreate,
     MemorySessionRead,
+    ModelConsentCreate,
+    ModelConsentRead,
+    OrganizationTaskCreate,
     RecoveryPackageCreate,
     SecurityInitializeRequest,
     SessionDetail,
     StoryDraftRead,
     StoryRead,
     TaskRead,
+    TaskRetryRequest,
     TimelineEventRead,
     TimelineItem,
     TranscriptRead,
@@ -52,7 +57,13 @@ from app.services.archive.assets import (
     store_audio_upload,
     verify_asset_integrity,
 )
-from app.services.llm import get_llm_provider
+from app.services.llm import generate_local_question, get_llm_provider
+from app.services.privacy import (
+    STORY_ORGANIZATION_PURPOSE,
+    corrected_text_sha256,
+    model_consent_error,
+    requires_explicit_model_consent,
+)
 from app.services.security import build_recovery_package, get_family_key_manager, get_secret_store
 from app.services.security.key_store import SecretStore, SecretStoreError
 from app.services.workflow.state import transition
@@ -74,6 +85,7 @@ def elder_read(profile: ElderProfile) -> ElderProfileRead:
         id=profile.id,
         person_id=profile.person_id,
         family_id=profile.person.family_id,
+        data_classification=profile.person.family.data_classification,
         display_name=profile.person.display_name,
         preferred_name=profile.preferred_name,
         birth_year=profile.birth_year,
@@ -110,6 +122,12 @@ def health() -> HealthRead:
 
 @router.post("/families", response_model=FamilyRead, status_code=201)
 def create_family(payload: FamilyCreate, db: Session = Depends(get_db)) -> FamilyArchive:
+    if payload.data_classification != "test":
+        raise DomainError(
+            "REAL_DATA_MODE_LOCKED",
+            "真实资料模式要在完成本机加密与恢复演练后单独开启；当前只能创建虚构测试档案。",
+            409,
+        )
     if payload.idempotency_key:
         existing = db.scalar(
             select(FamilyArchive).where(
@@ -292,9 +310,18 @@ def create_memory_session(
         db, ElderProfile, payload.elder_id, "ELDER_NOT_FOUND", "没有找到这位老人的测试档案。"
     )
     try:
-        question = get_llm_provider().generate_question(
-            elder.preferred_name, payload.life_stage.strip()
-        )
+        family = elder.person.family
+        settings = get_settings()
+        if requires_explicit_model_consent(
+            settings.llm_provider, family.data_classification
+        ):
+            question = generate_local_question(
+                elder.preferred_name, payload.life_stage.strip()
+            )
+        else:
+            question = get_llm_provider().generate_question(
+                elder.preferred_name, payload.life_stage.strip()
+            )
     except Exception as exc:
         raise DomainError("QUESTION_GENERATION_FAILED", "暂时没能生成回忆问题，请重试。", 503) from exc
     session = MemorySession(
@@ -396,7 +423,12 @@ async def upload_audio(
 
 
 def create_task(
-    db: Session, session: MemorySession, task_type: str, target_status: str
+    db: Session,
+    session: MemorySession,
+    task_type: str,
+    target_status: str,
+    *,
+    model_consent_event_id: str | None = None,
 ) -> WorkflowTask:
     max_attempt = db.scalar(
         select(func.max(WorkflowTask.attempt)).where(
@@ -410,12 +442,40 @@ def create_task(
         attempt=(max_attempt or 0) + 1,
         status="queued",
         progress=0,
+        model_consent_event_id=model_consent_event_id,
     )
     session.status = target_status
     db.add(task)
     db.commit()
     db.refresh(task)
     return task
+
+
+def reserve_model_consent(
+    db: Session, session: MemorySession, consent_event_id: str | None
+) -> str | None:
+    family = session.elder.person.family
+    if not requires_explicit_model_consent(
+        get_settings().llm_provider, family.data_classification
+    ):
+        return None
+    consent = db.get(ModelConsentEvent, consent_event_id) if consent_event_id else None
+    error_code = model_consent_error(
+        consent,
+        family_id=family.id,
+        session_id=session.id,
+        data_classification=family.data_classification,
+        corrected_text=session.transcript.corrected_text if session.transcript else "",
+        require_consumed=False,
+    )
+    if error_code:
+        raise DomainError(
+            error_code,
+            "真实校对稿不会默认发送给千问。请先明确授权本次发送，再开始整理。",
+            409,
+        )
+    consent.used_at = now_utc()
+    return consent.id
 
 
 @router.post(
@@ -447,6 +507,7 @@ def get_task(task_id: str, db: Session = Depends(get_db)) -> WorkflowTask:
 def retry_task(
     task_id: str,
     background_tasks: BackgroundTasks,
+    payload: TaskRetryRequest | None = None,
     db: Session = Depends(get_db),
 ) -> WorkflowTask:
     old_task = require(db, WorkflowTask, task_id, "TASK_NOT_FOUND", "没有找到这个处理任务。")
@@ -458,7 +519,18 @@ def retry_task(
         db, MemorySession, old_task.session_id, "SESSION_NOT_FOUND", "没有找到这次回忆记录。"
     )
     target = "AUDIO_UPLOADED" if old_task.task_type == "transcription" else "TRANSCRIPT_REVIEW"
-    new_task = create_task(db, session, old_task.task_type, target)
+    consent_event_id = None
+    if old_task.task_type == "organization":
+        consent_event_id = reserve_model_consent(
+            db, session, payload.consent_event_id if payload else None
+        )
+    new_task = create_task(
+        db,
+        session,
+        old_task.task_type,
+        target,
+        model_consent_event_id=consent_event_id,
+    )
     worker = process_transcription if old_task.task_type == "transcription" else process_organization
     background_tasks.add_task(worker, new_task.id)
     return new_task
@@ -476,6 +548,15 @@ def update_transcript(
     session = transcript.session
     if session.status not in {"TRANSCRIPT_REVIEW", "DRAFT_REVIEW"}:
         raise DomainError("TRANSCRIPT_LOCKED", "当前步骤不能修改转写。", 409)
+    unused_consents = db.scalars(
+        select(ModelConsentEvent).where(
+            ModelConsentEvent.session_id == session.id,
+            ModelConsentEvent.used_at.is_(None),
+            ModelConsentEvent.revoked_at.is_(None),
+        )
+    ).all()
+    for consent in unused_consents:
+        consent.revoked_at = now_utc()
     transcript.corrected_text = payload.corrected_text.strip()
     transcript.version += 1
     if session.status == "DRAFT_REVIEW":
@@ -488,6 +569,48 @@ def update_transcript(
 
 
 @router.post(
+    "/memory-sessions/{session_id}/model-consents",
+    response_model=ModelConsentRead,
+    status_code=201,
+)
+def create_model_consent(
+    session_id: str,
+    payload: ModelConsentCreate,
+    db: Session = Depends(get_db),
+) -> ModelConsentEvent:
+    session = require(
+        db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次回忆记录。"
+    )
+    if session.status != "TRANSCRIPT_REVIEW" or not session.transcript:
+        raise DomainError(
+            "SESSION_NOT_READY_FOR_MODEL_CONSENT", "请先完成并保存人工校对稿。", 409
+        )
+    family = session.elder.person.family
+    if not requires_explicit_model_consent(
+        get_settings().llm_provider, family.data_classification
+    ):
+        raise DomainError(
+            "MODEL_CONSENT_NOT_REQUIRED",
+            "当前是虚构测试资料或本地模型流程，不需要创建真实资料外发授权。",
+            409,
+        )
+    consent = ModelConsentEvent(
+        family_id=family.id,
+        session_id=session.id,
+        actor_label=payload.actor_label.strip(),
+        purpose=STORY_ORGANIZATION_PURPOSE,
+        data_classification=family.data_classification,
+        decision="granted",
+        one_time=True,
+        input_sha256=corrected_text_sha256(session.transcript.corrected_text),
+    )
+    db.add(consent)
+    db.commit()
+    db.refresh(consent)
+    return consent
+
+
+@router.post(
     "/memory-sessions/{session_id}/organization-tasks",
     response_model=TaskRead,
     status_code=202,
@@ -495,6 +618,7 @@ def update_transcript(
 def submit_organization(
     session_id: str,
     background_tasks: BackgroundTasks,
+    payload: OrganizationTaskCreate | None = None,
     db: Session = Depends(get_db),
 ) -> WorkflowTask:
     session = require(
@@ -502,7 +626,16 @@ def submit_organization(
     )
     if session.status != "TRANSCRIPT_REVIEW" or not session.transcript:
         raise DomainError("SESSION_NOT_READY_FOR_ORGANIZATION", "请先完成转写校对。", 409)
-    task = create_task(db, session, "organization", "TRANSCRIPT_REVIEW")
+    consent_event_id = reserve_model_consent(
+        db, session, payload.consent_event_id if payload else None
+    )
+    task = create_task(
+        db,
+        session,
+        "organization",
+        "TRANSCRIPT_REVIEW",
+        model_consent_event_id=consent_event_id,
+    )
     background_tasks.add_task(process_organization, task.id)
     return task
 

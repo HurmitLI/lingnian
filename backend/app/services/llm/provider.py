@@ -23,6 +23,10 @@ QUESTION_BANK = {
 }
 
 
+def generate_local_question(preferred_name: str, life_stage: str) -> QuestionOutput:
+    return MockLLMProvider().generate_question(preferred_name, life_stage)
+
+
 class LLMProvider(Protocol):
     provider_name: str
     model_name: str

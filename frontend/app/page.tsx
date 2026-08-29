@@ -2,10 +2,12 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import SecurityPanel from "@/app/security-panel";
 import { api, mediaUrl } from "@/lib/api";
 import type {
   ElderProfile,
   Health,
+  ModelConsent,
   SessionDetail,
   TimelineItem,
   WorkflowTask,
@@ -42,12 +44,18 @@ export default function Home() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [cloudConsentChecked, setCloudConsentChecked] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
   const selectedProfile = profiles.find((item) => item.id === selectedProfileId) ?? null;
   const unsaved = Boolean(detail?.transcript && correctedText !== savedCorrectedText);
+  const requiresCloudConsent = Boolean(
+    selectedProfile &&
+      selectedProfile.data_classification !== "test" &&
+      health?.llm_provider === "qwen",
+  );
 
   const showError = useCallback((value: unknown) => {
     setNotice("");
@@ -291,9 +299,23 @@ export default function Home() {
     setError("");
     try {
       const path = kind === "transcription" ? "transcription-tasks" : "organization-tasks";
+      let body: Record<string, string> = {};
+      if (kind === "organization" && requiresCloudConsent) {
+        if (!cloudConsentChecked) {
+          throw new Error("请先勾选本次授权，确认只把当前人工校对稿发送给千问整理。");
+        }
+        const consent = await api<ModelConsent>(
+          `/api/v1/memory-sessions/${detail.session.id}/model-consents`,
+          {
+            method: "POST",
+            body: JSON.stringify({ actor_label: "本机家庭管理员" }),
+          },
+        );
+        body = { consent_event_id: consent.id };
+      }
       const task = await api<WorkflowTask>(
         `/api/v1/memory-sessions/${detail.session.id}/${path}`,
-        { method: "POST", body: JSON.stringify({}) },
+        { method: "POST", body: JSON.stringify(body) },
       );
       const result = await waitForTask(task);
       await loadSession(detail.session.id);
@@ -302,6 +324,7 @@ export default function Home() {
     } catch (value) {
       showError(value);
     } finally {
+      if (kind === "organization") setCloudConsentChecked(false);
       setBusy(false);
     }
   }
@@ -399,7 +422,7 @@ export default function Home() {
     <main>
       <header className="hero">
         <div>
-          <p className="eyebrow">第一阶段 · 本机测试版</p>
+          <p className="eyebrow">第二阶段 · 本机开发版</p>
           <h1>念念</h1>
           <p className="subtitle">把愿意讲的往事，慢慢留给家人。</p>
         </div>
@@ -422,7 +445,7 @@ export default function Home() {
         {profiles.length > 0 && (
           <label className="field compact">
             <span>当前讲述者</span>
-            <select value={selectedProfileId} onChange={(event) => setSelectedProfileId(event.target.value)}>
+            <select value={selectedProfileId} onChange={(event) => { setSelectedProfileId(event.target.value); setCloudConsentChecked(false); }}>
               {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.display_name}</option>)}
             </select>
           </label>
@@ -441,8 +464,10 @@ export default function Home() {
         </details>
       </section>
 
+      <SecurityPanel key={selectedProfile?.family_id ?? "no-family"} familyId={selectedProfile?.family_id ?? null} />
+
       <section className="card">
-        <div className="section-heading"><span>02</span><div><h2>选一个回忆入口</h2><p>一次一个问题，不催促，也可以直接跳过。</p></div></div>
+        <div className="section-heading"><span>03</span><div><h2>选一个回忆入口</h2><p>一次一个问题，不催促，也可以直接跳过。</p></div></div>
         <div className="stage-grid">
           {LIFE_STAGES.map((stage) => <button className="stage-button" key={stage} disabled={!selectedProfileId || busy} onClick={() => startMemory(stage)}>{stage}</button>)}
         </div>
@@ -465,7 +490,7 @@ export default function Home() {
               {audioFile && <div className="file-line"><span>{audioFile.name}</span><button className="button primary" disabled={busy} onClick={uploadAudio}>确认上传</button></div>}
               {existingOriginal && <p className="hint">已保留原始音频：{existingOriginal.original_filename}</p>}
               {detail.session.status === "AUDIO_UPLOADED" && <button className="button primary" disabled={busy} onClick={() => runTask("transcription")}>开始本地转写</button>}
-              {latestFailedTask && <button className="button secondary" disabled={busy} onClick={() => retryTask(latestFailedTask)}>重试失败任务</button>}
+              {latestFailedTask && (!requiresCloudConsent || latestFailedTask.task_type === "transcription") && <button className="button secondary" disabled={busy} onClick={() => retryTask(latestFailedTask)}>重试失败任务</button>}
             </div>
           )}
 
@@ -479,8 +504,19 @@ export default function Home() {
               {unsaved && <p className="unsaved">有尚未保存的修改</p>}
               <div className="button-row">
                 <button className="button secondary" disabled={busy || !unsaved} onClick={saveTranscript}>保存校对稿</button>
-                {detail.session.status === "TRANSCRIPT_REVIEW" && <button className="button primary" disabled={busy || unsaved} onClick={() => runTask("organization")}>按原话整理故事</button>}
+                {detail.session.status === "TRANSCRIPT_REVIEW" && !requiresCloudConsent && <button className="button primary" disabled={busy || unsaved} onClick={() => runTask("organization")}>按原话整理故事</button>}
               </div>
+              {detail.session.status === "TRANSCRIPT_REVIEW" && requiresCloudConsent && (
+                <div className="cloud-consent">
+                  <strong>本次发送授权</strong>
+                  <p>原始录音不会发送。只有当前已保存的人工校对稿会发送给千问，用于生成这一版故事草稿；修改文字或再次整理都要重新授权。</p>
+                  <label>
+                    <input type="checkbox" checked={cloudConsentChecked} onChange={(event) => setCloudConsentChecked(event.target.checked)} />
+                    我确认并授权本次发送当前人工校对稿
+                  </label>
+                  <button className="button primary" disabled={busy || unsaved || !cloudConsentChecked} onClick={() => runTask("organization")}>授权本次发送并整理故事</button>
+                </div>
+              )}
             </div>
           )}
 
@@ -499,7 +535,7 @@ export default function Home() {
 
       {selectedProfile && (
         <section className="card timeline-card">
-          <div className="section-heading"><span>03</span><div><h2>{selectedProfile.preferred_name}的时间线</h2><p>这里只显示经过人工确认的故事。</p></div></div>
+          <div className="section-heading"><span>04</span><div><h2>{selectedProfile.preferred_name}的时间线</h2><p>这里只显示经过人工确认的故事。</p></div></div>
           {timeline.length === 0 ? <p className="empty">还没有已确认的故事。</p> : <div className="timeline-list">{timeline.map((item) => <article key={item.story.id}><time>{new Date(item.story.confirmed_at).toLocaleDateString("zh-CN")}</time><h3>{item.story.title}</h3><p>{item.story.body}</p>{mediaUrl(item.audio_url) && <audio controls src={mediaUrl(item.audio_url) ?? undefined} />}</article>)}</div>}
         </section>
       )}

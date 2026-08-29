@@ -57,6 +57,7 @@ class ElderProfileRead(ORMModel):
     id: str
     person_id: str
     family_id: str
+    data_classification: str
     display_name: str
     preferred_name: str
     birth_year: int | None
@@ -103,6 +104,7 @@ class TaskRead(ORMModel):
     attempt: int
     error_code: str | None
     output_ref: str | None
+    model_consent_event_id: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -122,6 +124,33 @@ class TranscriptRead(ORMModel):
 
 class TranscriptUpdate(BaseModel):
     corrected_text: str = Field(min_length=1, max_length=100_000)
+
+
+class ModelConsentCreate(BaseModel):
+    actor_label: str = Field(min_length=1, max_length=80)
+    purpose: str = Field(default="story_organization", pattern="^story_organization$")
+
+
+class ModelConsentRead(ORMModel):
+    id: str
+    family_id: str
+    session_id: str | None
+    actor_label: str
+    purpose: str
+    data_classification: str
+    decision: str
+    one_time: bool
+    used_at: datetime | None
+    revoked_at: datetime | None
+    created_at: datetime
+
+
+class OrganizationTaskCreate(BaseModel):
+    consent_event_id: str | None = None
+
+
+class TaskRetryRequest(BaseModel):
+    consent_event_id: str | None = None
 
 
 class StoryDraftRead(ORMModel):

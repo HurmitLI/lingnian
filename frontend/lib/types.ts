@@ -1,6 +1,7 @@
 export type ElderProfile = {
   id: string;
   family_id: string;
+  data_classification: "test" | "authorized_non_sensitive" | "authorized_sensitive";
   display_name: string;
   preferred_name: string;
   birth_year: number | null;
@@ -53,6 +54,24 @@ export type WorkflowTask = {
   status: string;
   progress: number;
   error_code: string | null;
+  model_consent_event_id: string | null;
+};
+
+export type FamilySecurity = {
+  family_id: string;
+  key_version: number | null;
+  encryption_status: "not_initialized" | "key_ready" | "encrypted" | string;
+  key_initialized: boolean;
+  recovery_package_created_at: string | null;
+};
+
+export type ModelConsent = {
+  id: string;
+  family_id: string;
+  session_id: string;
+  purpose: "story_organization";
+  one_time: true;
+  used_at: string | null;
 };
 
 export type SessionDetail = {
@@ -86,4 +105,3 @@ export type Health = {
   asr_provider: string;
   llm_provider: string;
 };
-

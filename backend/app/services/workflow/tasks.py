@@ -7,11 +7,19 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import SessionLocal
-from app.models import MediaAsset, MemorySession, StoryDraft, Transcript, WorkflowTask
+from app.models import (
+    MediaAsset,
+    MemorySession,
+    ModelConsentEvent,
+    StoryDraft,
+    Transcript,
+    WorkflowTask,
+)
 from app.services.archive.assets import resolve_controlled_path
 from app.services.asr import get_asr_provider
 from app.services.asr.audio import normalize_audio
 from app.services.llm import get_llm_provider
+from app.services.privacy import model_consent_error, requires_explicit_model_consent
 from app.services.workflow.fact_guard import detect_added_facts
 from app.services.workflow.state import transition
 
@@ -34,7 +42,11 @@ def _mark_failed(task_id: str, code: str) -> None:
         task.error_code = code
         task.progress = 0
         if session and session.status not in {"SKIPPED", "ARCHIVED"}:
-            session.status = "FAILED_RETRYABLE"
+            session.status = (
+                "TRANSCRIPT_REVIEW"
+                if task.task_type == "organization" and session.transcript
+                else "FAILED_RETRYABLE"
+            )
         db.commit()
 
 
@@ -148,6 +160,25 @@ def process_organization(task_id: str) -> None:
             db.commit()
 
             provider = get_llm_provider()
+            family = session.elder.person.family
+            if requires_explicit_model_consent(
+                provider.provider_name, family.data_classification
+            ):
+                consent = (
+                    db.get(ModelConsentEvent, task.model_consent_event_id)
+                    if task.model_consent_event_id
+                    else None
+                )
+                consent_error = model_consent_error(
+                    consent,
+                    family_id=family.id,
+                    session_id=session.id,
+                    data_classification=family.data_classification,
+                    corrected_text=transcript.corrected_text,
+                    require_consumed=True,
+                )
+                if consent_error:
+                    raise RuntimeError(consent_error)
             output = provider.organize_story(transcript.corrected_text, session.question_text)
             added_facts = detect_added_facts(transcript.corrected_text, output)
 
@@ -183,7 +214,8 @@ def process_organization(task_id: str) -> None:
         message = str(exc)
         if message == "NO_REVIEWED_TRANSCRIPT":
             code = message
+        elif message.startswith("MODEL_CONSENT_"):
+            code = message
         elif "LLM_API_KEY" in message:
             code = "LLM_KEY_MISSING"
         _mark_failed(task_id, code)
-
