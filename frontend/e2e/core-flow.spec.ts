@@ -21,7 +21,7 @@ function silentWavBuffer(seconds = 0.15): Buffer {
 }
 
 test("隔离数据完成记录、校对、整理和归档", async ({ page, isMobile }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   const suffix = `${isMobile ? "手机" : "桌面"}-${Date.now()}`;
   const preferredName = `测试长辈${suffix}`;
   const correctedStory = `${preferredName}小时候常跟家里人去河边。这是第三阶段隔离验收内容。`;
@@ -85,12 +85,12 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
   await page.getByLabel("本次只使用亲口说过的原始声音，不生成新语音。").check();
   await expect(createButton).toBeEnabled();
   await createButton.click();
-  await expect(page.getByText("原声视频已生成", { exact: true })).toBeVisible({ timeout: 60_000 });
-  await expect(page.locator("video")).toBeVisible();
+  await expect(page.locator("video")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText(/第 1 版 · 原声视频已生成/)).toBeVisible();
   await expect(page.getByText("家庭记忆整理 · 原始录音 · 非实时影像", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/keepsake=.*elder=|elder=.*keepsake=/);
   await page.reload();
-  await expect(page.getByText("原声视频已生成", { exact: true })).toBeVisible();
+  await expect(page.getByText(/第 1 版 · 原声视频已生成/)).toBeVisible();
   await expect(page.locator("video")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
 });

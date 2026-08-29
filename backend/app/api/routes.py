@@ -2118,7 +2118,7 @@ def create_keepsake(
     db.commit()
     db.refresh(keepsake)
     result = keepsake_read(db, keepsake, secret_store)
-    background_tasks.add_task(process_keepsake, keepsake.id)
+    background_tasks.add_task(process_keepsake, keepsake.id, secret_store)
     return result
 
 
@@ -2155,7 +2155,7 @@ def retry_keepsake(
     db.commit()
     db.refresh(keepsake)
     result = keepsake_read(db, keepsake, secret_store)
-    background_tasks.add_task(process_keepsake, keepsake.id)
+    background_tasks.add_task(process_keepsake, keepsake.id, secret_store)
     return result
 
 

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import io
+import subprocess
 
 from PIL import Image
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.models import Keepsake, MediaAsset
+from app.main import app
+from app.models import EncryptedField, Keepsake, KeepsakeAuthorization, MediaAsset
 from app.services.keepsake import recover_interrupted_keepsakes
+from app.services.asr.audio import get_ffmpeg_binary
+from app.services.security import InMemorySecretStore, get_secret_store
 from test_api_flow import create_profile, upload_test_audio
 
 
@@ -68,7 +72,7 @@ def authorization_payload(story_ids: list[str]) -> dict:
     }
 
 
-def test_local_keepsake_real_ffmpeg_flow(client, db):
+def test_local_keepsake_real_ffmpeg_flow(client, db, tmp_path):
     profile = create_profile(client)
     story = create_archived_story(client, profile["id"])
 
@@ -118,6 +122,18 @@ def test_local_keepsake_real_ffmpeg_flow(client, db):
     assert video.status_code == 200
     assert video.headers["content-type"] == "video/mp4"
     assert b"ftyp" in video.content[:64]
+    assert 0 <= video.content.find(b"moov") < video.content.find(b"mdat")
+    probe_path = tmp_path / "keepsake.mp4"
+    probe_path.write_bytes(video.content)
+    probe = subprocess.run(
+        [get_ffmpeg_binary(), "-hide_banner", "-i", str(probe_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "Video: h264" in probe.stderr
+    assert "Audio: aac" in probe.stderr
+    assert "1280x720" in probe.stderr
 
     repeated = client.post(
         f"/api/v1/elder-profiles/{profile['id']}/keepsakes",
@@ -237,3 +253,109 @@ def test_catalog_marks_story_without_audio_unavailable(client):
     item = next(value for value in catalog if value["story_id"] == story["id"])
     assert item["has_original_audio"] is False
     assert item["unavailable_reason"]
+
+
+def test_encrypted_family_keepsake_stays_encrypted_at_rest(client, db):
+    profile = create_profile(client)
+    story = create_archived_story(client, profile["id"], id_suffix="encrypted")
+    family_id = profile["family_id"]
+    passphrase = "虚构恢复口令-第四阶段-长度足够"
+    store = InMemorySecretStore()
+    app.dependency_overrides[get_secret_store] = lambda: store
+    try:
+        initialized = client.post(
+            f"/api/v1/families/{family_id}/security/initialize",
+            json={"actor_label": "第四阶段测试家人"},
+        )
+        assert initialized.status_code == 201, initialized.text
+        recovery = client.post(
+            f"/api/v1/families/{family_id}/security/recovery-package",
+            json={
+                "actor_label": "第四阶段测试家人",
+                "recovery_passphrase": passphrase,
+            },
+        )
+        assert recovery.status_code == 200, recovery.text
+        verified = client.post(
+            f"/api/v1/families/{family_id}/security/verify-recovery",
+            data={
+                "actor_label": "第四阶段测试家人",
+                "recovery_passphrase": passphrase,
+            },
+            files={"package": ("recovery.json", recovery.content, "application/json")},
+        )
+        assert verified.status_code == 200, verified.text
+        activated = client.post(
+            f"/api/v1/families/{family_id}/security/activate",
+            json={
+                "actor_label": "第四阶段测试家人",
+                "data_classification": "authorized_sensitive",
+            },
+        )
+        assert activated.status_code == 200, activated.text
+
+        authorization = client.post(
+            f"/api/v1/elder-profiles/{profile['id']}/keepsake-authorizations",
+            json=authorization_payload([story["id"]]),
+        )
+        assert authorization.status_code == 201, authorization.text
+        assert authorization.json()["actor_label"] == "自动化虚构测试家人"
+        created = client.post(
+            f"/api/v1/elder-profiles/{profile['id']}/keepsakes",
+            json={
+                "authorization_id": authorization.json()["id"],
+                "title": "加密原声念想",
+                "idempotency_key": "encrypted-keepsake",
+            },
+        )
+        assert created.status_code == 201, created.text
+        ready = client.get(f"/api/v1/keepsakes/{created.json()['id']}")
+        assert ready.status_code == 200, ready.text
+        assert ready.json()["status"] == "ready"
+        assert ready.json()["title"] == "加密原声念想"
+
+        db.expire_all()
+        stored = db.get(Keepsake, ready.json()["id"])
+        raw_authorization = db.get(
+            KeepsakeAuthorization, authorization.json()["id"]
+        )
+        assert stored.title == "[niannian:encrypted:v1]"
+        assert raw_authorization.actor_label == "[niannian:encrypted:v1]"
+        assert stored.encryption_version == 1
+        stored_path = get_settings().resolved_asset_root / stored.relative_path
+        assert stored_path.read_bytes().startswith(b"NNMEDIA1")
+        assert not stored_path.read_bytes().startswith(b"\x00\x00\x00")
+        assert db.scalars(
+            select(EncryptedField).where(
+                EncryptedField.object_id.in_([stored.id, raw_authorization.id])
+            )
+        ).all()
+
+        video = client.get(ready.json()["content_url"])
+        assert video.status_code == 200, video.text
+        assert b"ftyp" in video.content[:64]
+        work_dir = (
+            get_settings().resolved_asset_root / "runtime" / "keepsakes" / stored.id
+        )
+        assert not work_dir.exists()
+
+        backup = client.post(
+            "/api/v1/backups", json={"actor_label": "第四阶段测试家人"}
+        )
+        assert backup.status_code == 201, backup.text
+        assert backup.json()["asset_count"] >= 3
+        rehearsal = client.post(
+            f"/api/v1/backups/{backup.json()['id']}/rehearse-recovery",
+            data={
+                "family_id": family_id,
+                "recovery_passphrase": passphrase,
+            },
+            files={"package": ("recovery.json", recovery.content, "application/json")},
+        )
+        assert rehearsal.status_code == 200, rehearsal.text
+        summary = rehearsal.json()["verification_summary"]
+        assert summary["restored_to_new_directory"] is True
+        assert summary["recovery_verified"] is True
+        assert summary["decrypted_media_count"] == backup.json()["asset_count"]
+    finally:
+        app.dependency_overrides.pop(get_secret_store, None)

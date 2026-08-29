@@ -304,9 +304,16 @@ def rehearse_family_recovery(
             join elder_profiles ep on ep.id = ms.elder_id
             join people p on p.id = ep.person_id
             where p.family_id = ? and ma.encryption_version = 1
-            order by ma.created_at
+            union all
+            select k.id, k.relative_path, k.plaintext_size_bytes,
+                   k.plaintext_sha256
+            from keepsakes k
+            join elder_profiles ep on ep.id = k.elder_id
+            join people p on p.id = ep.person_id
+            where p.family_id = ? and k.encryption_version = 1
+            order by 1
             """,
-            (family_id,),
+            (family_id, family_id),
         ).fetchall()
     decrypted_media_count = 0
     if media_rows:
