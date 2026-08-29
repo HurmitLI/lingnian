@@ -6,11 +6,22 @@ from app.services.security.crypto import (
     encrypt_text,
     generate_master_key,
 )
+from app.services.security.archive_encryption import (
+    ArchiveEncryptionResult,
+    activate_archive_encryption,
+)
 from app.services.security.key_store import (
     InMemorySecretStore,
     MacOSKeychainStore,
     MasterKeyManager,
     SecretStoreError,
+)
+from app.services.security.media_crypto import (
+    MediaEncryptionError,
+    MediaEncryptionResult,
+    decrypt_media_file,
+    encrypt_media_file,
+    media_context,
 )
 from app.services.security.recovery import (
     RecoveryPackageError,
@@ -23,23 +34,42 @@ from app.services.security.service import (
     get_family_key_manager,
     get_secret_store,
 )
+from app.services.security.secure_fields import (
+    TEXT_PLACEHOLDER,
+    is_encrypted_family,
+    protect_field,
+    require_family_master_key,
+    reveal_field,
+)
 
 __all__ = [
     "EncryptionError",
+    "ArchiveEncryptionResult",
     "InMemorySecretStore",
     "MacOSKeychainStore",
     "MasterKeyManager",
+    "MediaEncryptionError",
+    "MediaEncryptionResult",
     "RecoveryPackageError",
     "SecretStoreError",
+    "TEXT_PLACEHOLDER",
+    "activate_archive_encryption",
     "build_recovery_package",
     "decrypt_payload",
+    "decrypt_media_file",
     "decrypt_text",
     "encrypt_payload",
+    "encrypt_media_file",
     "encrypt_text",
     "generate_master_key",
     "family_key_account",
     "get_family_key_manager",
     "get_secret_store",
+    "is_encrypted_family",
+    "media_context",
+    "protect_field",
+    "require_family_master_key",
+    "reveal_field",
     "recover_master_key",
     "write_recovery_package",
 ]

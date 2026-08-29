@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse, Response
+from starlette.background import BackgroundTask
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -62,6 +66,7 @@ from app.schemas.api import (
     ReminderCreate,
     ReminderRead,
     RecoveryPackageCreate,
+    SecurityActivationRequest,
     SecurityInitializeRequest,
     SessionDetail,
     StoryDraftRead,
@@ -97,7 +102,22 @@ from app.services.privacy import (
     model_consent_error,
     requires_explicit_model_consent,
 )
-from app.services.security import build_recovery_package, get_family_key_manager, get_secret_store
+from app.services.security import (
+    RecoveryPackageError,
+    activate_archive_encryption,
+    build_recovery_package,
+    get_family_key_manager,
+    get_secret_store,
+    is_encrypted_family,
+    protect_field,
+    recover_master_key,
+    require_family_master_key,
+    reveal_field,
+    TEXT_PLACEHOLDER,
+    decrypt_media_file,
+    encrypt_media_file,
+    media_context,
+)
 from app.services.security.key_store import SecretStore, SecretStoreError
 from app.services.workflow.state import transition
 from app.services.workflow.tasks import process_organization, process_transcription
@@ -113,27 +133,73 @@ def require(db: Session, model, object_id: str, code: str, message: str):
     return item
 
 
-def elder_read(profile: ElderProfile) -> ElderProfileRead:
+def family_master_key(family: FamilyArchive, store: SecretStore) -> bytes | None:
+    if not is_encrypted_family(family):
+        return None
+    try:
+        return require_family_master_key(family, store)
+    except (SecretStoreError, ValueError) as exc:
+        raise DomainError(
+            "MASTER_KEY_MISSING",
+            "无法解锁家庭档案，请使用离线恢复包恢复主密钥。",
+            409,
+        ) from exc
+
+
+def secure_value(
+    db: Session,
+    family: FamilyArchive,
+    obj,
+    field_name: str,
+    store: SecretStore,
+    *,
+    master_key: bytes | None = None,
+):
+    key = master_key if master_key is not None else family_master_key(family, store)
+    try:
+        return reveal_field(
+            db,
+            family=family,
+            object_type=obj.__tablename__,
+            object_id=obj.id,
+            field_name=field_name,
+            stored_value=getattr(obj, field_name),
+            master_key=key,
+        )
+    except ValueError as exc:
+        raise DomainError(
+            "ARCHIVE_DECRYPTION_FAILED",
+            "家庭档案无法解密，内容可能已损坏，请从备份恢复。",
+            409,
+        ) from exc
+
+
+def elder_read(
+    db: Session, profile: ElderProfile, store: SecretStore
+) -> ElderProfileRead:
+    family = profile.person.family
+    key = family_master_key(family, store)
     return ElderProfileRead(
         id=profile.id,
         person_id=profile.person_id,
         family_id=profile.person.family_id,
         data_classification=profile.person.family.data_classification,
-        display_name=profile.person.display_name,
-        preferred_name=profile.preferred_name,
-        birth_year=profile.birth_year,
-        birth_era=profile.birth_era,
-        native_place=profile.native_place,
-        occupation_summary=profile.occupation_summary,
+        display_name=secure_value(db, family, profile.person, "display_name", store, master_key=key),
+        preferred_name=secure_value(db, family, profile, "preferred_name", store, master_key=key),
+        birth_year=secure_value(db, family, profile, "birth_year", store, master_key=key),
+        birth_era=secure_value(db, family, profile, "birth_era", store, master_key=key),
+        native_place=secure_value(db, family, profile, "native_place", store, master_key=key),
+        occupation_summary=secure_value(db, family, profile, "occupation_summary", store, master_key=key),
         created_at=profile.created_at,
     )
 
 
-def media_read(asset: MediaAsset) -> MediaAssetRead:
+def media_read(db: Session, asset: MediaAsset, store: SecretStore) -> MediaAssetRead:
+    family = asset.session.elder.person.family
     return MediaAssetRead(
         id=asset.id,
         kind=asset.kind,
-        original_filename=asset.original_filename,
+        original_filename=secure_value(db, family, asset, "original_filename", store),
         mime_type=asset.mime_type,
         size_bytes=asset.size_bytes,
         sha256=asset.sha256,
@@ -141,6 +207,343 @@ def media_read(asset: MediaAsset) -> MediaAssetRead:
         is_original=asset.is_original,
         content_url=f"/api/v1/media-assets/{asset.id}/content",
     )
+
+
+def person_read(db: Session, person: Person, store: SecretStore) -> PersonRead:
+    return PersonRead(
+        id=person.id,
+        family_id=person.family_id,
+        role=person.role,
+        display_name=secure_value(
+            db, person.family, person, "display_name", store
+        ),
+        created_at=person.created_at,
+    )
+
+
+def relationship_read(
+    db: Session, relationship: PersonRelationship, store: SecretStore
+) -> PersonRelationshipRead:
+    family = relationship.family
+    key = family_master_key(family, store)
+    return PersonRelationshipRead(
+        id=relationship.id,
+        family_id=relationship.family_id,
+        from_person_id=relationship.from_person_id,
+        to_person_id=relationship.to_person_id,
+        relationship_type=relationship.relationship_type,
+        custom_label=secure_value(
+            db, family, relationship, "custom_label", store, master_key=key
+        ),
+        confirmed_by=secure_value(
+            db, family, relationship, "confirmed_by", store, master_key=key
+        ),
+        created_at=relationship.created_at,
+    )
+
+
+def media_link_read(
+    db: Session, link: MediaLink, store: SecretStore
+) -> MediaLinkRead:
+    family = link.media_asset.session.elder.person.family
+    key = family_master_key(family, store)
+    return MediaLinkRead(
+        id=link.id,
+        media_asset_id=link.media_asset_id,
+        elder_id=link.elder_id,
+        trigger_kind=link.trigger_kind,
+        user_annotation=secure_value(
+            db, family, link, "user_annotation", store, master_key=key
+        ),
+        width=link.width,
+        height=link.height,
+        model_inference=secure_value(
+            db, family, link, "model_inference", store, master_key=key
+        ),
+        created_at=link.created_at,
+    )
+
+
+def memory_session_read(
+    db: Session, session: MemorySession, store: SecretStore
+) -> MemorySessionRead:
+    family = session.elder.person.family
+    return MemorySessionRead(
+        id=session.id,
+        elder_id=session.elder_id,
+        life_stage=session.life_stage,
+        prompt_id=session.prompt_id,
+        question_text=secure_value(db, family, session, "question_text", store),
+        status=session.status,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+    )
+
+
+def transcript_read(
+    db: Session, transcript: Transcript, store: SecretStore
+) -> TranscriptRead:
+    family = transcript.session.elder.person.family
+    key = family_master_key(family, store)
+    return TranscriptRead(
+        id=transcript.id,
+        session_id=transcript.session_id,
+        raw_text=secure_value(db, family, transcript, "raw_text", store, master_key=key),
+        corrected_text=secure_value(
+            db, family, transcript, "corrected_text", store, master_key=key
+        ),
+        version=transcript.version,
+        asr_provider=transcript.asr_provider,
+        asr_model=transcript.asr_model,
+        asr_metadata=secure_value(
+            db, family, transcript, "asr_metadata", store, master_key=key
+        ),
+        created_at=transcript.created_at,
+        updated_at=transcript.updated_at,
+    )
+
+
+def story_draft_read(
+    db: Session, draft: StoryDraft, store: SecretStore
+) -> StoryDraftRead:
+    family = draft.session.elder.person.family
+    key = family_master_key(family, store)
+    return StoryDraftRead(
+        id=draft.id,
+        session_id=draft.session_id,
+        transcript_version=draft.transcript_version,
+        title=secure_value(db, family, draft, "title", store, master_key=key),
+        body=secure_value(db, family, draft, "body", store, master_key=key),
+        timeline_mentions=secure_value(
+            db, family, draft, "timeline_mentions", store, master_key=key
+        ),
+        people_mentions=secure_value(
+            db, family, draft, "people_mentions", store, master_key=key
+        ),
+        uncertainties=secure_value(
+            db, family, draft, "uncertainties", store, master_key=key
+        ),
+        added_facts=secure_value(
+            db, family, draft, "added_facts", store, master_key=key
+        ),
+        source_coverage=draft.source_coverage,
+        provider=draft.provider,
+        model=draft.model,
+        status=draft.status,
+        created_at=draft.created_at,
+        updated_at=draft.updated_at,
+    )
+
+
+def model_consent_read(
+    db: Session, consent: ModelConsentEvent, store: SecretStore
+) -> ModelConsentRead:
+    family = consent.family if hasattr(consent, "family") else db.get(FamilyArchive, consent.family_id)
+    return ModelConsentRead(
+        id=consent.id,
+        family_id=consent.family_id,
+        session_id=consent.session_id,
+        actor_label=secure_value(db, family, consent, "actor_label", store),
+        purpose=consent.purpose,
+        data_classification=consent.data_classification,
+        decision=consent.decision,
+        one_time=consent.one_time,
+        used_at=consent.used_at,
+        revoked_at=consent.revoked_at,
+        created_at=consent.created_at,
+    )
+
+
+def topic_preference_read(
+    db: Session, preference: TopicPreference, store: SecretStore
+) -> TopicPreferenceRead:
+    family = preference.elder.person.family
+    key = family_master_key(family, store)
+    return TopicPreferenceRead(
+        id=preference.id,
+        elder_id=preference.elder_id,
+        topic_key=preference.topic_key,
+        preference=preference.preference,
+        note=secure_value(db, family, preference, "note", store, master_key=key),
+        updated_by=secure_value(
+            db, family, preference, "updated_by", store, master_key=key
+        ),
+        updated_at=preference.updated_at,
+    )
+
+
+def memory_fact_read(
+    db: Session, fact: MemoryFact, store: SecretStore
+) -> MemoryFactRead:
+    family = fact.elder.person.family
+    key = family_master_key(family, store)
+    return MemoryFactRead(
+        id=fact.id,
+        elder_id=fact.elder_id,
+        story_id=fact.story_id,
+        fact_type=fact.fact_type,
+        subject_label=secure_value(
+            db, family, fact, "subject_label", store, master_key=key
+        ),
+        value_text=secure_value(
+            db, family, fact, "value_text", store, master_key=key
+        ),
+        content_sha256=fact.content_sha256,
+        confidence=fact.confidence,
+        status=fact.status,
+        created_at=fact.created_at,
+    )
+
+
+def story_read(db: Session, story: Story, store: SecretStore) -> StoryRead:
+    family = story.elder.person.family
+    key = family_master_key(family, store)
+    return StoryRead(
+        id=story.id,
+        elder_id=story.elder_id,
+        source_draft_id=story.source_draft_id,
+        title=secure_value(db, family, story, "title", store, master_key=key),
+        body=secure_value(db, family, story, "body", store, master_key=key),
+        confirmed_by=secure_value(
+            db, family, story, "confirmed_by", store, master_key=key
+        ),
+        confirmed_at=story.confirmed_at,
+    )
+
+
+def timeline_event_read(
+    db: Session, event: TimelineEvent, family: FamilyArchive, store: SecretStore
+) -> TimelineEventRead:
+    key = family_master_key(family, store)
+    return TimelineEventRead(
+        id=event.id,
+        story_id=event.story_id,
+        time_expression=secure_value(
+            db, family, event, "time_expression", store, master_key=key
+        ),
+        normalized_time=secure_value(
+            db, family, event, "normalized_time", store, master_key=key
+        ),
+        confidence=event.confidence,
+    )
+
+
+def memory_book_read(
+    db: Session, book: MemoryBook, store: SecretStore
+) -> MemoryBookRead:
+    family = book.elder.person.family
+    key = family_master_key(family, store)
+    return MemoryBookRead(
+        id=book.id,
+        elder_id=book.elder_id,
+        version=book.version,
+        title=secure_value(db, family, book, "title", store, master_key=key),
+        content_sha256=book.content_sha256,
+        story_manifest=secure_value(
+            db, family, book, "story_manifest", store, master_key=key
+        ),
+        created_by=secure_value(
+            db, family, book, "created_by", store, master_key=key
+        ),
+        status=book.status,
+        pdf_status=book.pdf_status,
+        pdf_sha256=book.pdf_sha256,
+        created_at=book.created_at,
+    )
+
+
+def decrypted_book_sources(
+    db: Session,
+    profile: ElderProfile,
+    stories: list[Story],
+    store: SecretStore,
+):
+    family = profile.person.family
+    key = family_master_key(family, store)
+    profile_view = SimpleNamespace(
+        preferred_name=secure_value(
+            db, family, profile, "preferred_name", store, master_key=key
+        )
+    )
+    story_views = []
+    for story in stories:
+        session_view = SimpleNamespace(life_stage=story.source_draft.session.life_stage)
+        draft_view = SimpleNamespace(session=session_view)
+        story_views.append(
+            SimpleNamespace(
+                id=story.id,
+                source_draft_id=story.source_draft_id,
+                source_draft=draft_view,
+                title=secure_value(
+                    db, family, story, "title", store, master_key=key
+                ),
+                body=secure_value(db, family, story, "body", store, master_key=key),
+                confirmed_by=secure_value(
+                    db, family, story, "confirmed_by", store, master_key=key
+                ),
+                confirmed_at=story.confirmed_at,
+            )
+        )
+    return profile_view, story_views
+
+
+def protect_values(
+    db: Session,
+    family: FamilyArchive,
+    obj,
+    values: dict[str, object],
+    store: SecretStore,
+) -> None:
+    if not is_encrypted_family(family):
+        return
+    key = family_master_key(family, store)
+    if key is None:
+        raise DomainError("MASTER_KEY_MISSING", "无法解锁家庭档案。", 409)
+    for field_name, value in values.items():
+        protect_field(
+            db,
+            family=family,
+            object_type=obj.__tablename__,
+            object_id=obj.id,
+            field_name=field_name,
+            value=value,
+            master_key=key,
+        )
+        if value is not None:
+            current = getattr(obj, field_name)
+            setattr(obj, field_name, [] if isinstance(current, list) else {} if isinstance(current, dict) else None if isinstance(current, int) else TEXT_PLACEHOLDER)
+
+
+def encrypt_asset_if_needed(
+    db: Session,
+    asset: MediaAsset,
+    family: FamilyArchive,
+    store: SecretStore,
+) -> None:
+    if not is_encrypted_family(family):
+        return
+    key = family_master_key(family, store)
+    if key is None:
+        raise DomainError("MASTER_KEY_MISSING", "无法解锁家庭档案。", 409)
+    path = resolve_controlled_path(get_settings().resolved_asset_root, asset.relative_path)
+    temp = path.with_name(f".{path.name}.encrypting-{asset.id}")
+    try:
+        result = encrypt_media_file(
+            path,
+            temp,
+            key,
+            associated_data=media_context(family.id, asset.id),
+        )
+        os.replace(temp, path)
+    except Exception:
+        temp.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
+        raise
+    asset.plaintext_size_bytes = result.plaintext_size
+    asset.plaintext_sha256 = result.plaintext_sha256
+    asset.size_bytes = result.ciphertext_size
+    asset.sha256 = result.ciphertext_sha256
+    asset.encryption_version = 1
 
 
 def reminder_read(reminder: Reminder) -> ReminderRead:
@@ -207,26 +610,44 @@ def create_family(payload: FamilyCreate, db: Session = Depends(get_db)) -> Famil
 
 
 def family_security_read(
-    family: FamilyArchive, metadata: ArchiveSecurity | None
+    family: FamilyArchive,
+    metadata: ArchiveSecurity | None,
+    *,
+    key_initialized: bool | None = None,
 ) -> FamilySecurityRead:
     return FamilySecurityRead(
         family_id=family.id,
         key_version=metadata.key_version if metadata else None,
         encryption_status=metadata.encryption_status if metadata else "not_initialized",
-        key_initialized=metadata is not None,
+        key_initialized=(metadata is not None) if key_initialized is None else key_initialized,
         recovery_package_created_at=metadata.recovery_package_created_at if metadata else None,
+        recovery_verified_at=metadata.recovery_verified_at if metadata else None,
+        activated_at=metadata.activated_at if metadata else None,
     )
 
 
 @router.get("/families/{family_id}/security", response_model=FamilySecurityRead)
 def get_family_security(
-    family_id: str, db: Session = Depends(get_db)
+    family_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
 ) -> FamilySecurityRead:
     family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
     metadata = db.scalar(
         select(ArchiveSecurity).where(ArchiveSecurity.family_id == family.id)
     )
-    return family_security_read(family, metadata)
+    key_present = False
+    if metadata:
+        try:
+            key_present = (
+                get_family_key_manager(
+                    family.id, secret_store, key_version=metadata.key_version
+                ).get_existing()
+                is not None
+            )
+        except SecretStoreError:
+            key_present = False
+    return family_security_read(family, metadata, key_initialized=key_present)
 
 
 @router.post(
@@ -271,7 +692,7 @@ def initialize_family_security(
         )
         db.commit()
         db.refresh(metadata)
-    return family_security_read(family, metadata)
+    return family_security_read(family, metadata, key_initialized=True)
 
 
 @router.post("/families/{family_id}/security/recovery-package")
@@ -323,11 +744,134 @@ def create_recovery_package(
     )
 
 
+@router.post(
+    "/families/{family_id}/security/verify-recovery",
+    response_model=FamilySecurityRead,
+)
+async def verify_recovery_package(
+    family_id: str,
+    package: UploadFile = File(...),
+    recovery_passphrase: str = Form(..., min_length=12, max_length=200),
+    actor_label: str = Form(..., min_length=1, max_length=80),
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> FamilySecurityRead:
+    family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    metadata = db.scalar(
+        select(ArchiveSecurity).where(ArchiveSecurity.family_id == family.id)
+    )
+    if metadata is None:
+        raise DomainError("SECURITY_NOT_INITIALIZED", "请先初始化家庭档案安全设置。", 409)
+    try:
+        package_bytes = await package.read(512 * 1024 + 1)
+    finally:
+        await package.close()
+    if len(package_bytes) > 512 * 1024:
+        raise DomainError("RECOVERY_PACKAGE_TOO_LARGE", "恢复包文件过大。", 413)
+    try:
+        recovered_key = recover_master_key(
+            package_bytes.decode("utf-8"),
+            recovery_passphrase,
+            expected_scope=f"family:{family.id}",
+        )
+        get_family_key_manager(
+            family.id, secret_store, key_version=metadata.key_version
+        ).import_recovered(recovered_key, overwrite=False)
+    except UnicodeDecodeError as exc:
+        raise DomainError("RECOVERY_PACKAGE_INVALID", "恢复包不是有效的 UTF-8 JSON 文件。", 422) from exc
+    except RecoveryPackageError as exc:
+        raise DomainError("RECOVERY_VERIFICATION_FAILED", str(exc), 409) from exc
+    except SecretStoreError as exc:
+        raise DomainError("KEYCHAIN_CONFLICT", str(exc), 409) from exc
+    metadata.recovery_verified_at = now_utc()
+    db.add(
+        ConsentEvent(
+            action="verify_recovery_package",
+            actor_label=actor_label.strip(),
+            object_type="family_archive",
+            object_id=family.id,
+        )
+    )
+    db.commit()
+    db.refresh(metadata)
+    return family_security_read(family, metadata, key_initialized=True)
+
+
+@router.post(
+    "/families/{family_id}/security/activate",
+    response_model=FamilySecurityRead,
+)
+def activate_family_security(
+    family_id: str,
+    payload: SecurityActivationRequest,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> FamilySecurityRead:
+    family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    metadata = db.scalar(
+        select(ArchiveSecurity).where(ArchiveSecurity.family_id == family.id)
+    )
+    if metadata is None:
+        raise DomainError("SECURITY_NOT_INITIALIZED", "请先初始化家庭档案安全设置。", 409)
+    try:
+        master_key = get_family_key_manager(
+            family.id, secret_store, key_version=metadata.key_version
+        ).get_existing()
+        if master_key is None:
+            raise DomainError(
+                "MASTER_KEY_MISSING", "Mac 钥匙串中没有找到家庭档案密钥。", 409
+            )
+        activate_archive_encryption(
+            db,
+            family=family,
+            metadata=metadata,
+            master_key=master_key,
+            target_classification=payload.data_classification,
+            settings=get_settings(),
+        )
+    except DomainError:
+        raise
+    except SecretStoreError as exc:
+        raise DomainError("KEYCHAIN_UNAVAILABLE", "暂时无法从 Mac 钥匙串读取密钥。", 503) from exc
+    except ValueError as exc:
+        messages = {
+            "RECOVERY_PACKAGE_REQUIRED": "请先下载离线恢复包。",
+            "RECOVERY_VERIFICATION_REQUIRED": "请先上传恢复包并完成恢复验证。",
+            "ASSET_INTEGRITY_FAILED": "媒体已损坏，请先从备份恢复。",
+        }
+        raise DomainError(
+            "ARCHIVE_ENCRYPTION_FAILED",
+            messages.get(str(exc), "家庭档案加密失败，已停止启用真实资料。"),
+            409,
+        ) from exc
+    db.refresh(family)
+    db.refresh(metadata)
+    activation_event = ConsentEvent(
+        action="activate_encrypted_archive",
+        actor_label=payload.actor_label.strip(),
+        object_type="family_archive",
+        object_id=family.id,
+    )
+    db.add(activation_event)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        activation_event,
+        {"actor_label": payload.actor_label.strip()},
+        secret_store,
+    )
+    db.commit()
+    return family_security_read(family, metadata, key_initialized=True)
+
+
 @router.post("/elder-profiles", response_model=ElderProfileRead, status_code=201)
 def create_elder_profile(
-    payload: ElderProfileCreate, db: Session = Depends(get_db)
+    payload: ElderProfileCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
 ) -> ElderProfileRead:
-    require(db, FamilyArchive, payload.family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    family = require(db, FamilyArchive, payload.family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
     person = Person(
         family_id=payload.family_id,
         role="elder",
@@ -342,9 +886,30 @@ def create_elder_profile(
         occupation_summary=payload.occupation_summary,
     )
     db.add(profile)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        person,
+        {"display_name": payload.display_name.strip()},
+        secret_store,
+    )
+    protect_values(
+        db,
+        family,
+        profile,
+        {
+            "preferred_name": payload.preferred_name.strip(),
+            "birth_year": payload.birth_year,
+            "birth_era": payload.birth_era,
+            "native_place": payload.native_place,
+            "occupation_summary": payload.occupation_summary,
+        },
+        secret_store,
+    )
     db.commit()
     db.refresh(profile)
-    return elder_read(profile)
+    return elder_read(db, profile, secret_store)
 
 
 @router.post(
@@ -354,31 +919,39 @@ def create_family_person(
     family_id: str,
     payload: PersonCreate,
     db: Session = Depends(get_db),
-) -> Person:
-    require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> PersonRead:
+    family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
     person = Person(
         family_id=family_id,
         role=payload.role.strip(),
         display_name=payload.display_name.strip(),
     )
     db.add(person)
+    db.flush()
+    protect_values(
+        db, family, person, {"display_name": payload.display_name.strip()}, secret_store
+    )
     db.commit()
     db.refresh(person)
-    return person
+    return person_read(db, person, secret_store)
 
 
 @router.get("/families/{family_id}/people", response_model=list[PersonRead])
 def list_family_people(
-    family_id: str, db: Session = Depends(get_db)
-) -> list[Person]:
+    family_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[PersonRead]:
     require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
-    return list(
+    people = list(
         db.scalars(
             select(Person)
             .where(Person.family_id == family_id)
             .order_by(Person.created_at)
         ).all()
     )
+    return [person_read(db, item, secret_store) for item in people]
 
 
 @router.post(
@@ -390,8 +963,9 @@ def create_person_relationship(
     family_id: str,
     payload: PersonRelationshipCreate,
     db: Session = Depends(get_db),
-) -> PersonRelationship:
-    require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> PersonRelationshipRead:
+    family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
     from_person = require(
         db, Person, payload.from_person_id, "PERSON_NOT_FOUND", "没有找到关系起点人物。"
     )
@@ -414,7 +988,7 @@ def create_person_relationship(
         )
     )
     if existing:
-        return existing
+        return relationship_read(db, existing, secret_store)
     relationship = PersonRelationship(
         family_id=family_id,
         from_person_id=from_person.id,
@@ -424,9 +998,20 @@ def create_person_relationship(
         confirmed_by=payload.confirmed_by.strip(),
     )
     db.add(relationship)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        relationship,
+        {
+            "custom_label": payload.custom_label.strip() if payload.custom_label else None,
+            "confirmed_by": payload.confirmed_by.strip(),
+        },
+        secret_store,
+    )
     db.commit()
     db.refresh(relationship)
-    return relationship
+    return relationship_read(db, relationship, secret_store)
 
 
 @router.get(
@@ -434,30 +1019,40 @@ def create_person_relationship(
     response_model=list[PersonRelationshipRead],
 )
 def list_person_relationships(
-    family_id: str, db: Session = Depends(get_db)
-) -> list[PersonRelationship]:
+    family_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[PersonRelationshipRead]:
     require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
-    return list(
+    relationships = list(
         db.scalars(
             select(PersonRelationship)
             .where(PersonRelationship.family_id == family_id)
             .order_by(PersonRelationship.created_at)
         ).all()
     )
+    return [relationship_read(db, item, secret_store) for item in relationships]
 
 
 @router.get("/elder-profiles", response_model=list[ElderProfileRead])
-def list_elder_profiles(db: Session = Depends(get_db)) -> list[ElderProfileRead]:
+def list_elder_profiles(
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[ElderProfileRead]:
     profiles = db.scalars(select(ElderProfile).order_by(ElderProfile.created_at.desc())).all()
-    return [elder_read(profile) for profile in profiles]
+    return [elder_read(db, profile, secret_store) for profile in profiles]
 
 
 @router.get("/elder-profiles/{profile_id}", response_model=ElderProfileRead)
-def get_elder_profile(profile_id: str, db: Session = Depends(get_db)) -> ElderProfileRead:
+def get_elder_profile(
+    profile_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> ElderProfileRead:
     profile = require(
         db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位老人的测试档案。"
     )
-    return elder_read(profile)
+    return elder_read(db, profile, secret_store)
 
 
 @router.put(
@@ -469,8 +1064,9 @@ def upsert_topic_preference(
     topic_key: str,
     payload: TopicPreferenceUpsert,
     db: Session = Depends(get_db),
-) -> TopicPreference:
-    require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> TopicPreferenceRead:
+    profile = require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
     normalized_topic = topic_key.strip()
     if payload.topic_key.strip() != normalized_topic:
         raise DomainError("TOPIC_KEY_MISMATCH", "路径和内容中的话题不一致。", 422)
@@ -495,6 +1091,14 @@ def upsert_topic_preference(
             **values,
         )
         db.add(preference)
+    db.flush()
+    protect_values(
+        db,
+        profile.person.family,
+        preference,
+        {"note": values["note"], "updated_by": values["updated_by"]},
+        secret_store,
+    )
     if payload.preference == "avoid":
         reminders = db.scalars(
             select(Reminder).where(
@@ -507,7 +1111,7 @@ def upsert_topic_preference(
             reminder.status = "paused_by_preference"
     db.commit()
     db.refresh(preference)
-    return preference
+    return topic_preference_read(db, preference, secret_store)
 
 
 @router.get(
@@ -515,16 +1119,19 @@ def upsert_topic_preference(
     response_model=list[TopicPreferenceRead],
 )
 def list_topic_preferences(
-    profile_id: str, db: Session = Depends(get_db)
-) -> list[TopicPreference]:
+    profile_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[TopicPreferenceRead]:
     require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
-    return list(
+    preferences = list(
         db.scalars(
             select(TopicPreference)
             .where(TopicPreference.elder_id == profile_id)
             .order_by(TopicPreference.topic_key)
         ).all()
     )
+    return [topic_preference_read(db, item, secret_store) for item in preferences]
 
 
 @router.get("/question-prompts", response_model=list[QuestionPromptRead])
@@ -545,7 +1152,9 @@ def list_question_prompts(db: Session = Depends(get_db)) -> list[QuestionPrompt]
     response_model=ElderMemoryContext,
 )
 def get_elder_memory_context(
-    profile_id: str, db: Session = Depends(get_db)
+    profile_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
 ) -> ElderMemoryContext:
     profile = require(
         db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。"
@@ -570,9 +1179,12 @@ def get_elder_memory_context(
             )
             for stage in stages
         ],
-        preferences=[TopicPreferenceRead.model_validate(item) for item in profile.topic_preferences],
+        preferences=[
+            topic_preference_read(db, item, secret_store)
+            for item in profile.topic_preferences
+        ],
         confirmed_facts=[
-            MemoryFactRead.model_validate(item)
+            memory_fact_read(db, item, secret_store)
             for item in profile.memory_facts
             if item.status == "active"
         ],
@@ -700,7 +1312,8 @@ def create_memory_book(
     profile_id: str,
     payload: MemoryBookCreate,
     db: Session = Depends(get_db),
-) -> MemoryBook:
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> MemoryBookRead:
     profile = require(
         db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。"
     )
@@ -715,8 +1328,13 @@ def create_memory_book(
         )
         or 0
     ) + 1
-    title = payload.title.strip() if payload.title else f"{profile.preferred_name}的家庭回忆录"
-    markdown_content, manifest = render_memory_book(profile, stories, title=title)
+    profile_view, story_views = decrypted_book_sources(
+        db, profile, stories, secret_store
+    )
+    title = payload.title.strip() if payload.title else f"{profile_view.preferred_name}的家庭回忆录"
+    markdown_content, manifest = render_memory_book(
+        profile_view, story_views, title=title
+    )
     book = MemoryBook(
         elder_id=profile.id,
         version=version,
@@ -728,40 +1346,62 @@ def create_memory_book(
         status="ready",
     )
     db.add(book)
+    db.flush()
+    protect_values(
+        db,
+        profile.person.family,
+        book,
+        {
+            "title": title,
+            "markdown_content": markdown_content,
+            "story_manifest": manifest,
+            "created_by": payload.created_by.strip(),
+        },
+        secret_store,
+    )
     db.commit()
     db.refresh(book)
-    return book
+    return memory_book_read(db, book, secret_store)
 
 
 @router.get(
     "/elder-profiles/{profile_id}/memory-books", response_model=list[MemoryBookRead]
 )
 def list_memory_books(
-    profile_id: str, db: Session = Depends(get_db)
-) -> list[MemoryBook]:
+    profile_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[MemoryBookRead]:
     require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
-    return list(
+    books = list(
         db.scalars(
             select(MemoryBook)
             .where(MemoryBook.elder_id == profile_id)
             .order_by(MemoryBook.version.desc())
         ).all()
     )
+    return [memory_book_read(db, item, secret_store) for item in books]
 
 
 @router.get("/memory-books/{book_id}/markdown")
 def download_memory_book_markdown(
-    book_id: str, db: Session = Depends(get_db)
+    book_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
 ) -> Response:
     book = require(
         db, MemoryBook, book_id, "MEMORY_BOOK_NOT_FOUND", "没有找到这个回忆录版本。"
     )
-    if markdown_sha256(book.markdown_content) != book.content_sha256:
+    family = book.elder.person.family
+    markdown_content = secure_value(
+        db, family, book, "markdown_content", secret_store
+    )
+    if markdown_sha256(markdown_content) != book.content_sha256:
         raise DomainError(
             "MEMORY_BOOK_INTEGRITY_FAILED", "回忆录文件完整性校验失败，已阻止下载。", 409
         )
     return Response(
-        content=book.markdown_content.encode("utf-8"),
+        content=markdown_content.encode("utf-8"),
         media_type="text/markdown; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="niannian-memory-book-v{book.version}.md"'
@@ -771,12 +1411,20 @@ def download_memory_book_markdown(
 
 @router.get("/memory-books/{book_id}/pdf")
 def download_memory_book_pdf(
-    book_id: str, db: Session = Depends(get_db)
+    book_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
 ) -> FileResponse:
     book = require(
         db, MemoryBook, book_id, "MEMORY_BOOK_NOT_FOUND", "没有找到这个回忆录版本。"
     )
     settings = get_settings()
+    family = book.elder.person.family
+    key = family_master_key(family, secret_store)
+    title = secure_value(db, family, book, "title", secret_store, master_key=key)
+    manifest = secure_value(
+        db, family, book, "story_manifest", secret_store, master_key=key
+    )
     relative_path = f"exports/memory-books/{book.elder_id}/{book.id}.pdf"
     output_path = resolve_controlled_path(settings.resolved_asset_root, relative_path)
     needs_generation = (
@@ -788,20 +1436,40 @@ def download_memory_book_pdf(
         stories_by_id = {story.id: story for story in book.elder.stories}
         stories = [
             stories_by_id[item["story_id"]]
-            for item in book.story_manifest
+            for item in manifest
             if item.get("story_id") in stories_by_id
         ]
+        profile_view, story_views = decrypted_book_sources(
+            db, book.elder, stories, secret_store
+        )
         temporary_path = output_path.with_suffix(".tmp.pdf")
         try:
             pdf_sha256 = render_memory_book_pdf(
-                book.elder,
-                stories,
-                title=book.title,
+                profile_view,
+                story_views,
+                title=title,
                 output_path=temporary_path,
             )
-            temporary_path.replace(output_path)
+            if is_encrypted_family(family):
+                encrypted_temporary = output_path.with_suffix(".tmp.encrypted")
+                result = encrypt_media_file(
+                    temporary_path,
+                    encrypted_temporary,
+                    key,
+                    associated_data=media_context(
+                        family.id, f"memory-book-{book.id}"
+                    ),
+                )
+                os.replace(encrypted_temporary, output_path)
+                temporary_path.unlink(missing_ok=True)
+                book.pdf_encryption_version = 1
+                book.pdf_ciphertext_size = result.ciphertext_size
+                book.pdf_ciphertext_sha256 = result.ciphertext_sha256
+            else:
+                temporary_path.replace(output_path)
         except Exception as exc:
             temporary_path.unlink(missing_ok=True)
+            output_path.with_suffix(".tmp.encrypted").unlink(missing_ok=True)
             book.pdf_status = "failed"
             db.commit()
             raise DomainError(
@@ -814,7 +1482,12 @@ def download_memory_book_pdf(
         book.pdf_sha256 = pdf_sha256
         db.commit()
         db.refresh(book)
-    if not book.pdf_sha256 or calculate_sha256(output_path) != book.pdf_sha256:
+    expected_stored_sha = (
+        book.pdf_ciphertext_sha256
+        if book.pdf_encryption_version == 1
+        else book.pdf_sha256
+    )
+    if not expected_stored_sha or calculate_sha256(output_path) != expected_stored_sha:
         book.pdf_status = "corrupt"
         db.commit()
         raise DomainError(
@@ -822,17 +1495,55 @@ def download_memory_book_pdf(
             "打印版 PDF 完整性校验失败，已阻止下载。",
             409,
         )
+    if book.pdf_encryption_version == 0:
+        return FileResponse(
+            output_path,
+            media_type="application/pdf",
+            filename=f"niannian-memory-book-v{book.version}.pdf",
+        )
+    runtime_dir = settings.resolved_asset_root / "runtime" / "decrypted"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f"memory-book-{book.id}-", suffix=".pdf", dir=runtime_dir
+    )
+    os.close(descriptor)
+    decrypted_path = Path(temporary_name)
+    decrypted_path.unlink(missing_ok=True)
+    try:
+        result = decrypt_media_file(
+            output_path,
+            decrypted_path,
+            key,
+            associated_data=media_context(family.id, f"memory-book-{book.id}"),
+        )
+    except Exception as exc:
+        decrypted_path.unlink(missing_ok=True)
+        raise DomainError(
+            "MEMORY_BOOK_PDF_DECRYPTION_FAILED",
+            "打印版 PDF 无法解密，请从备份恢复。",
+            409,
+        ) from exc
+    if result.plaintext_sha256 != book.pdf_sha256:
+        decrypted_path.unlink(missing_ok=True)
+        raise DomainError(
+            "MEMORY_BOOK_PDF_INTEGRITY_FAILED",
+            "打印版 PDF 解密后校验失败，已阻止下载。",
+            409,
+        )
     return FileResponse(
-        output_path,
+        decrypted_path,
         media_type="application/pdf",
         filename=f"niannian-memory-book-v{book.version}.pdf",
+        background=BackgroundTask(decrypted_path.unlink, missing_ok=True),
     )
 
 
 @router.post("/memory-sessions", response_model=MemorySessionRead, status_code=201)
 def create_memory_session(
-    payload: MemorySessionCreate, db: Session = Depends(get_db)
-) -> MemorySession:
+    payload: MemorySessionCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> MemorySessionRead:
     elder = require(
         db, ElderProfile, payload.elder_id, "ELDER_NOT_FOUND", "没有找到这位老人的测试档案。"
     )
@@ -892,25 +1603,38 @@ def create_memory_session(
         status="PROMPT_READY",
     )
     db.add(session)
+    db.flush()
+    family = elder.person.family
+    protect_values(
+        db,
+        family,
+        session,
+        {"question_text": question.question_text},
+        secret_store,
+    )
     db.commit()
     db.refresh(session)
-    return session
+    return memory_session_read(db, session, secret_store)
 
 
 @router.get("/memory-sessions/{session_id}", response_model=SessionDetail)
-def get_memory_session(session_id: str, db: Session = Depends(get_db)) -> SessionDetail:
+def get_memory_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> SessionDetail:
     session = require(
         db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次回忆记录。"
     )
-    assets = [media_read(asset) for asset in session.media_assets]
+    assets = [media_read(db, asset, secret_store) for asset in session.media_assets]
     tasks = sorted(session.tasks, key=lambda item: item.created_at, reverse=True)
     return SessionDetail(
-        session=MemorySessionRead.model_validate(session),
+        session=memory_session_read(db, session, secret_store),
         media_assets=assets,
-        transcript=TranscriptRead.model_validate(session.transcript)
+        transcript=transcript_read(db, session.transcript, secret_store)
         if session.transcript
         else None,
-        story_draft=StoryDraftRead.model_validate(session.story_draft)
+        story_draft=story_draft_read(db, session.story_draft, secret_store)
         if session.story_draft
         else None,
         tasks=[TaskRead.model_validate(task) for task in tasks],
@@ -918,7 +1642,11 @@ def get_memory_session(session_id: str, db: Session = Depends(get_db)) -> Sessio
 
 
 @router.post("/memory-sessions/{session_id}/skip", response_model=MemorySessionRead)
-def skip_memory_session(session_id: str, db: Session = Depends(get_db)) -> MemorySession:
+def skip_memory_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> MemorySessionRead:
     session = require(
         db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次回忆记录。"
     )
@@ -939,17 +1667,24 @@ def skip_memory_session(session_id: str, db: Session = Depends(get_db)) -> Memor
     for task in list(session.tasks):
         db.delete(task)
     session.status = "SKIPPED"
-    db.add(
-        ConsentEvent(
-            action="skip",
-            actor_label="family_tester",
-            object_type="memory_session",
-            object_id=session.id,
-        )
+    skip_event = ConsentEvent(
+        action="skip",
+        actor_label="family_tester",
+        object_type="memory_session",
+        object_id=session.id,
+    )
+    db.add(skip_event)
+    db.flush()
+    protect_values(
+        db,
+        session.elder.person.family,
+        skip_event,
+        {"actor_label": "family_tester"},
+        secret_store,
     )
     db.commit()
     db.refresh(session)
-    return session
+    return memory_session_read(db, session, secret_store)
 
 
 @router.post(
@@ -959,6 +1694,7 @@ async def upload_audio(
     session_id: str,
     audio: UploadFile = File(...),
     db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
 ) -> MediaAssetRead:
     session = require(
         db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次回忆记录。"
@@ -975,11 +1711,21 @@ async def upload_audio(
         **stored,
     )
     db.add(asset)
+    db.flush()
+    family = session.elder.person.family
+    protect_values(
+        db,
+        family,
+        asset,
+        {"original_filename": asset.original_filename},
+        secret_store,
+    )
+    encrypt_asset_if_needed(db, asset, family, secret_store)
     if session.status != "AUDIO_UPLOADED":
         session.status = transition(session.status, "AUDIO_UPLOADED")
     db.commit()
     db.refresh(asset)
-    return media_read(asset)
+    return media_read(db, asset, secret_store)
 
 
 @router.post(
@@ -993,7 +1739,8 @@ async def upload_trigger_image(
     trigger_kind: str = Form(...),
     user_annotation: str | None = Form(default=None),
     db: Session = Depends(get_db),
-) -> MediaLink:
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> MediaLinkRead:
     session = require(
         db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次回忆记录。"
     )
@@ -1015,6 +1762,15 @@ async def upload_trigger_image(
     )
     db.add(asset)
     db.flush()
+    family = session.elder.person.family
+    protect_values(
+        db,
+        family,
+        asset,
+        {"original_filename": asset.original_filename},
+        secret_store,
+    )
+    encrypt_asset_if_needed(db, asset, family, secret_store)
     link = MediaLink(
         media_asset_id=asset.id,
         elder_id=session.elder_id,
@@ -1025,9 +1781,20 @@ async def upload_trigger_image(
         model_inference=None,
     )
     db.add(link)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        link,
+        {
+            "user_annotation": user_annotation.strip()[:1000] if user_annotation else None,
+            "model_inference": None,
+        },
+        secret_store,
+    )
     db.commit()
     db.refresh(link)
-    return link
+    return media_link_read(db, link, secret_store)
 
 
 @router.delete("/media-assets/{asset_id}", status_code=204)
@@ -1076,7 +1843,10 @@ def create_task(
 
 
 def reserve_model_consent(
-    db: Session, session: MemorySession, consent_event_id: str | None
+    db: Session,
+    session: MemorySession,
+    consent_event_id: str | None,
+    store: SecretStore,
 ) -> str | None:
     family = session.elder.person.family
     if not requires_explicit_model_consent(
@@ -1084,12 +1854,19 @@ def reserve_model_consent(
     ):
         return None
     consent = db.get(ModelConsentEvent, consent_event_id) if consent_event_id else None
+    corrected_text = (
+        secure_value(
+            db, family, session.transcript, "corrected_text", store
+        )
+        if session.transcript
+        else ""
+    )
     error_code = model_consent_error(
         consent,
         family_id=family.id,
         session_id=session.id,
         data_classification=family.data_classification,
-        corrected_text=session.transcript.corrected_text if session.transcript else "",
+        corrected_text=corrected_text,
         require_consumed=False,
     )
     if error_code:
@@ -1111,6 +1888,7 @@ def submit_transcription(
     session_id: str,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
 ) -> WorkflowTask:
     session = require(
         db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次回忆记录。"
@@ -1118,7 +1896,7 @@ def submit_transcription(
     if session.status != "AUDIO_UPLOADED":
         raise DomainError("SESSION_NOT_READY_FOR_TRANSCRIPTION", "请先上传音频。", 409)
     task = create_task(db, session, "transcription", "AUDIO_UPLOADED")
-    background_tasks.add_task(process_transcription, task.id)
+    background_tasks.add_task(process_transcription, task.id, secret_store)
     return task
 
 
@@ -1133,6 +1911,7 @@ def retry_task(
     background_tasks: BackgroundTasks,
     payload: TaskRetryRequest | None = None,
     db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
 ) -> WorkflowTask:
     old_task = require(db, WorkflowTask, task_id, "TASK_NOT_FOUND", "没有找到这个处理任务。")
     if old_task.status not in {"failed_retryable", "failed_final"}:
@@ -1146,7 +1925,7 @@ def retry_task(
     consent_event_id = None
     if old_task.task_type == "organization":
         consent_event_id = reserve_model_consent(
-            db, session, payload.consent_event_id if payload else None
+            db, session, payload.consent_event_id if payload else None, secret_store
         )
     new_task = create_task(
         db,
@@ -1156,7 +1935,7 @@ def retry_task(
         model_consent_event_id=consent_event_id,
     )
     worker = process_transcription if old_task.task_type == "transcription" else process_organization
-    background_tasks.add_task(worker, new_task.id)
+    background_tasks.add_task(worker, new_task.id, secret_store)
     return new_task
 
 
@@ -1165,7 +1944,8 @@ def update_transcript(
     transcript_id: str,
     payload: TranscriptUpdate,
     db: Session = Depends(get_db),
-) -> Transcript:
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> TranscriptRead:
     transcript = require(
         db, Transcript, transcript_id, "TRANSCRIPT_NOT_FOUND", "没有找到这份转写。"
     )
@@ -1181,7 +1961,15 @@ def update_transcript(
     ).all()
     for consent in unused_consents:
         consent.revoked_at = now_utc()
-    transcript.corrected_text = payload.corrected_text.strip()
+    corrected_text = payload.corrected_text.strip()
+    transcript.corrected_text = corrected_text
+    protect_values(
+        db,
+        session.elder.person.family,
+        transcript,
+        {"corrected_text": corrected_text},
+        secret_store,
+    )
     transcript.version += 1
     if session.status == "DRAFT_REVIEW":
         session.status = transition(session.status, "TRANSCRIPT_REVIEW")
@@ -1189,7 +1977,7 @@ def update_transcript(
             session.story_draft.status = "outdated"
     db.commit()
     db.refresh(transcript)
-    return transcript
+    return transcript_read(db, transcript, secret_store)
 
 
 @router.post(
@@ -1201,7 +1989,8 @@ def create_model_consent(
     session_id: str,
     payload: ModelConsentCreate,
     db: Session = Depends(get_db),
-) -> ModelConsentEvent:
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> ModelConsentRead:
     session = require(
         db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次回忆记录。"
     )
@@ -1226,12 +2015,22 @@ def create_model_consent(
         data_classification=family.data_classification,
         decision="granted",
         one_time=True,
-        input_sha256=corrected_text_sha256(session.transcript.corrected_text),
+        input_sha256=corrected_text_sha256(
+            secure_value(db, family, session.transcript, "corrected_text", secret_store)
+        ),
     )
     db.add(consent)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        consent,
+        {"actor_label": payload.actor_label.strip()},
+        secret_store,
+    )
     db.commit()
     db.refresh(consent)
-    return consent
+    return model_consent_read(db, consent, secret_store)
 
 
 @router.post(
@@ -1244,6 +2043,7 @@ def submit_organization(
     background_tasks: BackgroundTasks,
     payload: OrganizationTaskCreate | None = None,
     db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
 ) -> WorkflowTask:
     session = require(
         db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次回忆记录。"
@@ -1251,7 +2051,7 @@ def submit_organization(
     if session.status != "TRANSCRIPT_REVIEW" or not session.transcript:
         raise DomainError("SESSION_NOT_READY_FOR_ORGANIZATION", "请先完成转写校对。", 409)
     consent_event_id = reserve_model_consent(
-        db, session, payload.consent_event_id if payload else None
+        db, session, payload.consent_event_id if payload else None, secret_store
     )
     task = create_task(
         db,
@@ -1260,17 +2060,26 @@ def submit_organization(
         "TRANSCRIPT_REVIEW",
         model_consent_event_id=consent_event_id,
     )
-    background_tasks.add_task(process_organization, task.id)
+    background_tasks.add_task(process_organization, task.id, secret_store)
     return task
 
 
 @router.get("/story-drafts/{draft_id}", response_model=StoryDraftRead)
-def get_story_draft(draft_id: str, db: Session = Depends(get_db)) -> StoryDraft:
-    return require(db, StoryDraft, draft_id, "DRAFT_NOT_FOUND", "没有找到这份故事草稿。")
+def get_story_draft(
+    draft_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> StoryDraftRead:
+    draft = require(db, StoryDraft, draft_id, "DRAFT_NOT_FOUND", "没有找到这份故事草稿。")
+    return story_draft_read(db, draft, secret_store)
 
 
 @router.post("/story-drafts/{draft_id}/reject", response_model=StoryDraftRead)
-def reject_story_draft(draft_id: str, db: Session = Depends(get_db)) -> StoryDraft:
+def reject_story_draft(
+    draft_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> StoryDraftRead:
     draft = require(db, StoryDraft, draft_id, "DRAFT_NOT_FOUND", "没有找到这份故事草稿。")
     session = draft.session
     if session.status != "DRAFT_REVIEW":
@@ -1279,7 +2088,7 @@ def reject_story_draft(draft_id: str, db: Session = Depends(get_db)) -> StoryDra
     session.status = transition(session.status, "TRANSCRIPT_REVIEW")
     db.commit()
     db.refresh(draft)
-    return draft
+    return story_draft_read(db, draft, secret_store)
 
 
 @router.post("/story-drafts/{draft_id}/confirm", response_model=StoryRead)
@@ -1287,66 +2096,116 @@ def confirm_story_draft(
     draft_id: str,
     payload: ConfirmDraftRequest,
     db: Session = Depends(get_db),
-) -> Story:
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> StoryRead:
     draft = require(db, StoryDraft, draft_id, "DRAFT_NOT_FOUND", "没有找到这份故事草稿。")
     existing = db.scalar(select(Story).where(Story.source_draft_id == draft.id))
     if existing:
-        return existing
+        return story_read(db, existing, secret_store)
     session = draft.session
     if session.status != "DRAFT_REVIEW" or draft.status != "pending_review":
         raise DomainError("DRAFT_NOT_REVIEWABLE", "这份草稿当前不能确认归档。", 409)
     if draft.transcript_version != session.transcript.version:
         raise DomainError("DRAFT_OUTDATED", "转写已经修改，请重新整理后再归档。", 409)
 
+    family = session.elder.person.family
+    key = family_master_key(family, secret_store)
+    draft_title = secure_value(db, family, draft, "title", secret_store, master_key=key)
+    draft_body = secure_value(db, family, draft, "body", secret_store, master_key=key)
+    timeline_mentions = secure_value(
+        db, family, draft, "timeline_mentions", secret_store, master_key=key
+    )
+    preferred_name = secure_value(
+        db, family, session.elder, "preferred_name", secret_store, master_key=key
+    )
     session.status = transition(session.status, "CONFIRMED")
     story = Story(
         elder_id=session.elder_id,
         source_draft_id=draft.id,
-        title=draft.title,
-        body=draft.body,
+        title=draft_title,
+        body=draft_body,
         confirmed_by=payload.confirmed_by.strip(),
     )
     db.add(story)
     db.flush()
-    db.add(
-        MemoryFact(
-            elder_id=session.elder_id,
-            story_id=story.id,
-            fact_type="confirmed_story",
-            subject_label=session.elder.preferred_name,
-            value_text=story.body,
-            content_sha256=hashlib.sha256(story.body.encode("utf-8")).hexdigest(),
-            confidence="confirmed",
-            status="active",
-        )
+    protect_values(
+        db,
+        family,
+        story,
+        {
+            "title": draft_title,
+            "body": draft_body,
+            "confirmed_by": payload.confirmed_by.strip(),
+        },
+        secret_store,
     )
-    for mention in draft.timeline_mentions:
-        db.add(
-            TimelineEvent(
-                story_id=story.id,
-                time_expression=mention.get("expression"),
-                normalized_time=mention.get("normalized"),
-                confidence=mention.get("confidence", "uncertain"),
-            )
+    fact = MemoryFact(
+        elder_id=session.elder_id,
+        story_id=story.id,
+        fact_type="confirmed_story",
+        subject_label=preferred_name,
+        value_text=draft_body,
+        content_sha256=hashlib.sha256(draft_body.encode("utf-8")).hexdigest(),
+        confidence="confirmed",
+        status="active",
+    )
+    db.add(fact)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        fact,
+        {"subject_label": preferred_name, "value_text": draft_body},
+        secret_store,
+    )
+    for mention in timeline_mentions:
+        event = TimelineEvent(
+            story_id=story.id,
+            time_expression=mention.get("expression"),
+            normalized_time=mention.get("normalized"),
+            confidence=mention.get("confidence", "uncertain"),
+        )
+        db.add(event)
+        db.flush()
+        protect_values(
+            db,
+            family,
+            event,
+            {
+                "time_expression": mention.get("expression"),
+                "normalized_time": mention.get("normalized"),
+            },
+            secret_store,
         )
     draft.status = "confirmed"
-    db.add(
-        ConsentEvent(
-            action="confirm_archive",
-            actor_label=payload.confirmed_by.strip(),
-            object_type="story_draft",
-            object_id=draft.id,
-        )
+    confirmation_event = ConsentEvent(
+        action="confirm_archive",
+        actor_label=payload.confirmed_by.strip(),
+        object_type="story_draft",
+        object_id=draft.id,
+    )
+    db.add(confirmation_event)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        confirmation_event,
+        {"actor_label": payload.confirmed_by.strip()},
+        secret_store,
     )
     session.status = transition(session.status, "ARCHIVED")
     db.commit()
     db.refresh(story)
-    return story
+    return story_read(db, story, secret_store)
 
 
 @router.get("/elder-profiles/{profile_id}/timeline", response_model=list[TimelineItem])
-def get_timeline(profile_id: str, db: Session = Depends(get_db)) -> list[TimelineItem]:
-    require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位老人的测试档案。")
+def get_timeline(
+    profile_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[TimelineItem]:
+    profile = require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位老人的测试档案。")
     stories = db.scalars(
         select(Story).where(Story.elder_id == profile_id).order_by(Story.confirmed_at.desc())
     ).all()
@@ -1364,8 +2223,13 @@ def get_timeline(profile_id: str, db: Session = Depends(get_db)) -> list[Timelin
         )
         items.append(
             TimelineItem(
-                story=StoryRead.model_validate(story),
-                events=[TimelineEventRead.model_validate(event) for event in story.timeline_events],
+                story=story_read(db, story, secret_store),
+                events=[
+                    timeline_event_read(
+                        db, event, profile.person.family, secret_store
+                    )
+                    for event in story.timeline_events
+                ],
                 audio_url=f"/api/v1/media-assets/{original.id}/content" if original else None,
             )
         )
@@ -1373,7 +2237,11 @@ def get_timeline(profile_id: str, db: Session = Depends(get_db)) -> list[Timelin
 
 
 @router.get("/media-assets/{asset_id}/content")
-def get_media_content(asset_id: str, db: Session = Depends(get_db)) -> FileResponse:
+def get_media_content(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> FileResponse:
     asset = require(db, MediaAsset, asset_id, "ASSET_NOT_FOUND", "没有找到这个音频文件。")
     path = resolve_controlled_path(get_settings().resolved_asset_root, asset.relative_path)
     if not path.is_file():
@@ -1393,4 +2261,54 @@ def get_media_content(asset_id: str, db: Session = Depends(get_db)) -> FileRespo
         )
     asset.integrity_checked_at = now_utc()
     db.commit()
-    return FileResponse(path, media_type=asset.mime_type, filename=asset.original_filename)
+    family = asset.session.elder.person.family
+    filename = secure_value(db, family, asset, "original_filename", secret_store)
+    if asset.encryption_version == 0:
+        return FileResponse(path, media_type=asset.mime_type, filename=filename)
+    if asset.encryption_version != 1:
+        raise DomainError("ASSET_ENCRYPTION_UNSUPPORTED", "不支持这份媒体的加密版本。", 409)
+    key = family_master_key(family, secret_store)
+    if key is None:
+        raise DomainError("MASTER_KEY_MISSING", "无法解锁家庭档案。", 409)
+    runtime_dir = get_settings().resolved_asset_root / "runtime" / "decrypted"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f"{asset.id}-", suffix=Path(filename).suffix, dir=runtime_dir
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
+    temporary_path.unlink(missing_ok=True)
+    try:
+        result = decrypt_media_file(
+            path,
+            temporary_path,
+            key,
+            associated_data=media_context(family.id, asset.id),
+        )
+    except Exception as exc:
+        temporary_path.unlink(missing_ok=True)
+        asset.status = "corrupt"
+        db.commit()
+        raise DomainError(
+            "ASSET_DECRYPTION_FAILED",
+            "媒体无法解密，密钥错误或文件已损坏，请从备份恢复。",
+            409,
+        ) from exc
+    if (
+        result.plaintext_size != asset.plaintext_size_bytes
+        or result.plaintext_sha256 != asset.plaintext_sha256
+    ):
+        temporary_path.unlink(missing_ok=True)
+        asset.status = "corrupt"
+        db.commit()
+        raise DomainError(
+            "ASSET_PLAINTEXT_INTEGRITY_FAILED",
+            "媒体解密后校验失败，请从备份恢复。",
+            409,
+        )
+    return FileResponse(
+        temporary_path,
+        media_type=asset.mime_type,
+        filename=filename,
+        background=BackgroundTask(temporary_path.unlink, missing_ok=True),
+    )

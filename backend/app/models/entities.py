@@ -40,6 +40,9 @@ class FamilyArchive(TimestampMixin, Base):
     relationships: Mapped[list[PersonRelationship]] = relationship(
         back_populates="family", cascade="all, delete-orphan"
     )
+    encrypted_fields: Mapped[list[EncryptedField]] = relationship(
+        back_populates="family", cascade="all, delete-orphan"
+    )
 
 
 class Person(TimestampMixin, Base):
@@ -127,6 +130,8 @@ class MediaAsset(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), default="ready")
     is_original: Mapped[bool] = mapped_column(Boolean, default=True)
     encryption_version: Mapped[int] = mapped_column(Integer, default=0)
+    plaintext_size_bytes: Mapped[int | None] = mapped_column(Integer)
+    plaintext_sha256: Mapped[str | None] = mapped_column(String(64))
     integrity_checked_at: Mapped[datetime | None] = mapped_column()
 
     session: Mapped[MemorySession] = relationship(back_populates="media_assets")
@@ -248,6 +253,8 @@ class ArchiveSecurity(TimestampMixin, Base):
     encryption_status: Mapped[str] = mapped_column(String(40), default="key_ready")
     initialized_at: Mapped[datetime] = mapped_column(default=now_utc)
     recovery_package_created_at: Mapped[datetime | None] = mapped_column()
+    activated_at: Mapped[datetime | None] = mapped_column()
+    recovery_verified_at: Mapped[datetime | None] = mapped_column()
 
     family: Mapped[FamilyArchive] = relationship(back_populates="security_metadata")
 
@@ -390,6 +397,9 @@ class MemoryBook(TimestampMixin, Base):
     pdf_status: Mapped[str] = mapped_column(String(24), default="not_generated")
     pdf_relative_path: Mapped[str | None] = mapped_column(String(500))
     pdf_sha256: Mapped[str | None] = mapped_column(String(64))
+    pdf_encryption_version: Mapped[int] = mapped_column(Integer, default=0)
+    pdf_ciphertext_size: Mapped[int | None] = mapped_column(Integer)
+    pdf_ciphertext_sha256: Mapped[str | None] = mapped_column(String(64))
 
     elder: Mapped[ElderProfile] = relationship(back_populates="memory_books")
 
@@ -411,3 +421,29 @@ class MediaLink(TimestampMixin, Base):
     model_inference: Mapped[str | None] = mapped_column(Text)
 
     media_asset: Mapped[MediaAsset] = relationship(back_populates="links")
+
+
+class EncryptedField(TimestampMixin, Base):
+    __tablename__ = "encrypted_fields"
+    __table_args__ = (
+        UniqueConstraint(
+            "family_id",
+            "object_type",
+            "object_id",
+            "field_name",
+            name="uq_encrypted_object_field",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(
+        ForeignKey("family_archives.id", ondelete="CASCADE")
+    )
+    object_type: Mapped[str] = mapped_column(String(60))
+    object_id: Mapped[str] = mapped_column(String(36))
+    field_name: Mapped[str] = mapped_column(String(80))
+    ciphertext: Mapped[str] = mapped_column(Text)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    key_version: Mapped[int] = mapped_column(Integer, default=1)
+
+    family: Mapped[FamilyArchive] = relationship(back_populates="encrypted_fields")

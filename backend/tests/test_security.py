@@ -8,14 +8,18 @@ import pytest
 from app.services.security import (
     EncryptionError,
     InMemorySecretStore,
+    MediaEncryptionError,
     MasterKeyManager,
     RecoveryPackageError,
     SecretStoreError,
     build_recovery_package,
+    decrypt_media_file,
     decrypt_text,
     encrypt_text,
+    encrypt_media_file,
     generate_master_key,
     recover_master_key,
+    media_context,
     write_recovery_package,
 )
 
@@ -98,3 +102,33 @@ def test_recovery_package_file_is_private_and_never_overwritten(tmp_path):
     assert package_path.stat().st_mode & 0o777 == 0o600
     with pytest.raises(RecoveryPackageError, match="已存在"):
         write_recovery_package(package_path, package)
+
+
+def test_streaming_media_encryption_round_trip_and_tamper_detection(tmp_path):
+    key = generate_master_key()
+    context = media_context("family-test", "asset-test")
+    plaintext = (b"virtual-family-audio" * 100_000) + b"end"
+    source = tmp_path / "source.bin"
+    encrypted = tmp_path / "encrypted.nnmedia"
+    restored = tmp_path / "restored.bin"
+    source.write_bytes(plaintext)
+
+    result = encrypt_media_file(source, encrypted, key, associated_data=context)
+
+    assert encrypted.read_bytes().startswith(b"NNMEDIA1")
+    assert plaintext[:100] not in encrypted.read_bytes()
+    assert result.plaintext_size == len(plaintext)
+    assert encrypted.stat().st_mode & 0o777 == 0o600
+    restored_result = decrypt_media_file(
+        encrypted, restored, key, associated_data=context
+    )
+    assert restored.read_bytes() == plaintext
+    assert restored_result.plaintext_sha256 == result.plaintext_sha256
+
+    tampered = bytearray(encrypted.read_bytes())
+    tampered[-20] ^= 1
+    encrypted.write_bytes(tampered)
+    failed_target = tmp_path / "failed.bin"
+    with pytest.raises(MediaEncryptionError, match="已被篡改"):
+        decrypt_media_file(encrypted, failed_target, key, associated_data=context)
+    assert not failed_target.exists()

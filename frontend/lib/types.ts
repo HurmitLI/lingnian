@@ -74,6 +74,8 @@ export type FamilySecurity = {
   encryption_status: "not_initialized" | "key_ready" | "encrypted" | string;
   key_initialized: boolean;
   recovery_package_created_at: string | null;
+  recovery_verified_at: string | null;
+  activated_at: string | null;
 };
 
 export type ModelConsent = {

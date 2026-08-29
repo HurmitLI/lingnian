@@ -70,11 +70,20 @@ class FamilySecurityRead(BaseModel):
     encryption_status: str
     key_initialized: bool
     recovery_package_created_at: datetime | None
+    recovery_verified_at: datetime | None
+    activated_at: datetime | None
 
 
 class RecoveryPackageCreate(BaseModel):
     actor_label: str = Field(min_length=1, max_length=80)
     recovery_passphrase: SecretStr = Field(min_length=12, max_length=200)
+
+
+class SecurityActivationRequest(BaseModel):
+    actor_label: str = Field(min_length=1, max_length=80)
+    data_classification: str = Field(
+        pattern="^(authorized_non_sensitive|authorized_sensitive)$"
+    )
 
 
 class ElderProfileCreate(BaseModel):

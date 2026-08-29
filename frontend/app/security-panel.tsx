@@ -16,6 +16,10 @@ export default function SecurityPanel({ familyId }: Props) {
   const [notice, setNotice] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [confirmation, setConfirmation] = useState("");
+  const [recoveryFile, setRecoveryFile] = useState<File | null>(null);
+  const [verificationPassphrase, setVerificationPassphrase] = useState("");
+  const [classification, setClassification] = useState<"authorized_non_sensitive" | "authorized_sensitive">("authorized_non_sensitive");
+  const [activationConfirmed, setActivationConfirmed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,14 +103,68 @@ export default function SecurityPanel({ familyId }: Props) {
     }
   }
 
+  async function verifyRecoveryPackage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!familyId || !recoveryFile) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const form = new FormData();
+      form.append("package", recoveryFile);
+      form.append("recovery_passphrase", verificationPassphrase);
+      form.append("actor_label", "本机家庭管理员");
+      const result = await api<FamilySecurity>(
+        `/api/v1/families/${familyId}/security/verify-recovery`,
+        { method: "POST", body: form },
+      );
+      setSecurity(result);
+      setRecoveryFile(null);
+      setVerificationPassphrase("");
+      setNotice("恢复包已成功还原出同一把主密钥。现在才可以选择是否启用真实资料。");
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "恢复验证没有成功。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function activateEncryption(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!familyId || !activationConfirmed) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api<FamilySecurity>(
+        `/api/v1/families/${familyId}/security/activate`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            actor_label: "本机家庭管理员",
+            data_classification: classification,
+          }),
+        },
+      );
+      setSecurity(result);
+      setNotice("本机档案已完成静态加密，真实资料模式已启用。");
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "真实资料模式启用失败。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const statusText = !familyId
     ? "请先选择家庭档案"
     : !security
       ? "正在读取"
       : security.encryption_status === "not_initialized"
         ? "尚未初始化"
-        : security.encryption_status === "encrypted"
+        : security.encryption_status === "active_encrypted"
           ? "本机加密已完成"
+          : security.encryption_status === "encryption_failed"
+            ? "加密未完成，仍禁止真实资料"
           : "主密钥已就绪，资料待加密";
 
   return (
@@ -122,6 +180,7 @@ export default function SecurityPanel({ familyId }: Props) {
       <div className="security-status">
         <div><span>当前状态</span><strong>{statusText}</strong></div>
         <div><span>恢复包</span><strong>{security?.recovery_package_created_at ? "已生成" : "尚未生成"}</strong></div>
+        <div><span>恢复验证</span><strong>{security?.recovery_verified_at ? "已通过" : "尚未验证"}</strong></div>
       </div>
       {error && <div className="message error" role="alert">{error}</div>}
       {notice && <div className="message success" role="status">{notice}</div>}
@@ -135,7 +194,7 @@ export default function SecurityPanel({ familyId }: Props) {
         </div>
       )}
 
-      {security?.key_initialized && (
+      {security?.key_initialized && security.encryption_status !== "active_encrypted" && (
         <form className="recovery-form" onSubmit={exportRecoveryPackage}>
           <div>
             <h3>生成家庭离线恢复包</h3>
@@ -150,6 +209,30 @@ export default function SecurityPanel({ familyId }: Props) {
             <input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required />
           </label>
           <button className="button secondary" disabled={busy}>生成并下载恢复包</button>
+        </form>
+      )}
+
+      {security?.recovery_package_created_at && !security.recovery_verified_at && (
+        <form className="recovery-form" onSubmit={verifyRecoveryPackage}>
+          <div>
+            <h3>用下载的恢复包做一次恢复验证</h3>
+            <p className="hint">重新选择刚才下载的 JSON 恢复包并输入口令。验证通过前，后端不会启用真实资料。</p>
+          </div>
+          <label className="field"><span>恢复包文件</span><input type="file" accept="application/json,.json" required onChange={(event) => setRecoveryFile(event.target.files?.[0] ?? null)} /></label>
+          <label className="field"><span>恢复口令</span><input type="password" autoComplete="off" minLength={12} value={verificationPassphrase} onChange={(event) => setVerificationPassphrase(event.target.value)} required /></label>
+          <button className="button secondary" disabled={busy || !recoveryFile}>验证恢复包</button>
+        </form>
+      )}
+
+      {security?.recovery_verified_at && security.encryption_status !== "active_encrypted" && (
+        <form className="recovery-form activation-form" onSubmit={activateEncryption}>
+          <div>
+            <h3>启用真实资料静态加密</h3>
+            <p className="hint">系统会加密现有姓名、档案字段、转写、故事、回忆录和媒体。主密钥不会进入数据库或备份。</p>
+          </div>
+          <label className="field"><span>资料级别</span><select value={classification} onChange={(event) => setClassification(event.target.value as typeof classification)}><option value="authorized_non_sensitive">已授权非敏感家庭资料</option><option value="authorized_sensitive">已授权敏感家庭资料</option></select></label>
+          <label className="confirmation-line"><input type="checkbox" checked={activationConfirmed} onChange={(event) => setActivationConfirmed(event.target.checked)} /><span>我已把恢复包交给可信家人离线保管，并理解丢失主密钥和恢复材料后无法解密。</span></label>
+          <button className="button primary" disabled={busy || !activationConfirmed}>完成加密并启用真实资料</button>
         </form>
       )}
     </section>
