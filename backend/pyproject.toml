@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "niannian-backend"
+version = "0.1.0"
+description = "念念第一阶段：家庭记忆采集纵向切片"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "alembic>=1.14,<2",
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
+  "imageio-ffmpeg>=0.6,<1",
+  "openai>=1.68,<3",
+  "pydantic-settings>=2.8,<3",
+  "python-multipart>=0.0.20,<1",
+  "sqlalchemy>=2.0,<3",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<8",
+]
+asr = [
+  "funasr>=1.2,<2",
+  "kaldi-native-fbank>=1.22,<2",
+  "modelscope>=1.22,<2",
+  "torch>=2.6,<3",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,42 @@
+# Secrets
+.env
+backend/.env
+frontend/.env.local
+
+# Runtime data (family content must never enter Git)
+data/db/*
+data/assets/original/*
+data/assets/derived/*
+data/quarantine/*
+!data/db/.gitkeep
+!data/assets/original/.gitkeep
+!data/assets/derived/.gitkeep
+!data/quarantine/.gitkeep
+
+# Python
+.venv/
+backend/.venv/
+backend/.test-data/
+backend/.model-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*.local
+*.tsbuildinfo
+
+# Editors and macOS
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
+.runtime/
