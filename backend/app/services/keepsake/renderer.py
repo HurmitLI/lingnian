@@ -84,7 +84,7 @@ def render_story_card(
         y += int(body_font.size * 1.55)
     draw.text(
         (margin, height - 65),
-        "念念 · 家庭记忆整理 · 原始录音 · 非实时影像",
+        "聆年 · 家庭记忆整理 · 原始录音 · 非实时影像",
         font=small_font,
         fill="#fffaf0",
     )

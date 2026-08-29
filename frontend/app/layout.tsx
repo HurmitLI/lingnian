@@ -3,10 +3,14 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "念念 · 家庭记忆传家宝",
-    template: "%s · 念念",
+    default: "聆年 · 家庭记忆传家宝",
+    template: "%s · 聆年",
   },
   description: "把愿意讲的往事，慢慢留给家人。",
+  icons: {
+    icon: "/brand/lingnian-mark.png",
+    apple: "/brand/lingnian-mark.png",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

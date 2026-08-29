@@ -284,7 +284,7 @@ export default function SecurityPanel({ familyId }: Props) {
         <form className="recovery-form" onSubmit={exportRecoveryPackage}>
           <div>
             <h3>生成家庭离线恢复包</h3>
-            <p className="hint">口令只用于本次加密，不会保存在念念中。遗失主密钥和恢复材料后，档案无法解密。</p>
+            <p className="hint">口令只用于本次加密，不会保存在聆年中。遗失主密钥和恢复材料后，档案无法解密。</p>
           </div>
           <label className="field">
             <span>恢复口令（至少 12 个字符）</span>

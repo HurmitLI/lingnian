@@ -600,7 +600,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         const blob = new Blob(chunksRef.current, { type });
         if (blob.size > 0) {
           const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-          setPreviewFile(new File([blob], `念念录音-${timestamp}.${extension}`, { type }));
+          setPreviewFile(new File([blob], `聆年录音-${timestamp}.${extension}`, { type }));
           setNotice("录音已停止并暂存在当前浏览器中。请先试听，确认后再上传保存。");
         } else {
           setError("这次没有录到声音。请检查麦克风后再试，或直接选择已有音频。");
@@ -674,7 +674,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       {
         isPaused: () => document.visibilityState === "hidden",
         shouldRetryError: (value) => !(value instanceof ApiError) || value.retryable,
-        onTemporaryError: () => setNotice("连接暂时中断，任务可能仍在后台处理；念念正在自动重连。"),
+        onTemporaryError: () => setNotice("连接暂时中断，任务可能仍在后台处理；聆年正在自动重连。"),
         onConnectionRestored: () => setNotice("连接已恢复，正在读取最新处理结果。"),
       },
     );
@@ -1021,7 +1021,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 <p>
                   {activeSession
                     ? `已经进行到“${sessionStatusLabel(activeSession.status)}”。不用重新开始，从上次停下的地方继续就好。`
-                    : "念念会先在本机保存录音和转写，只有家人校对、确认后，故事才会进入档案。"}
+                    : "聆年会先在本机保存录音和转写，只有家人校对、确认后，故事才会进入档案。"}
                 </p>
                 <div className="home-primary-actions">
                   <Link
@@ -1064,7 +1064,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           {dueReminders.length > 0 && (
             <section className="card home-reminders" aria-labelledby="home-reminder-title">
               <div><p className="card-kicker">温和提醒</p><h2 id="home-reminder-title">之前约好，可以再问一次了</h2></div>
-              {dueReminders.map((item) => <p key={item.id}>“{item.topic_key}” · 只在念念页面提醒，不会自动联系任何人。</p>)}
+              {dueReminders.map((item) => <p key={item.id}>“{item.topic_key}” · 只在聆年页面提醒，不会自动联系任何人。</p>)}
               <Link className="button secondary button-link" href="/archive">查看提醒与回忆录</Link>
             </section>
           )}
@@ -1211,7 +1211,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       {!initialLoading && view === "family" && <SecurityPanel key={selectedProfile?.family_id ?? "no-family"} familyId={selectedProfile?.family_id ?? null} />}
 
       {!initialLoading && view === "record" && !detail && <section className="card entry-card">
-        <div className="section-heading"><span>01</span><div><h2>今天想从哪一段聊起？</h2><p>只选一个话题，念念会准备一个温和的问题。</p></div></div>
+        <div className="section-heading"><span>01</span><div><h2>今天想从哪一段聊起？</h2><p>只选一个话题，聆年会准备一个温和的问题。</p></div></div>
         <MemoryWorkflowStepper currentStep={0} />
         <div className="stage-grid">
           {LIFE_STAGES.map((stage) => {

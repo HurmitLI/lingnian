@@ -37,7 +37,7 @@ async function request(path: string, options: ApiOptions = {}): Promise<Response
     if (controller.signal.aborted) {
       throw new ApiError("REQUEST_TIMEOUT", "等待时间比平时久，请稍后重试；已经保存的内容不会丢失。", true);
     }
-    throw new ApiError("NETWORK_UNAVAILABLE", "暂时无法连接本机服务。请确认念念仍在运行，然后重试。", true);
+    throw new ApiError("NETWORK_UNAVAILABLE", "暂时无法连接本机服务。请确认聆年仍在运行，然后重试。", true);
   } finally {
     window.clearTimeout(timer);
     externalSignal?.removeEventListener("abort", abortFromOutside);

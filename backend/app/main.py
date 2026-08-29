@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="念念 · 第一阶段 API",
+    title="聆年 · 家庭记忆 API",
     version="0.1.0",
     lifespan=lifespan,
 )

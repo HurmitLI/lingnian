@@ -8,7 +8,7 @@ mkdir -p "$runtime_dir"
 
 for port in 8011 3011; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "端口 $port 已被其他程序占用，未启动念念。"
+    echo "端口 $port 已被其他程序占用，未启动聆年。"
     exit 1
   fi
 done
@@ -57,7 +57,6 @@ if [[ $backend_ready -ne 1 || $frontend_ready -ne 1 ]]; then
   exit 1
 fi
 
-echo "念念已在本机启动：http://127.0.0.1:3011"
+echo "聆年已在本机启动：http://127.0.0.1:3011"
 echo "API 文档：http://127.0.0.1:8011/docs"
 echo "停止服务：$project_root/scripts/stop_local.sh"
-

@@ -95,7 +95,7 @@ def render_memory_book_pdf(
         bottomMargin=22 * mm,
         title=title,
         author=profile.preferred_name,
-        subject="念念家庭回忆录",
+        subject="聆年家庭回忆录",
     )
     base = getSampleStyleSheet()
     cover = ParagraphStyle(
@@ -189,7 +189,7 @@ def render_memory_book_pdf(
         canvas.saveState()
         canvas.setFont(font_name, 8.5)
         canvas.setFillColor(HexColor("#8a867c"))
-        canvas.drawCentredString(A4[0] / 2, 11 * mm, f"念念 · 第 {doc.page} 页")
+        canvas.drawCentredString(A4[0] / 2, 11 * mm, f"聆年 · 第 {doc.page} 页")
         canvas.restoreState()
 
     document.build(flow, onFirstPage=draw_page_number, onLaterPages=draw_page_number)

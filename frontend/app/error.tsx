@@ -11,7 +11,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("念念页面异常", error);
+    console.error("聆年页面异常", error);
   }, [error]);
 
   return (

@@ -39,7 +39,8 @@ a { color: inherit; }
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 216px minmax(0, 1fr); }
 .desktop-sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 24px 16px 20px; color: #f7f1e7; background: linear-gradient(180deg, #2c2926 0%, #24211f 100%); border-right: 1px solid rgba(255,255,255,.07); }
 .brand-mark { display: flex; align-items: center; gap: 11px; padding: 0 9px 32px; color: inherit; text-decoration: none; }
-.brand-mark > span:first-child { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 14px; background: linear-gradient(145deg, #ad5149, #81342f); font-family: var(--serif); font-size: 21px; box-shadow: 0 10px 24px rgba(0,0,0,.2); }
+.brand-symbol { display: grid; place-items: center; width: 42px; height: 42px; overflow: hidden; border-radius: 14px; background: #963f3a; box-shadow: 0 10px 24px rgba(0,0,0,.2); }
+.brand-symbol img { width: 42px; height: 42px; object-fit: contain; }
 .brand-copy { display: grid; gap: 2px; }
 .brand-copy strong { font-family: var(--serif); font-size: 21px; letter-spacing: .12em; font-weight: 650; }
 .brand-copy small { color: #9e958b; font-size: 10px; letter-spacing: .12em; }

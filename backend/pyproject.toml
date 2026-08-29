@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "niannian-backend"
 version = "0.1.0"
-description = "念念第一阶段：家庭记忆采集纵向切片"
+description = "聆年：家庭记忆采集与长期保存"
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "alembic>=1.14,<2",

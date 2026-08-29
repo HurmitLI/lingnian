@@ -12,7 +12,7 @@ const KEEPSAKE_ERROR_LABELS: Record<string, string> = {
   SOURCE_ASSET_CORRUPT: "一份原始素材完整性异常，已停止合成以保护档案。",
   SOURCE_AUDIO_MISSING: "所选故事的原始录音已不可用，请重新选择。",
   KEEPSAKE_RENDER_FAILED: "本机视频合成没有完成，可以再试一次。",
-  FFMPEG_UNAVAILABLE: "本机视频组件暂时不可用，请重新启动念念后重试。",
+  FFMPEG_UNAVAILABLE: "本机视频组件暂时不可用，请重新启动聆年后重试。",
 };
 
 export function keepsakeStatusLabel(status: string): string {
