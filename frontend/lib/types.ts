@@ -20,11 +20,22 @@ export type MemorySession = {
 
 export type MediaAsset = {
   id: string;
+  kind: string;
   original_filename: string;
   mime_type: string;
   size_bytes: number;
   is_original: boolean;
   content_url: string;
+};
+
+export type MediaLink = {
+  id: string;
+  media_asset_id: string;
+  trigger_kind: "photo" | "old_object";
+  user_annotation: string | null;
+  width: number;
+  height: number;
+  model_inference: null;
 };
 
 export type Transcript = {

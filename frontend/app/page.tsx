@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import Image from "next/image";
 
 import SecurityPanel from "@/app/security-panel";
 import { api, apiDownload, mediaUrl } from "@/lib/api";
@@ -10,6 +11,7 @@ import type {
   Health,
   ModelConsent,
   MemoryBook,
+  MediaLink,
   Reminder,
   SessionDetail,
   TimelineItem,
@@ -44,6 +46,7 @@ export default function Home() {
   const [memoryBooks, setMemoryBooks] = useState<MemoryBook[]>([]);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioPreview, setAudioPreview] = useState<string | null>(null);
+  const [triggerPreview, setTriggerPreview] = useState<string | null>(null);
   const [correctedText, setCorrectedText] = useState("");
   const [savedCorrectedText, setSavedCorrectedText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -257,6 +260,65 @@ export default function Home() {
       await loadMemoryContext(selectedProfileId);
       setAudioFile(null);
       setNotice("回忆问题已准备好，一次只聊一个点。 ");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startMediaTrigger(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedProfileId) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const file = form.get("triggerImage");
+    const triggerKind = String(form.get("triggerKind"));
+    if (!(file instanceof File) || !file.size) return;
+    const lifeStage = triggerKind === "photo" ? "照片" : "老物件";
+    const needsConfirmation = topicPreference(lifeStage) === "ask_first";
+    if (needsConfirmation && !window.confirm(`请先询问讲述者：现在愿意用“${lifeStage}”慢慢回想吗？\n\n只有对方明确同意后再继续。`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      const session = await api<{ id: string }>("/api/v1/memory-sessions", {
+        method: "POST",
+        body: JSON.stringify({
+          elder_id: selectedProfileId,
+          life_stage: lifeStage,
+          trigger_kind: triggerKind,
+          topic_confirmed: needsConfirmation,
+        }),
+      });
+      const upload = new FormData();
+      upload.append("image", file);
+      upload.append("trigger_kind", triggerKind);
+      upload.append("user_annotation", String(form.get("annotation") ?? ""));
+      await api<MediaLink>(`/api/v1/memory-sessions/${session.id}/trigger-image`, {
+        method: "POST",
+        body: upload,
+      });
+      window.localStorage.setItem("niannian.sessionId", session.id);
+      await loadSession(session.id);
+      formElement.reset();
+      if (triggerPreview) URL.revokeObjectURL(triggerPreview);
+      setTriggerPreview(null);
+      setNotice("图片已保存在本机。问题只邀请讲述，不会猜测图片中的人物、地点或年代。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteTriggerImage(assetId: string) {
+    if (!window.confirm("确认删除这张图片吗？删除后无法从应用内恢复。")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api<void>(`/api/v1/media-assets/${assetId}`, { method: "DELETE" });
+      if (detail) await loadSession(detail.session.id);
+      setNotice("图片已从本机档案删除。");
     } catch (value) {
       showError(value);
     } finally {
@@ -568,7 +630,8 @@ export default function Home() {
   }
 
   const latestFailedTask = detail?.tasks.find((task) => task.status === "failed_retryable");
-  const existingOriginal = detail?.media_assets.find((asset) => asset.is_original);
+  const existingAudio = detail?.media_assets.find((asset) => asset.kind === "audio_original");
+  const existingTrigger = detail?.media_assets.find((asset) => ["photo_original", "old_object_original"].includes(asset.kind));
   const topicPreference = (stage: string) =>
     memoryContext?.preferences.find((item) => item.topic_key === stage)?.preference ?? "welcome";
   const stageCoverage = (stage: string) =>
@@ -654,12 +717,28 @@ export default function Home() {
             </div>
           </details>
         )}
+        {selectedProfile && (
+          <form className="media-trigger-form" onSubmit={startMediaTrigger}>
+            <div><h3>用照片或老物件触发回忆</h3><p className="hint">图片只保存在本机；系统不会识别人脸，也不会推断人物、地点、年代或事件。</p></div>
+            <label className="field"><span>触发类型</span><select name="triggerKind"><option value="photo">照片</option><option value="old_object">老物件</option></select></label>
+            <label className="field"><span>选择图片</span><input name="triggerImage" type="file" accept="image/jpeg,image/png,image/webp" required onChange={(event) => { const file = event.target.files?.[0]; if (triggerPreview) URL.revokeObjectURL(triggerPreview); setTriggerPreview(file ? URL.createObjectURL(file) : null); }} /></label>
+            <label className="field"><span>家人明确知道的信息（可选）</span><input name="annotation" maxLength={1000} placeholder="例如：这是外婆明确说过的旧院子" /></label>
+            {triggerPreview && <Image unoptimized width={420} height={300} className="trigger-preview" src={triggerPreview} alt="待上传图片预览" />}
+            <button className="button secondary" disabled={busy}>保存图片并开始回忆</button>
+          </form>
+        )}
       </section>
 
       {detail && (
         <section className="card memory-card">
           <div className="session-meta"><span>{detail.session.life_stage}</span><strong>{statusLabel(detail.session.status)}</strong></div>
           <blockquote>{detail.session.question_text}</blockquote>
+          {existingTrigger && (
+            <div className="saved-trigger">
+              <Image unoptimized width={560} height={420} className="trigger-preview" src={mediaUrl(existingTrigger.content_url) ?? ""} alt="本次回忆的触发图片" />
+              {detail.session.status !== "ARCHIVED" && <button className="button quiet danger" disabled={busy} onClick={() => deleteTriggerImage(existingTrigger.id)}>删除这张图片</button>}
+            </div>
+          )}
           {!(["SKIPPED", "ARCHIVED"].includes(detail.session.status)) && <button className="button quiet danger" disabled={busy} onClick={skipSession}>这次不想讲，直接跳过</button>}
 
           {!(["SKIPPED", "ARCHIVED"].includes(detail.session.status)) && (
@@ -671,7 +750,7 @@ export default function Home() {
               </div>
               {audioPreview && <audio controls src={audioPreview} className="audio-player" />}
               {audioFile && <div className="file-line"><span>{audioFile.name}</span><button className="button primary" disabled={busy} onClick={uploadAudio}>确认上传</button></div>}
-              {existingOriginal && <p className="hint">已保留原始音频：{existingOriginal.original_filename}</p>}
+              {existingAudio && <p className="hint">已保留原始音频：{existingAudio.original_filename}</p>}
               {detail.session.status === "AUDIO_UPLOADED" && <button className="button primary" disabled={busy} onClick={() => runTask("transcription")}>开始本地转写</button>}
               {latestFailedTask && (!requiresCloudConsent || latestFailedTask.task_type === "transcription") && <button className="button secondary" disabled={busy} onClick={() => retryTask(latestFailedTask)}>重试失败任务</button>}
             </div>

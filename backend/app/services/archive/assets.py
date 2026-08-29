@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import UploadFile
+from PIL import Image, UnidentifiedImageError
 
 from app.core.config import Settings
 from app.core.errors import DomainError
@@ -20,6 +21,12 @@ MIME_EXTENSIONS = {
     "audio/mp4": ".m4a",
     "audio/x-m4a": ".m4a",
     "audio/ogg": ".ogg",
+}
+
+IMAGE_MIME_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
 }
 
 
@@ -119,6 +126,69 @@ async def store_audio_upload(
             "mime_type": mime,
             "size_bytes": size,
             "sha256": digest.hexdigest(),
+        }
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        await upload.close()
+
+
+async def store_image_upload(
+    upload: UploadFile, session_id: str, settings: Settings
+) -> dict:
+    mime = normalized_mime(upload.content_type)
+    extension = IMAGE_MIME_EXTENSIONS.get(mime)
+    if not extension:
+        raise DomainError(
+            "IMAGE_TYPE_NOT_ALLOWED", "当前只支持 JPEG、PNG 或 WebP 图片。", 415
+        )
+    asset_root = settings.resolved_asset_root
+    quarantine = asset_root / "quarantine"
+    quarantine.mkdir(parents=True, exist_ok=True)
+    generated_name = f"{uuid4()}{extension}"
+    temp_path = quarantine / f"{generated_name}.uploading"
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with temp_path.open("wb") as destination:
+            while chunk := await upload.read(1024 * 1024):
+                size += len(chunk)
+                if size > settings.max_image_bytes:
+                    raise DomainError("IMAGE_TOO_LARGE", "这张图片超过 25 MB。", 413)
+                digest.update(chunk)
+                destination.write(chunk)
+        if size == 0:
+            raise DomainError("IMAGE_EMPTY", "没有读取到图片内容。", 400)
+        try:
+            with Image.open(temp_path) as image:
+                width, height = image.size
+                detected_format = image.format
+                image.verify()
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            raise DomainError(
+                "IMAGE_CONTENT_MISMATCH", "文件内容不是可读取的图片。", 415
+            ) from exc
+        expected_format = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}[mime]
+        if detected_format != expected_format:
+            raise DomainError(
+                "IMAGE_CONTENT_MISMATCH", "文件内容与图片格式不一致。", 415
+            )
+        if width * height > 40_000_000 or width > 12_000 or height > 12_000:
+            raise DomainError("IMAGE_DIMENSIONS_TOO_LARGE", "图片尺寸过大。", 413)
+        relative_path = f"assets/original/{session_id}/{generated_name}"
+        final_path = resolve_controlled_path(asset_root, relative_path)
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(temp_path, final_path)
+        final_path.chmod(0o600)
+        return {
+            "relative_path": relative_path,
+            "original_filename": Path(upload.filename or "memory-image").name[:240],
+            "mime_type": mime,
+            "size_bytes": size,
+            "sha256": digest.hexdigest(),
+            "width": width,
+            "height": height,
         }
     except Exception:
         temp_path.unlink(missing_ok=True)

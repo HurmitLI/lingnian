@@ -4,7 +4,7 @@ import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -18,6 +18,7 @@ from app.models import (
     ElderProfile,
     FamilyArchive,
     MediaAsset,
+    MediaLink,
     MemoryBook,
     MemoryFact,
     MemorySession,
@@ -44,6 +45,7 @@ from app.schemas.api import (
     HealthRead,
     ElderMemoryContext,
     MediaAssetRead,
+    MediaLinkRead,
     MemorySessionCreate,
     MemorySessionRead,
     ModelConsentCreate,
@@ -78,6 +80,7 @@ from app.services.archive.assets import (
     calculate_sha256,
     resolve_controlled_path,
     store_audio_upload,
+    store_image_upload,
     verify_asset_integrity,
 )
 from app.services.memory import (
@@ -86,6 +89,7 @@ from app.services.memory import (
     render_memory_book,
     render_memory_book_pdf,
     select_question,
+    SelectedQuestion,
 )
 from app.services.privacy import (
     STORY_ORGANIZATION_PURPOSE,
@@ -833,12 +837,37 @@ def create_memory_session(
         db, ElderProfile, payload.elder_id, "ELDER_NOT_FOUND", "没有找到这位老人的测试档案。"
     )
     try:
-        question = select_question(
-            db,
-            elder_id=elder.id,
-            life_stage=payload.life_stage.strip(),
-            topic_confirmed=payload.topic_confirmed,
-        )
+        if payload.trigger_kind in {"photo", "old_object"}:
+            preference = db.scalar(
+                select(TopicPreference).where(
+                    TopicPreference.elder_id == elder.id,
+                    TopicPreference.topic_key == payload.life_stage.strip(),
+                )
+            )
+            if preference and preference.preference == "avoid":
+                raise ValueError("TOPIC_BLOCKED_BY_PREFERENCE")
+            if (
+                preference
+                and preference.preference == "ask_first"
+                and not payload.topic_confirmed
+            ):
+                raise ValueError("TOPIC_CONFIRMATION_REQUIRED")
+            fixed_text = (
+                "这张照片让您想起什么？"
+                if payload.trigger_kind == "photo"
+                else "这件老物件让您想起什么？"
+            )
+            question = SelectedQuestion(
+                prompt_id=f"{payload.trigger_kind}-fixed-v1",
+                question_text=fixed_text,
+            )
+        else:
+            question = select_question(
+                db,
+                elder_id=elder.id,
+                life_stage=payload.life_stage.strip(),
+                topic_confirmed=payload.topic_confirmed,
+            )
     except ValueError as exc:
         if str(exc) == "TOPIC_BLOCKED_BY_PREFERENCE":
             raise DomainError(
@@ -951,6 +980,70 @@ async def upload_audio(
     db.commit()
     db.refresh(asset)
     return media_read(asset)
+
+
+@router.post(
+    "/memory-sessions/{session_id}/trigger-image",
+    response_model=MediaLinkRead,
+    status_code=201,
+)
+async def upload_trigger_image(
+    session_id: str,
+    image: UploadFile = File(...),
+    trigger_kind: str = Form(...),
+    user_annotation: str | None = Form(default=None),
+    db: Session = Depends(get_db),
+) -> MediaLink:
+    session = require(
+        db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次回忆记录。"
+    )
+    if trigger_kind not in {"photo", "old_object"}:
+        raise DomainError("TRIGGER_KIND_INVALID", "图片触发类型无效。", 422)
+    if session.prompt_id != f"{trigger_kind}-fixed-v1":
+        raise DomainError(
+            "TRIGGER_SESSION_MISMATCH", "这次回忆不是对应的图片触发会话。", 409
+        )
+    stored = await store_image_upload(image, session.id, get_settings())
+    width = stored.pop("width")
+    height = stored.pop("height")
+    asset = MediaAsset(
+        session_id=session.id,
+        kind=f"{trigger_kind}_original",
+        status="ready",
+        is_original=True,
+        **stored,
+    )
+    db.add(asset)
+    db.flush()
+    link = MediaLink(
+        media_asset_id=asset.id,
+        elder_id=session.elder_id,
+        trigger_kind=trigger_kind,
+        user_annotation=user_annotation.strip()[:1000] if user_annotation else None,
+        width=width,
+        height=height,
+        model_inference=None,
+    )
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    return link
+
+
+@router.delete("/media-assets/{asset_id}", status_code=204)
+def delete_trigger_image(asset_id: str, db: Session = Depends(get_db)) -> Response:
+    asset = require(
+        db, MediaAsset, asset_id, "MEDIA_NOT_FOUND", "没有找到这份媒体资料。"
+    )
+    if asset.kind not in {"photo_original", "old_object_original"}:
+        raise DomainError("MEDIA_DELETE_NOT_ALLOWED", "这里只能删除照片或老物件图片。", 409)
+    if asset.session.status == "ARCHIVED":
+        raise DomainError("ARCHIVED_MEDIA_LOCKED", "已归档故事的图片不能在这里删除。", 409)
+    path = resolve_controlled_path(get_settings().resolved_asset_root, asset.relative_path)
+    path.unlink(missing_ok=True)
+    db.delete(asset)
+    db.commit()
+    return Response(status_code=204)
 
 
 def create_task(
@@ -1264,6 +1357,7 @@ def get_timeline(profile_id: str, db: Session = Depends(get_db)) -> list[Timelin
             .join(MemorySession, MediaAsset.session_id == MemorySession.id)
             .where(
                 MemorySession.id == story.source_draft.session_id,
+                MediaAsset.kind == "audio_original",
                 MediaAsset.is_original.is_(True),
             )
             .order_by(MediaAsset.created_at.desc())

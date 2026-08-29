@@ -3,7 +3,7 @@ from app.services.memory.books import (
     render_memory_book,
     render_memory_book_pdf,
 )
-from app.services.memory.questions import ensure_question_bank, select_question
+from app.services.memory.questions import SelectedQuestion, ensure_question_bank, select_question
 
 __all__ = [
     "ensure_question_bank",
@@ -11,4 +11,5 @@ __all__ = [
     "render_memory_book",
     "render_memory_book_pdf",
     "select_question",
+    "SelectedQuestion",
 ]

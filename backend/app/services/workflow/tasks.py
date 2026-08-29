@@ -69,6 +69,7 @@ def process_transcription(task_id: str) -> None:
                 select(MediaAsset)
                 .where(
                     MediaAsset.session_id == session.id,
+                    MediaAsset.kind == "audio_original",
                     MediaAsset.is_original.is_(True),
                     MediaAsset.status == "ready",
                 )

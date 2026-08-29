@@ -105,6 +105,7 @@ class MemorySessionCreate(BaseModel):
     elder_id: str
     life_stage: str = Field(min_length=1, max_length=40)
     topic_confirmed: bool = False
+    trigger_kind: str = Field(default="question", pattern="^(question|photo|old_object)$")
 
 
 class MemorySessionRead(ORMModel):
@@ -128,6 +129,18 @@ class MediaAssetRead(ORMModel):
     status: str
     is_original: bool
     content_url: str
+
+
+class MediaLinkRead(ORMModel):
+    id: str
+    media_asset_id: str
+    elder_id: str
+    trigger_kind: str
+    user_annotation: str | None
+    width: int
+    height: int
+    model_inference: str | None
+    created_at: datetime
 
 
 class TaskRead(ORMModel):

@@ -130,6 +130,9 @@ class MediaAsset(TimestampMixin, Base):
     integrity_checked_at: Mapped[datetime | None] = mapped_column()
 
     session: Mapped[MemorySession] = relationship(back_populates="media_assets")
+    links: Mapped[list[MediaLink]] = relationship(
+        back_populates="media_asset", cascade="all, delete-orphan"
+    )
 
 
 class Transcript(TimestampMixin, Base):
@@ -389,3 +392,22 @@ class MemoryBook(TimestampMixin, Base):
     pdf_sha256: Mapped[str | None] = mapped_column(String(64))
 
     elder: Mapped[ElderProfile] = relationship(back_populates="memory_books")
+
+
+class MediaLink(TimestampMixin, Base):
+    __tablename__ = "media_links"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    media_asset_id: Mapped[str] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="CASCADE"), unique=True
+    )
+    elder_id: Mapped[str] = mapped_column(
+        ForeignKey("elder_profiles.id", ondelete="CASCADE")
+    )
+    trigger_kind: Mapped[str] = mapped_column(String(24))
+    user_annotation: Mapped[str | None] = mapped_column(Text)
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    model_inference: Mapped[str | None] = mapped_column(Text)
+
+    media_asset: Mapped[MediaAsset] = relationship(back_populates="links")

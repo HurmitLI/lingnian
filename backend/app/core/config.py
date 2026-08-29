@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/db/niannian.db"
     asset_root: Path = Path("./data")
     max_audio_bytes: int = Field(default=200 * 1024 * 1024, ge=1024)
+    max_image_bytes: int = Field(default=25 * 1024 * 1024, ge=1024)
 
     asr_provider: str = "mock"
     asr_model_id: str = "paraformer-zh"
