@@ -306,7 +306,7 @@ export default function KeepsakeApp() {
           <div className="workspace-controls">
             {profiles.length > 0 && (
               <label className="profile-switcher">
-                <span>当前讲述者</span>
+                <span className="profile-switcher-label"><i aria-hidden="true">{selectedProfile?.preferred_name.slice(0, 1) ?? "家"}</i><b>当前讲述者</b></span>
                 <select value={selectedProfileId} onChange={(event) => void changeProfile(event.target.value)}>
                   {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.display_name}</option>)}
                 </select>
@@ -316,9 +316,17 @@ export default function KeepsakeApp() {
           </div>
         </header>
 
-        <div className="keepsake-boundaries" aria-label="制作边界">
-          <span>素材不离开本机</span><span>只用原始录音</span><span>不克隆声线</span><span>新增费用 0 元</span>
-        </div>
+        <section className="keepsake-guide" aria-label="制作说明">
+          <ol className="keepsake-journey">
+            <li data-active={!activeKeepsake ? "true" : undefined}><span>1</span><strong>选择故事</strong></li>
+            <li><span>2</span><strong>确认授权</strong></li>
+            <li data-active={activeKeepsake && !hasReadyResult ? "true" : undefined}><span>3</span><strong>本机制作</strong></li>
+            <li data-active={hasReadyResult ? "true" : undefined}><span>4</span><strong>播放保存</strong></li>
+          </ol>
+          <div className="keepsake-boundaries" aria-label="制作边界">
+            <span>素材不离开本机</span><span>只用原始录音</span><span>不克隆声线</span><span>新增费用 0 元</span>
+          </div>
+        </section>
         {error && <div className="message error" role="alert">{error}</div>}
         {notice && <div className="message success" role="status" aria-live="polite">{notice}</div>}
         {temporaryConnectionIssue && <div className="message" role="status">暂时读不到进度，视频仍在本机处理，连接恢复后会继续显示。</div>}
@@ -339,7 +347,7 @@ export default function KeepsakeApp() {
         )}
 
         {!initialLoading && activeKeepsake && (
-          <section className="card keepsake-result-card" aria-live="polite">
+          <section className={`card keepsake-result-card${hasReadyResult ? " ready" : ""}`} aria-live="polite">
             <div className="section-heading"><span>当前</span><div><h2>{activeKeepsake.title}</h2><p>第 {activeKeepsake.version} 版 · {keepsakeStatusLabel(activeKeepsake.status)}</p></div></div>
             {!isKeepsakeTerminal(activeKeepsake.status) && (
               <div className="keepsake-progress" aria-label={`制作进度 ${activeKeepsake.progress}%`}>
@@ -387,12 +395,15 @@ export default function KeepsakeApp() {
                   ))}
                 </fieldset>
                 <p className="selection-count" role="status">已选择 {selectedStoryIds.length} / 10 篇 · 当前有 {eligibleCount} 篇可用</p>
-                <div className="keepsake-form-grid">
+                <div className="keepsake-form-section">
+                  <div className="keepsake-form-intro"><span>02</span><div><h3>写下视频名称</h3><p>这只是家庭内部看到的名称，可以随时制作新版本。</p></div></div>
+                  <div className="keepsake-form-grid">
                   <label className="field"><span>视频名称</span><input value={title} maxLength={200} required onChange={(event) => setTitle(event.target.value)} /></label>
                   <label className="field"><span>本次确认人</span><input value={actorLabel} maxLength={80} required onChange={(event) => setActorLabel(event.target.value)} /></label>
+                  </div>
                 </div>
                 <fieldset className="keepsake-authorization">
-                  <legend>请逐项确认本次原声使用</legend>
+                  <legend><span>03</span> 请逐项确认本次原声使用</legend>
                   <label><input type="checkbox" checked={checks.originalVoiceAuthorized} onChange={(event) => setChecks((current) => ({ ...current, originalVoiceAuthorized: event.target.checked }))} /><span>我确认有权使用这次所选的原始录音。</span></label>
                   <label><input type="checkbox" checked={checks.privateFamilyUse} onChange={(event) => setChecks((current) => ({ ...current, privateFamilyUse: event.target.checked }))} /><span>这份视频只用于家庭记忆保存。</span></label>
                   <label><input type="checkbox" checked={checks.noImpersonation} onChange={(event) => setChecks((current) => ({ ...current, noImpersonation: event.target.checked }))} /><span>不会把视频用于仿冒、误导或冒充本人。</span></label>

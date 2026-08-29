@@ -1085,7 +1085,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         </>
       )}
 
-      {!initialLoading && (view === "family" || profiles.length === 0) && <section className="card profile-card">
+      {!initialLoading && (view === "family" || profiles.length === 0) && <section className="card profile-card family-profile-card">
         <div className="section-heading">
           <span>01</span>
           <div>
@@ -1321,16 +1321,46 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       )}
 
       {!initialLoading && view === "archive" && selectedProfile && (
-        <section className="card timeline-card">
-          <div className="section-heading"><span>01</span><div><h2>{selectedProfile.preferred_name}的故事</h2><p>这里只显示经过人工确认的内容。</p></div></div>
-          {timeline.length === 0 ? <p className="empty">还没有已确认的故事。</p> : <div className="timeline-list">{timeline.map((item) => <article key={item.story.id}><time>{new Date(item.story.confirmed_at).toLocaleDateString("zh-CN")}</time><h3>{item.story.title}</h3><p>{item.story.body}</p>{mediaUrl(item.audio_url) && <audio controls src={mediaUrl(item.audio_url) ?? undefined} />}</article>)}</div>}
-          {timeline.length > 0 && <div className="archive-keepsake-entry"><div><strong>把亲口讲过的故事留成视频</strong><p>使用原始录音在这台 Mac 上合成，不克隆声音、不上传第三方。</p></div><Link className="button primary button-link" href={`/keepsake?elder=${selectedProfile.id}`}>制作原声视频念想</Link></div>}
+        <section className="card timeline-card archive-library">
+          <div className="section-heading archive-heading">
+            <span>01</span>
+            <div><h2>{selectedProfile.preferred_name}的故事</h2><p>这里只收藏经过家人逐篇确认的内容，原声会和故事放在一起。</p></div>
+            <strong className="archive-story-count">{timeline.length} 篇故事</strong>
+          </div>
+          {timeline.length === 0 ? (
+            <div className="archive-empty-state">
+              <span aria-hidden="true">念</span>
+              <div><h3>第一篇故事，等你慢慢讲</h3><p className="empty">录下一段声音、校对并确认后，它就会出现在这里。</p></div>
+              <Link className="button primary button-link" href={`/record?elder=${selectedProfile.id}`}>记录第一段回忆</Link>
+            </div>
+          ) : (
+            <div className="timeline-list archive-story-grid">
+              {timeline.map((item, index) => (
+                <article key={item.story.id}>
+                  <div className="archive-story-meta">
+                    <time>{new Date(item.story.confirmed_at).toLocaleDateString("zh-CN")}</time>
+                    <span>故事 {String(timeline.length - index).padStart(2, "0")}</span>
+                  </div>
+                  <div className="archive-story-content"><h3>{item.story.title}</h3><p>{item.story.body}</p></div>
+                  {mediaUrl(item.audio_url) && (
+                    <div className="archive-story-audio"><span>亲口讲述</span><audio controls preload="metadata" src={mediaUrl(item.audio_url) ?? undefined} /></div>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+          {timeline.length > 0 && (
+            <div className="archive-keepsake-entry">
+              <div><span className="card-kicker">下一步 · 原声念想</span><strong>把亲口讲过的故事，留成一段视频</strong><p>使用原始录音在这台 Mac 上合成，不克隆声音，也不上传第三方。</p></div>
+              <Link className="button primary button-link" href={`/keepsake?elder=${selectedProfile.id}`}>制作原声视频</Link>
+            </div>
+          )}
         </section>
       )}
 
       {!initialLoading && view === "archive" && selectedProfile && (
         <section className="card archive-tools-card">
-          <div className="section-heading"><span>02</span><div><h2>更多保存工具</h2><p>有需要时，再设提醒或导出文字回忆录。</p></div></div>
+          <div className="section-heading"><span>02</span><div><h2>保存与维护</h2><p>提醒和导出都是低频工具，需要时再展开，不会打扰日常记录。</p></div></div>
           {dueReminders.map((item) => (
             <div className="due-reminder" role="status" key={item.id}>
               <div><strong>可以温和问一次“{item.topic_key}”了</strong><p>这是你之前设定的本机提醒，不会自动联系任何人。</p></div>
@@ -1338,7 +1368,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
             </div>
           ))}
           <details className="archive-tool-details">
-            <summary>管理提醒和导出回忆录</summary>
+            <summary>展开提醒与回忆录工具</summary>
             <div className="archive-tools-grid">
               <form className="local-reminder-form" onSubmit={createLocalReminder}>
                 <h3>添加应用内提醒</h3>

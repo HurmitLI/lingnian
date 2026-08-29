@@ -112,11 +112,11 @@ test("手机档案先看故事，低频工具默认收起", async ({ page, isMob
   test.skip(!isMobile, "手机项目覆盖简化后的档案页");
   await page.goto("/archive");
   const storyHeading = page.getByRole("heading", { level: 2, name: "奶奶的故事" });
-  const toolsHeading = page.getByRole("heading", { name: "更多保存工具" });
+  const toolsHeading = page.getByRole("heading", { name: "保存与维护" });
   await expect(storyHeading).toBeVisible();
   await expect(toolsHeading).toBeVisible();
   expect((await storyHeading.boundingBox())?.y).toBeLessThan((await toolsHeading.boundingBox())?.y ?? 0);
-  await expect(page.getByText("管理提醒和导出回忆录", { exact: true })).toBeVisible();
+  await expect(page.getByText("展开提醒与回忆录工具", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "添加应用内提醒" })).toBeHidden();
 });
 

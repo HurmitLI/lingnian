@@ -75,7 +75,7 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
   await expect(page.getByRole("paragraph").filter({ hasText: correctedStory })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
 
-  await page.getByRole("link", { name: "制作原声视频念想" }).click();
+  await page.getByRole("link", { name: "制作原声视频" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "把亲口讲过的故事，留成一段视频" })).toBeVisible();
   const createButton = page.getByRole("button", { name: "确认授权并开始本机制作" });
   await expect(createButton).toBeDisabled();

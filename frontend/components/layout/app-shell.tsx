@@ -24,7 +24,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </Link>
         <nav className="primary-nav" aria-label="桌面主导航">
           {NAV_ITEMS.map((item) => {
-            const active = pathname === item.href;
+            const active = pathname === item.href || (pathname === "/keepsake" && item.href === "/archive");
             const Icon = item.icon;
             return (
               <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined}>
@@ -41,7 +41,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
       <nav className="mobile-nav" aria-label="手机主导航">
         {NAV_ITEMS.map((item) => {
-          const active = pathname === item.href;
+          const active = pathname === item.href || (pathname === "/keepsake" && item.href === "/archive");
           const Icon = item.icon;
           return (
             <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined}>
