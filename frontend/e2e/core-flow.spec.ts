@@ -73,4 +73,24 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
   await expect(page.getByRole("heading", { name: "一段愿意留给家人的回忆" })).toBeVisible();
   await expect(page.getByRole("paragraph").filter({ hasText: correctedStory })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+
+  await page.getByRole("link", { name: "制作原声视频念想" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "把亲口讲过的故事，留成一段视频" })).toBeVisible();
+  const createButton = page.getByRole("button", { name: "确认授权并开始本机制作" });
+  await expect(createButton).toBeDisabled();
+  await page.getByLabel(/一段愿意留给家人的回忆/).check();
+  await page.getByLabel("我确认有权使用这次所选的原始录音。").check();
+  await page.getByLabel("这份视频只用于家庭记忆保存。").check();
+  await page.getByLabel("不会把视频用于仿冒、误导或冒充本人。").check();
+  await page.getByLabel("本次只使用亲口说过的原始声音，不生成新语音。").check();
+  await expect(createButton).toBeEnabled();
+  await createButton.click();
+  await expect(page.getByText("原声视频已生成", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator("video")).toBeVisible();
+  await expect(page.getByText("家庭记忆整理 · 原始录音 · 非实时影像", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/keepsake=.*elder=|elder=.*keepsake=/);
+  await page.reload();
+  await expect(page.getByText("原声视频已生成", { exact: true })).toBeVisible();
+  await expect(page.locator("video")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
 });

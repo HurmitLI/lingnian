@@ -1224,6 +1224,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         <section className="card timeline-card">
           <div className="section-heading"><span>01</span><div><h2>{selectedProfile.preferred_name}的故事</h2><p>这里只显示经过人工确认的内容。</p></div></div>
           {timeline.length === 0 ? <p className="empty">还没有已确认的故事。</p> : <div className="timeline-list">{timeline.map((item) => <article key={item.story.id}><time>{new Date(item.story.confirmed_at).toLocaleDateString("zh-CN")}</time><h3>{item.story.title}</h3><p>{item.story.body}</p>{mediaUrl(item.audio_url) && <audio controls src={mediaUrl(item.audio_url) ?? undefined} />}</article>)}</div>}
+          {timeline.length > 0 && <div className="archive-keepsake-entry"><div><strong>把亲口讲过的故事留成视频</strong><p>使用原始录音在这台 Mac 上合成，不克隆声音、不上传第三方。</p></div><Link className="button primary button-link" href={`/keepsake?elder=${selectedProfile.id}`}>制作原声视频念想</Link></div>}
         </section>
       )}
 

@@ -170,6 +170,61 @@ export type MemoryBook = {
   created_at: string;
 };
 
+export type KeepsakeCatalogItem = {
+  story_id: string;
+  title: string;
+  life_stage: string;
+  confirmed_at: string;
+  has_original_audio: boolean;
+  audio_asset_id: string | null;
+  image_asset_id: string | null;
+  unavailable_reason: string | null;
+};
+
+export type KeepsakeAuthorization = {
+  id: string;
+  elder_id: string;
+  actor_label: string;
+  story_ids: string[];
+  manifest_sha256: string;
+  original_voice_authorized: boolean;
+  private_family_use: boolean;
+  no_impersonation: boolean;
+  original_audio_only: boolean;
+  decision: string;
+  used_at: string | null;
+  created_at: string;
+};
+
+export type Keepsake = {
+  id: string;
+  elder_id: string;
+  authorization_id: string;
+  version: number;
+  title: string;
+  story_manifest: Array<{
+    story_id: string;
+    position: number;
+    audio_asset_id: string;
+    image_asset_id: string | null;
+  }>;
+  status: "queued" | "rendering" | "ready" | "failed_retryable" | "failed_final" | "corrupt" | string;
+  progress: number;
+  attempt: number;
+  error_code: string | null;
+  mime_type: string;
+  duration_ms: number | null;
+  width: number;
+  height: number;
+  size_bytes: number | null;
+  renderer: string;
+  cost_cents: number;
+  source_mode: string;
+  content_url: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type SessionDetail = {
   session: MemorySession;
   media_assets: MediaAsset[];
