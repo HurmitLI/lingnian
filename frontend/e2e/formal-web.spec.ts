@@ -24,6 +24,8 @@ const session = {
   updated_at: "2026-08-29T08:00:00Z",
 };
 
+const unexpectedBrowserErrors = new WeakMap<Page, string[]>();
+
 async function mockLocalApi(page: Page) {
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
@@ -51,12 +53,26 @@ async function mockLocalApi(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
+  const errors: string[] = [];
+  unexpectedBrowserErrors.set(page, errors);
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(`console: ${message.text()}`);
+  });
+  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
   await mockLocalApi(page);
+});
+
+test.afterEach(async ({ page }) => {
+  const errors = unexpectedBrowserErrors.get(page) ?? [];
+  expect(errors, errors.join("\n")).toEqual([]);
 });
 
 test("首页可导航且没有横向溢出", async ({ page, isMobile }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "今天，陪奶奶聊一点" })).toBeVisible();
+  if (!isMobile) {
+    await expect(page.getByRole("link", { name: "聆年首页" }).locator("img")).toHaveAttribute("src", /lingnian-mark-v3/);
+  }
   await expect(page.locator(".welcome-card a.button.primary")).toHaveCount(1);
   const navigationName = isMobile ? "手机主导航" : "桌面主导航";
   const navigation = page.getByRole("navigation", { name: navigationName });
