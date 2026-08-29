@@ -112,6 +112,35 @@ def test_question_bank_rotates_and_avoid_preference_blocks_topic(client, db):
     assert confirmed.status_code == 201
 
 
+def test_recent_memory_sessions_support_refresh_recovery(client):
+    profile = create_profile(client)
+    first = create_session(client, profile["id"])
+    second = create_session(client, profile["id"])
+
+    listed = client.get(
+        f"/api/v1/elder-profiles/{profile['id']}/memory-sessions?limit=1"
+    )
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [second["id"]]
+    assert listed.json()[0]["question_text"] == second["question_text"]
+
+    invalid_limit = client.get(
+        f"/api/v1/elder-profiles/{profile['id']}/memory-sessions?limit=0"
+    )
+    assert invalid_limit.status_code == 422
+
+    missing = client.get(
+        "/api/v1/elder-profiles/00000000-0000-0000-0000-000000000000/memory-sessions"
+    )
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "ELDER_NOT_FOUND"
+
+    all_sessions = client.get(
+        f"/api/v1/elder-profiles/{profile['id']}/memory-sessions"
+    ).json()
+    assert {item["id"] for item in all_sessions} == {first["id"], second["id"]}
+
+
 def test_only_confirmed_story_enters_long_term_memory(client, db):
     profile = create_profile(client)
     session = create_session(client, profile["id"])

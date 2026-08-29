@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from starlette.background import BackgroundTask
 from sqlalchemy import delete, func, select
@@ -1337,6 +1337,26 @@ def get_elder_profile(
         db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位老人的测试档案。"
     )
     return elder_read(db, profile, secret_store)
+
+
+@router.get(
+    "/elder-profiles/{profile_id}/memory-sessions",
+    response_model=list[MemorySessionRead],
+)
+def list_elder_memory_sessions(
+    profile_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[MemorySessionRead]:
+    require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    sessions = db.scalars(
+        select(MemorySession)
+        .where(MemorySession.elder_id == profile_id)
+        .order_by(MemorySession.updated_at.desc(), MemorySession.created_at.desc())
+        .limit(limit)
+    ).all()
+    return [memory_session_read(db, item, secret_store) for item in sessions]
 
 
 @router.put(

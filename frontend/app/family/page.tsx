@@ -3,9 +3,9 @@ import type { Metadata } from "next";
 import WorkspaceApp from "@/features/workspace/workspace-app";
 
 export const metadata: Metadata = {
-  title: { absolute: "首页 · 念念" },
+  title: "家庭管理",
 };
 
-export default function HomePage() {
-  return <WorkspaceApp view="home" />;
+export default function FamilyPage() {
+  return <WorkspaceApp view="family" />;
 }

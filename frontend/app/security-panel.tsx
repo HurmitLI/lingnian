@@ -256,7 +256,7 @@ export default function SecurityPanel({ familyId }: Props) {
   return (
     <section className="card security-card">
       <div className="section-heading">
-        <span>02</span>
+        <span>03</span>
         <div>
           <h2>家庭档案安全</h2>
           <p>主密钥保存在 Mac 钥匙串；恢复包由家人离线保管，系统不留后门。</p>

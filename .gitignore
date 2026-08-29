@@ -33,6 +33,8 @@ node_modules/
 frontend/.next/
 frontend/out/
 frontend/.env*.local
+frontend/playwright-report/
+frontend/test-results/
 *.tsbuildinfo
 
 # Editors and macOS

@@ -33,8 +33,11 @@ export type MemorySession = {
   id: string;
   elder_id: string;
   life_stage: string;
+  prompt_id: string;
   question_text: string;
   status: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type MediaAsset = {
