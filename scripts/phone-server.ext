@@ -8,3 +8,4 @@ subjectAltName=@alt_names
 IP.1=__PHONE_IP__
 IP.2=127.0.0.1
 DNS.1=localhost
+DNS.2=__PHONE_HOST__

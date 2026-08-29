@@ -11,6 +11,7 @@ frontend_pid=""
 certificate_server_pid=""
 
 phone_ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
+phone_host="$(scutil --get LocalHostName 2>/dev/null || true).local"
 if [[ -z "$phone_ip" ]]; then
   echo "没有找到当前 Mac 的局域网地址，请先连接与手机相同的 Wi-Fi。"
   exit 1
@@ -33,7 +34,10 @@ trap cleanup EXIT INT TERM
 mkdir -p "$cert_root" "$public_cert_dir"
 chmod 700 "$cert_root"
 export NIANNIAN_PHONE_IP="$phone_ip"
-/usr/bin/sed "s/__PHONE_IP__/$phone_ip/g" "$script_dir/phone-server.ext" > "$cert_root/server.generated.ext"
+if [[ "$phone_host" == ".local" ]]; then
+  phone_host="localhost"
+fi
+/usr/bin/sed -e "s/__PHONE_IP__/$phone_ip/g" -e "s/__PHONE_HOST__/$phone_host/g" "$script_dir/phone-server.ext" > "$cert_root/server.generated.ext"
 
 if [[ ! -f "$cert_root/ca.key" || ! -f "$cert_root/ca.pem" ]]; then
   openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
@@ -53,6 +57,7 @@ openssl x509 -req -sha256 \
   -in "$cert_root/server.csr" \
   -CA "$cert_root/ca.pem" \
   -CAkey "$cert_root/ca.key" \
+  -CAserial "$cert_root/ca.srl" \
   -CAcreateserial \
   -out "$cert_root/server.pem" \
   -days 30 \
@@ -62,8 +67,8 @@ chmod 600 "$cert_root"/*.key
 
 (
   cd "$project_root/backend"
-  FRONTEND_ORIGIN="https://$phone_ip:3011" .venv/bin/alembic -c alembic.ini upgrade head
-  FRONTEND_ORIGIN="https://$phone_ip:3011" .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8011 > "$runtime_dir/phone-backend.log" 2>&1
+  FRONTEND_ORIGIN="https://$phone_host:3011" .venv/bin/alembic -c alembic.ini upgrade head
+  FRONTEND_ORIGIN="https://$phone_host:3011" .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8011 > "$runtime_dir/phone-backend.log" 2>&1
 ) &
 backend_pid=$!
 
@@ -88,7 +93,7 @@ for _ in {1..120}; do
     echo "1. 手机与 Mac 连接同一 Wi-Fi。"
     echo "2. 用手机 Safari 打开 http://$phone_ip:3012/niannian-phone-ca.cer 并允许下载描述文件。"
     echo "3. 在手机设置中安装该描述文件，再到“通用 → 关于本机 → 证书信任设置”启用完全信任。"
-    echo "4. 用 Safari 打开 https://$phone_ip:3011"
+    echo "4. 用 Safari 打开 https://$phone_host:3011"
     echo "完成后在这里按 Control-C 停止服务。"
     wait "$frontend_pid" "$backend_pid" "$certificate_server_pid"
     exit 0
