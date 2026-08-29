@@ -43,6 +43,9 @@ class FamilyArchive(TimestampMixin, Base):
     encrypted_fields: Mapped[list[EncryptedField]] = relationship(
         back_populates="family", cascade="all, delete-orphan"
     )
+    backup_manifests: Mapped[list[BackupManifest]] = relationship(
+        back_populates="family", cascade="all, delete-orphan"
+    )
 
 
 class Person(TimestampMixin, Base):
@@ -447,3 +450,22 @@ class EncryptedField(TimestampMixin, Base):
     key_version: Mapped[int] = mapped_column(Integer, default=1)
 
     family: Mapped[FamilyArchive] = relationship(back_populates="encrypted_fields")
+
+
+class BackupManifest(TimestampMixin, Base):
+    __tablename__ = "backup_manifests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_id: Mapped[str | None] = mapped_column(
+        ForeignKey("family_archives.id", ondelete="CASCADE")
+    )
+    backup_version: Mapped[int] = mapped_column(Integer, default=1)
+    relative_path: Mapped[str] = mapped_column(String(500), unique=True)
+    archive_sha256: Mapped[str] = mapped_column(String(64))
+    database_sha256: Mapped[str] = mapped_column(String(64))
+    asset_count: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default="ready")
+    verified_at: Mapped[datetime | None] = mapped_column()
+    verification_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    family: Mapped[FamilyArchive | None] = relationship(back_populates="backup_manifests")

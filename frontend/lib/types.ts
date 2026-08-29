@@ -78,6 +78,18 @@ export type FamilySecurity = {
   activated_at: string | null;
 };
 
+export type BackupRecord = {
+  id: string;
+  backup_version: number;
+  archive_sha256: string;
+  database_sha256: string;
+  asset_count: number;
+  status: "ready" | "verified" | "recovery_verified" | "corrupt" | string;
+  verified_at: string | null;
+  verification_summary: Record<string, unknown>;
+  created_at: string;
+};
+
 export type ModelConsent = {
   id: string;
   family_id: string;

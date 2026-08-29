@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 
 import { api, apiDownload } from "@/lib/api";
-import type { FamilySecurity } from "@/lib/types";
+import type { BackupRecord, FamilySecurity } from "@/lib/types";
 
 type Props = {
   familyId: string | null;
@@ -20,13 +20,31 @@ export default function SecurityPanel({ familyId }: Props) {
   const [verificationPassphrase, setVerificationPassphrase] = useState("");
   const [classification, setClassification] = useState<"authorized_non_sensitive" | "authorized_sensitive">("authorized_non_sensitive");
   const [activationConfirmed, setActivationConfirmed] = useState(false);
+  const [backups, setBackups] = useState<BackupRecord[]>([]);
+  const [selectedBackupId, setSelectedBackupId] = useState("");
+  const [backupRecoveryFile, setBackupRecoveryFile] = useState<File | null>(null);
+  const [backupPassphrase, setBackupPassphrase] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     if (!familyId) return;
     void api<FamilySecurity>(`/api/v1/families/${familyId}/security`)
       .then((result) => {
-        if (!cancelled) setSecurity(result);
+        if (!cancelled) {
+          setSecurity(result);
+          if (result.encryption_status === "active_encrypted") {
+            void api<BackupRecord[]>("/api/v1/backups")
+              .then((items) => {
+                if (!cancelled) {
+                  setBackups(items);
+                  setSelectedBackupId((current) => current || items[0]?.id || "");
+                }
+              })
+              .catch((value: unknown) => {
+                if (!cancelled) setError(value instanceof Error ? value.message : "无法读取本机备份。");
+              });
+          }
+        }
       })
       .catch((value: unknown) => {
         if (!cancelled) setError(value instanceof Error ? value.message : "无法读取安全状态。");
@@ -35,6 +53,12 @@ export default function SecurityPanel({ familyId }: Props) {
       cancelled = true;
     };
   }, [familyId]);
+
+  async function loadBackups() {
+    const result = await api<BackupRecord[]>("/api/v1/backups");
+    setBackups(result);
+    setSelectedBackupId((current) => current || result[0]?.id || "");
+  }
 
   async function initializeSecurity() {
     if (!familyId) return;
@@ -155,6 +179,68 @@ export default function SecurityPanel({ familyId }: Props) {
     }
   }
 
+  async function createAndVerifyBackup() {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const created = await api<BackupRecord>("/api/v1/backups", {
+        method: "POST",
+        body: JSON.stringify({ actor_label: "本机家庭管理员" }),
+      });
+      const verified = await api<BackupRecord>(`/api/v1/backups/${created.id}/verify`, { method: "POST" });
+      await loadBackups();
+      setSelectedBackupId(verified.id);
+      setNotice("备份已生成，并已在新的临时目录中通过数据库与资产完整性验证。");
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "本机备份没有成功。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadBackup(backup: BackupRecord) {
+    setBusy(true);
+    setError("");
+    try {
+      const download = await apiDownload(`/api/v1/backups/${backup.id}/download`);
+      const url = URL.createObjectURL(download.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = download.filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice("备份已下载。备份不包含主密钥、恢复口令或恢复包。");
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "备份下载没有成功。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rehearseBackupRecovery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!familyId || !selectedBackupId || !backupRecoveryFile) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const form = new FormData();
+      form.append("family_id", familyId);
+      form.append("package", backupRecoveryFile);
+      form.append("recovery_passphrase", backupPassphrase);
+      await api<BackupRecord>(`/api/v1/backups/${selectedBackupId}/rehearse-recovery`, { method: "POST", body: form });
+      await loadBackups();
+      setBackupRecoveryFile(null);
+      setBackupPassphrase("");
+      setNotice("完整恢复演练已通过：备份已恢复到新目录，并用恢复包成功解密和校验了其中的文本与媒体。");
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "完整恢复演练没有成功。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const statusText = !familyId
     ? "请先选择家庭档案"
     : !security
@@ -234,6 +320,31 @@ export default function SecurityPanel({ familyId }: Props) {
           <label className="confirmation-line"><input type="checkbox" checked={activationConfirmed} onChange={(event) => setActivationConfirmed(event.target.checked)} /><span>我已把恢复包交给可信家人离线保管，并理解丢失主密钥和恢复材料后无法解密。</span></label>
           <button className="button primary" disabled={busy || !activationConfirmed}>完成加密并启用真实资料</button>
         </form>
+      )}
+
+      {security?.encryption_status === "active_encrypted" && (
+        <div className="backup-panel">
+          <div>
+            <h3>本机备份与完整恢复演练</h3>
+            <p className="hint">备份包含 SQLite 快照与媒体清单，但不包含主密钥、恢复口令或恢复包。</p>
+          </div>
+          <button className="button secondary" disabled={busy} onClick={createAndVerifyBackup}>生成并验证新备份</button>
+          <div className="backup-list">
+            {backups.map((backup) => (
+              <div key={backup.id}><span>{new Date(backup.created_at).toLocaleString("zh-CN")} · {backup.asset_count} 个资产 · {backup.status}</span><button className="button quiet" disabled={busy} onClick={() => downloadBackup(backup)}>下载</button></div>
+            ))}
+            {!backups.length && <p className="hint">还没有本机备份。</p>}
+          </div>
+          {backups.length > 0 && (
+            <form className="recovery-form" onSubmit={rehearseBackupRecovery}>
+              <div><h3>用离线恢复包做完整恢复演练</h3><p className="hint">备份会在全新目录中展开，然后用恢复出的主密钥解密并校验文本和媒体。</p></div>
+              <label className="field"><span>选择备份</span><select value={selectedBackupId} onChange={(event) => setSelectedBackupId(event.target.value)}>{backups.map((backup) => <option key={backup.id} value={backup.id}>{new Date(backup.created_at).toLocaleString("zh-CN")} · {backup.status}</option>)}</select></label>
+              <label className="field"><span>离线恢复包</span><input type="file" accept="application/json,.json" required onChange={(event) => setBackupRecoveryFile(event.target.files?.[0] ?? null)} /></label>
+              <label className="field"><span>恢复口令</span><input type="password" autoComplete="off" minLength={12} value={backupPassphrase} onChange={(event) => setBackupPassphrase(event.target.value)} required /></label>
+              <button className="button primary" disabled={busy || !backupRecoveryFile}>开始完整恢复演练</button>
+            </form>
+          )}
+        </div>
       )}
     </section>
   );

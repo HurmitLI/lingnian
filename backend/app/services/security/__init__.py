@@ -10,6 +10,15 @@ from app.services.security.archive_encryption import (
     ArchiveEncryptionResult,
     activate_archive_encryption,
 )
+from app.services.security.backup import (
+    BackupBuildResult,
+    BackupError,
+    BackupVerificationResult,
+    RecoveryRehearsalResult,
+    build_local_backup,
+    rehearse_family_recovery,
+    verify_local_backup,
+)
 from app.services.security.key_store import (
     InMemorySecretStore,
     MacOSKeychainStore,
@@ -45,6 +54,10 @@ from app.services.security.secure_fields import (
 __all__ = [
     "EncryptionError",
     "ArchiveEncryptionResult",
+    "BackupBuildResult",
+    "BackupError",
+    "BackupVerificationResult",
+    "RecoveryRehearsalResult",
     "InMemorySecretStore",
     "MacOSKeychainStore",
     "MasterKeyManager",
@@ -55,6 +68,7 @@ __all__ = [
     "TEXT_PLACEHOLDER",
     "activate_archive_encryption",
     "build_recovery_package",
+    "build_local_backup",
     "decrypt_payload",
     "decrypt_media_file",
     "decrypt_text",
@@ -71,5 +85,7 @@ __all__ = [
     "require_family_master_key",
     "reveal_field",
     "recover_master_key",
+    "rehearse_family_recovery",
     "write_recovery_package",
+    "verify_local_backup",
 ]

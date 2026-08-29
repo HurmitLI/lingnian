@@ -1,6 +1,7 @@
 from app.models.entities import (
     ArchiveSecurity,
     Base,
+    BackupManifest,
     ConsentEvent,
     ElderProfile,
     EncryptedField,
@@ -25,6 +26,7 @@ from app.models.entities import (
 
 __all__ = [
     "Base",
+    "BackupManifest",
     "ArchiveSecurity",
     "FamilyArchive",
     "Person",

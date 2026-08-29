@@ -8,6 +8,9 @@ data/db/*
 data/assets/original/*
 data/assets/derived/*
 data/quarantine/*
+data/backups/*
+data/exports/*
+data/runtime/*
 !data/db/.gitkeep
 !data/assets/original/.gitkeep
 !data/assets/derived/.gitkeep

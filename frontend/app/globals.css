@@ -66,6 +66,12 @@ h1 { font-size: clamp(46px, 8vw, 76px); line-height: .95; font-weight: 500; lett
 .activation-form { background: #fff8e8; border-radius: 12px; padding: 20px; }
 .confirmation-line { grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 10px; color: var(--muted); line-height: 1.55; }
 .confirmation-line input { margin-top: 5px; }
+.backup-panel { display: grid; gap: 16px; border-top: 1px dashed var(--line); padding-top: 20px; }
+.backup-panel h3 { margin: 0 0 5px; font-size: 20px; }
+.backup-panel > .button { justify-self: start; }
+.backup-list { display: grid; gap: 8px; }
+.backup-list > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid #ece5d7; }
+.backup-list span { color: var(--muted); font-size: 14px; }
 
 .button { appearance: none; border-radius: 999px; border: 1px solid transparent; padding: 11px 17px; min-height: 44px; cursor: pointer; transition: transform .15s ease, background .15s ease; }
 .button:hover:not(:disabled) { transform: translateY(-1px); }

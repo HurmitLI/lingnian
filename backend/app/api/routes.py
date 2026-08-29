@@ -6,6 +6,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -18,6 +19,7 @@ from app.core.database import get_db
 from app.core.errors import DomainError
 from app.models import (
     ArchiveSecurity,
+    BackupManifest,
     ConsentEvent,
     ElderProfile,
     FamilyArchive,
@@ -41,6 +43,8 @@ from app.models import (
 from app.models.entities import now_utc
 from app.schemas.api import (
     ConfirmDraftRequest,
+    BackupCreate,
+    BackupRead,
     ElderProfileCreate,
     ElderProfileRead,
     FamilySecurityRead,
@@ -104,8 +108,10 @@ from app.services.privacy import (
 )
 from app.services.security import (
     RecoveryPackageError,
+    BackupError,
     activate_archive_encryption,
     build_recovery_package,
+    build_local_backup,
     get_family_key_manager,
     get_secret_store,
     is_encrypted_family,
@@ -117,6 +123,8 @@ from app.services.security import (
     decrypt_media_file,
     encrypt_media_file,
     media_context,
+    rehearse_family_recovery,
+    verify_local_backup,
 )
 from app.services.security.key_store import SecretStore, SecretStoreError
 from app.services.workflow.state import transition
@@ -863,6 +871,168 @@ def activate_family_security(
     )
     db.commit()
     return family_security_read(family, metadata, key_initialized=True)
+
+
+@router.post("/backups", response_model=BackupRead, status_code=201)
+def create_local_backup(
+    payload: BackupCreate,
+    db: Session = Depends(get_db),
+) -> BackupManifest:
+    unsafe_families = db.scalars(
+        select(FamilyArchive).where(FamilyArchive.data_classification != "test")
+    ).all()
+    for family in unsafe_families:
+        if (
+            family.security_metadata is None
+            or family.security_metadata.encryption_status != "active_encrypted"
+        ):
+            raise DomainError(
+                "BACKUP_BLOCKED_BY_ENCRYPTION",
+                "存在尚未完成加密的真实家庭资料，已阻止备份。",
+                409,
+            )
+    backup_id = str(uuid4())
+    relative_path = f"backups/niannian-local-backup-{backup_id}.zip"
+    output_path = resolve_controlled_path(
+        get_settings().resolved_asset_root, relative_path
+    )
+    try:
+        result = build_local_backup(get_settings(), output_path)
+    except BackupError as exc:
+        raise DomainError("BACKUP_CREATE_FAILED", str(exc), 409) from exc
+    backup = BackupManifest(
+        id=backup_id,
+        family_id=None,
+        backup_version=1,
+        relative_path=relative_path,
+        archive_sha256=result.archive_sha256,
+        database_sha256=result.database_sha256,
+        asset_count=result.asset_count,
+        status="ready",
+        verification_summary={"scope": "whole_local_archive"},
+    )
+    db.add(backup)
+    db.commit()
+    db.refresh(backup)
+    return backup
+
+
+@router.get("/backups", response_model=list[BackupRead])
+def list_local_backups(db: Session = Depends(get_db)) -> list[BackupManifest]:
+    return list(
+        db.scalars(
+            select(BackupManifest).order_by(BackupManifest.created_at.desc())
+        ).all()
+    )
+
+
+@router.get("/backups/{backup_id}/download")
+def download_local_backup(
+    backup_id: str, db: Session = Depends(get_db)
+) -> FileResponse:
+    backup = require(
+        db, BackupManifest, backup_id, "BACKUP_NOT_FOUND", "没有找到这份本机备份。"
+    )
+    path = resolve_controlled_path(
+        get_settings().resolved_asset_root, backup.relative_path
+    )
+    if not path.is_file() or calculate_sha256(path) != backup.archive_sha256:
+        backup.status = "corrupt"
+        db.commit()
+        raise DomainError(
+            "BACKUP_INTEGRITY_FAILED", "备份完整性校验失败，已阻止下载。", 409
+        )
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename=f"niannian-local-backup-{backup.id}.zip",
+    )
+
+
+@router.post("/backups/{backup_id}/verify", response_model=BackupRead)
+def verify_backup_copy(
+    backup_id: str, db: Session = Depends(get_db)
+) -> BackupManifest:
+    backup = require(
+        db, BackupManifest, backup_id, "BACKUP_NOT_FOUND", "没有找到这份本机备份。"
+    )
+    path = resolve_controlled_path(
+        get_settings().resolved_asset_root, backup.relative_path
+    )
+    try:
+        with tempfile.TemporaryDirectory(prefix="niannian-restore-rehearsal-") as name:
+            result = verify_local_backup(path, Path(name))
+    except BackupError as exc:
+        backup.status = "verification_failed"
+        backup.verification_summary = {"error": str(exc)}
+        db.commit()
+        raise DomainError("BACKUP_VERIFICATION_FAILED", str(exc), 409) from exc
+    backup.status = "verified"
+    backup.verified_at = now_utc()
+    backup.verification_summary = {
+        "database_sha256": result.database_sha256,
+        "asset_count": result.asset_count,
+        "alembic_revision": result.alembic_revision,
+        "restored_to_new_directory": True,
+    }
+    db.commit()
+    db.refresh(backup)
+    return backup
+
+
+@router.post("/backups/{backup_id}/rehearse-recovery", response_model=BackupRead)
+async def rehearse_backup_recovery(
+    backup_id: str,
+    family_id: str = Form(...),
+    package: UploadFile = File(...),
+    recovery_passphrase: str = Form(..., min_length=12, max_length=200),
+    db: Session = Depends(get_db),
+) -> BackupManifest:
+    backup = require(
+        db, BackupManifest, backup_id, "BACKUP_NOT_FOUND", "没有找到这份本机备份。"
+    )
+    path = resolve_controlled_path(
+        get_settings().resolved_asset_root, backup.relative_path
+    )
+    try:
+        package_bytes = await package.read(512 * 1024 + 1)
+    finally:
+        await package.close()
+    if len(package_bytes) > 512 * 1024:
+        raise DomainError("RECOVERY_PACKAGE_TOO_LARGE", "恢复包文件过大。", 413)
+    try:
+        master_key = recover_master_key(
+            package_bytes.decode("utf-8"),
+            recovery_passphrase,
+            expected_scope=f"family:{family_id}",
+        )
+        with tempfile.TemporaryDirectory(prefix="niannian-full-recovery-") as name:
+            verification = verify_local_backup(path, Path(name))
+            recovery = rehearse_family_recovery(
+                verification, family_id=family_id, master_key=master_key
+            )
+    except (BackupError, RecoveryPackageError, UnicodeDecodeError) as exc:
+        backup.status = "recovery_failed"
+        backup.verification_summary = {"recovery_verified": False}
+        db.commit()
+        raise DomainError(
+            "BACKUP_RECOVERY_FAILED",
+            "备份恢复演练失败：恢复包、口令、密文或备份完整性不匹配。",
+            409,
+        ) from exc
+    backup.status = "recovery_verified"
+    backup.verified_at = now_utc()
+    backup.verification_summary = {
+        "restored_to_new_directory": True,
+        "recovery_verified": True,
+        "family_id": family_id,
+        "decrypted_field_count": recovery.decrypted_field_count,
+        "decrypted_media_count": recovery.decrypted_media_count,
+        "alembic_revision": verification.alembic_revision,
+    }
+    db.commit()
+    db.refresh(backup)
+    return backup
 
 
 @router.post("/elder-profiles", response_model=ElderProfileRead, status_code=201)

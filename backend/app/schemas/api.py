@@ -86,6 +86,22 @@ class SecurityActivationRequest(BaseModel):
     )
 
 
+class BackupCreate(BaseModel):
+    actor_label: str = Field(min_length=1, max_length=80)
+
+
+class BackupRead(ORMModel):
+    id: str
+    backup_version: int
+    archive_sha256: str
+    database_sha256: str
+    asset_count: int
+    status: str
+    verified_at: datetime | None
+    verification_summary: dict
+    created_at: datetime
+
+
 class ElderProfileCreate(BaseModel):
     family_id: str
     display_name: str = Field(min_length=1, max_length=80)
