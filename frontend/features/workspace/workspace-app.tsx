@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import SecurityPanel from "@/app/security-panel";
 import AppShell from "@/components/layout/app-shell";
+import MemoryWorkflowStepper from "@/components/ui/memory-workflow-stepper";
 import { api, ApiError, apiDownload, mediaUrl } from "@/lib/api";
 import {
   chooseRecordingMimeType,
@@ -14,7 +15,12 @@ import {
   recordingExtension,
 } from "@/lib/media/recording";
 import { pollWorkflowTask } from "@/lib/workflow/poll-task";
-import { isSessionTerminal, sessionStatusLabel, taskStatusLabel } from "@/lib/workflow/status";
+import {
+  isSessionTerminal,
+  memoryWorkflowStep,
+  sessionStatusLabel,
+  taskStatusLabel,
+} from "@/lib/workflow/status";
 import type {
   ElderProfile,
   ElderMemoryContext,
@@ -617,6 +623,10 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         body: form,
       });
       await loadSession(detail.session.id);
+      if (audioPreview) URL.revokeObjectURL(audioPreview);
+      setAudioPreview(null);
+      setAudioFile(null);
+      setRecordingSeconds(0);
       setNotice("原始音频已安全保留，可以开始转写。 ");
     } catch (value) {
       showError(value);
@@ -903,6 +913,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const openSessions = recentSessions.filter(
     (item) => !["ARCHIVED", "SKIPPED"].includes(item.status),
   );
+  const activeSession = openSessions[0] ?? null;
+  const currentWorkflowStep = detail ? memoryWorkflowStep(detail.session.status) : 0;
   const pageMeta: Record<WorkspaceView, { eyebrow: string; title: string; subtitle: string }> = {
     home: {
       eyebrow: "家庭记忆首页",
@@ -967,25 +979,43 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       {!initialLoading && view === "home" && (
         <>
           {selectedProfile ? (
-            <section className="home-grid" aria-label="家庭记忆概览">
+            <section className="home-focus" aria-label="家庭记忆概览">
               <article className="card welcome-card">
-                <p className="card-kicker">今天可以做的事</p>
-                <h2>留下一小段声音，就很好</h2>
-                <p>念念会先在本机保存录音和转写，只有家人校对、确认后，故事才会进入档案。</p>
-                <Link className="button primary button-link" href={`/record?elder=${selectedProfile.id}`}>
-                  开始记录一段回忆
-                </Link>
-                {openSessions[0] && (
-                  <Link className="continue-link" href={`/record?elder=${selectedProfile.id}&session=${openSessions[0].id}`}>
-                    继续上次的“{openSessions[0].life_stage}”记录 · {sessionStatusLabel(openSessions[0].status)}
+                <p className="card-kicker">{activeSession ? "上次停在这里" : "今天只做一件事"}</p>
+                <h2>{activeSession ? `继续留好“${activeSession.life_stage}”的回忆` : "留下一小段声音，就很好"}</h2>
+                <p>
+                  {activeSession
+                    ? `已经进行到“${sessionStatusLabel(activeSession.status)}”。不用重新开始，从上次停下的地方继续就好。`
+                    : "念念会先在本机保存录音和转写，只有家人校对、确认后，故事才会进入档案。"}
+                </p>
+                <div className="home-primary-actions">
+                  <Link
+                    className="button primary button-link"
+                    href={activeSession
+                      ? `/record?elder=${selectedProfile.id}&session=${activeSession.id}`
+                      : `/record?elder=${selectedProfile.id}`}
+                  >
+                    {activeSession ? "继续上次记录" : "开始记录一段回忆"}
                   </Link>
-                )}
+                  {activeSession && (
+                    <Link className="text-link" href={`/record?elder=${selectedProfile.id}`}>换一个话题开始</Link>
+                  )}
+                </div>
+                <ul className="home-trust-list" aria-label="内容保存原则">
+                  <li><strong>先留原声</strong><span>录音先保存在这台 Mac</span></li>
+                  <li><strong>再校对</strong><span>由家人确认转写和故事</span></li>
+                  <li><strong>后归档</strong><span>未经确认的内容不进档案</span></li>
+                </ul>
               </article>
-              <div className="overview-cards">
-                <article className="overview-card"><span>已确认故事</span><strong>{timeline.length}</strong><small>只统计家人确认后的内容</small></article>
-                <article className="overview-card"><span>已覆盖阶段</span><strong>{memoryContext?.coverage.filter((item) => item.confirmed_story_count > 0).length ?? 0}<small> / 7</small></strong><small>慢慢来，不需要一次讲完</small></article>
-                <article className="overview-card"><span>待继续记录</span><strong>{openSessions.length}</strong><small>刷新页面也能找回来</small></article>
-              </div>
+              <aside className="card home-progress-card" aria-label="家庭回忆进度">
+                <div><p className="card-kicker">慢慢积累</p><h2>已经留下的回忆</h2><p>没有必须完成的数量，每一段都算数。</p></div>
+                <dl className="memory-tally">
+                  <div><dt>已确认故事</dt><dd>{timeline.length}<small> 篇</small></dd></div>
+                  <div><dt>已覆盖人生阶段</dt><dd>{memoryContext?.coverage.filter((item) => item.confirmed_story_count > 0).length ?? 0}<small> / 7</small></dd></div>
+                  <div><dt>待继续记录</dt><dd>{openSessions.length}<small> 段</small></dd></div>
+                </dl>
+                {timeline.length > 0 && <Link className="text-link" href="/archive">翻看家庭回忆档案</Link>}
+              </aside>
             </section>
           ) : (
             <section className="card empty-state-card">
@@ -1114,6 +1144,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
 
       {!initialLoading && view === "record" && !detail && <section className="card entry-card">
         <div className="section-heading"><span>01</span><div><h2>今天想从哪一段聊起？</h2><p>只选一个话题，念念会准备一个温和的问题。</p></div></div>
+        <MemoryWorkflowStepper currentStep={0} />
         <div className="stage-grid">
           {LIFE_STAGES.map((stage) => {
             const coverage = stageCoverage(stage);
@@ -1154,7 +1185,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         <section className="card memory-card">
           <div className="session-toolbar"><span>当前只完成这一段</span><button type="button" className="button quiet" disabled={busy || isRecording} onClick={leaveSessionForLater}>稍后继续，返回选题</button></div>
           <div className="session-meta"><span>{detail.session.life_stage}</span><strong>{sessionStatusLabel(detail.session.status)}</strong></div>
-          <blockquote>{detail.session.question_text}</blockquote>
+          <MemoryWorkflowStepper currentStep={currentWorkflowStep} />
+          <div className="memory-question"><span>今天只聊这一题</span><blockquote>{detail.session.question_text}</blockquote></div>
           {existingTrigger && (
             <div className="saved-trigger">
               <Image unoptimized width={560} height={420} className="trigger-preview" src={mediaUrl(existingTrigger.content_url) ?? ""} alt="本次回忆的触发图片" />
@@ -1164,8 +1196,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           {!(["SKIPPED", "ARCHIVED"].includes(detail.session.status)) && <button className="button quiet danger" disabled={busy} onClick={skipSession}>这次不想讲，直接跳过</button>}
 
           {!(["SKIPPED", "ARCHIVED"].includes(detail.session.status)) && (
-            <div className="workflow-block">
-              <h3>录音或上传</h3>
+            <div className="workflow-block" data-state={currentWorkflowStep === 1 ? "current" : currentWorkflowStep > 1 ? "complete" : "upcoming"}>
+              <h3>留下声音</h3>
               <p className="hint">开始后请慢慢讲。录音停止前只暂存在当前浏览器，点击“确认上传”后才会保存到本机档案。</p>
               <div className="button-row">
                 {!isRecording ? <button type="button" className="button secondary" onClick={startRecording} disabled={busy}>开始录音</button> : <button type="button" className="button recording" onClick={stopRecording}>停止录音</button>}
@@ -1182,7 +1214,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           )}
 
           {detail.transcript && (
-            <div className="workflow-block">
+            <div className="workflow-block" data-state={currentWorkflowStep === 2 ? "current" : currentWorkflowStep > 2 ? "complete" : "upcoming"}>
               <div className="block-title"><h3>人工校对</h3><span>版本 {detail.transcript.version}</span></div>
               <div className="evidence-grid">
                 <div><h4>ASR 原始转写</h4><p className="evidence-text">{detail.transcript.raw_text}</p></div>
@@ -1208,7 +1240,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           )}
 
           {detail.story_draft && ["DRAFT_REVIEW", "ARCHIVED"].includes(detail.session.status) && (
-            <div className="workflow-block">
+            <div className="workflow-block" data-state={currentWorkflowStep === 3 ? "current" : "upcoming"}>
               <div className="block-title"><h3>故事草稿</h3><span>{detail.story_draft.provider} / {detail.story_draft.model}</span></div>
               <h4 className="draft-title">{detail.story_draft.title}</h4>
               <p className="story-body">{detail.story_draft.body}</p>

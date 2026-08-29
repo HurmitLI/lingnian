@@ -1,5 +1,6 @@
 const SESSION_STATUS_LABELS: Record<string, string> = {
   PROMPT_READY: "问题已准备",
+  RECORDING_PENDING: "等待留下声音",
   AUDIO_UPLOADED: "音频已保存",
   TRANSCRIBING: "正在本机转写",
   TRANSCRIPT_REVIEW: "等待家人校对",
@@ -30,4 +31,21 @@ export function taskStatusLabel(status: string): string {
 
 export function isSessionTerminal(status: string): boolean {
   return status === "ARCHIVED" || status === "SKIPPED";
+}
+
+export function memoryWorkflowStep(status: string): number {
+  if (["TRANSCRIPT_REVIEW", "ORGANIZING"].includes(status)) return 2;
+  if (["DRAFT_REVIEW", "CONFIRMED", "ARCHIVED"].includes(status)) return 3;
+  if (
+    [
+      "PROMPT_READY",
+      "RECORDING_PENDING",
+      "AUDIO_UPLOADED",
+      "TRANSCRIBING",
+      "FAILED_RETRYABLE",
+    ].includes(status)
+  ) {
+    return 1;
+  }
+  return 0;
 }

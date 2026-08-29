@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { isSessionTerminal, sessionStatusLabel, taskStatusLabel } from "@/lib/workflow/status";
+import {
+  isSessionTerminal,
+  memoryWorkflowStep,
+  sessionStatusLabel,
+  taskStatusLabel,
+} from "@/lib/workflow/status";
 
 describe("工作流状态文案", () => {
   it("把后端状态转换成家人能理解的文字", () => {
@@ -18,5 +23,15 @@ describe("工作流状态文案", () => {
     expect(isSessionTerminal("ARCHIVED")).toBe(true);
     expect(isSessionTerminal("SKIPPED")).toBe(true);
     expect(isSessionTerminal("DRAFT_REVIEW")).toBe(false);
+  });
+
+  it("把后端状态归到四步记录流程", () => {
+    expect(memoryWorkflowStep("PROMPT_READY")).toBe(1);
+    expect(memoryWorkflowStep("TRANSCRIBING")).toBe(1);
+    expect(memoryWorkflowStep("TRANSCRIPT_REVIEW")).toBe(2);
+    expect(memoryWorkflowStep("ORGANIZING")).toBe(2);
+    expect(memoryWorkflowStep("DRAFT_REVIEW")).toBe(3);
+    expect(memoryWorkflowStep("ARCHIVED")).toBe(3);
+    expect(memoryWorkflowStep("SOMETHING_NEW")).toBe(0);
   });
 });

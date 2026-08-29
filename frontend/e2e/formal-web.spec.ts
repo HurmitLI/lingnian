@@ -57,6 +57,7 @@ test.beforeEach(async ({ page }) => {
 test("首页可导航且没有横向溢出", async ({ page, isMobile }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "今天，陪奶奶聊一点" })).toBeVisible();
+  await expect(page.locator(".welcome-card a.button.primary")).toHaveCount(1);
   const navigationName = isMobile ? "手机主导航" : "桌面主导航";
   const navigation = page.getByRole("navigation", { name: navigationName });
   await expect(navigation).toBeVisible();
@@ -76,6 +77,9 @@ test("刷新后能从链接恢复未完成记录", async ({ page }) => {
   await expect(page.getByRole("heading", { level: 1, name: "一次，只聊一个回忆" })).toBeVisible();
   await expect(page.getByText(session.question_text)).toBeVisible();
   await expect(page.getByText("问题已准备")).toBeVisible();
+  const workflow = page.getByRole("list", { name: "记录回忆的四个步骤" });
+  await expect(workflow).toBeVisible();
+  await expect(workflow.locator('[aria-current="step"]')).toContainText("留下声音");
   await page.reload();
   await expect(page.getByText(session.question_text)).toBeVisible();
 });
