@@ -6,9 +6,9 @@
     "node": ">=22 <25"
   },
   "scripts": {
-    "dev": "next dev -p 3011",
+    "dev": "next dev --hostname 127.0.0.1 -p 3011",
     "build": "next build",
-    "start": "next start -p 3011",
+    "start": "next start --hostname 127.0.0.1 -p 3011",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
