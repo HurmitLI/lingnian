@@ -53,6 +53,17 @@ h1 { font-size: clamp(46px, 8vw, 76px); line-height: .95; font-weight: 500; lett
 .field input:focus, .field select:focus, textarea:focus { border-color: var(--red); box-shadow: 0 0 0 3px rgba(155,63,54,.1); }
 .create-panel { border-top: 1px dashed var(--line); padding-top: 16px; }
 .create-panel summary { cursor: pointer; color: var(--red-deep); }
+.family-panel { border-top: 1px dashed var(--line); margin-top: 18px; padding-top: 16px; }
+.family-panel summary { color: var(--red-deep); cursor: pointer; }
+.family-records-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 18px; }
+.family-records-grid h3 { margin: 0 0 12px; font-size: 20px; }
+.family-person-list, .relationship-list { display: grid; gap: 8px; }
+.family-person-list > div, .relationship-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #ece5d7; min-height: 42px; }
+.family-person-list span:first-child { display: grid; gap: 2px; }
+.family-person-list small { color: var(--muted); font-size: 11px; }
+.record-actions { display: flex; gap: 6px; }
+.inline-record-form { display: grid; gap: 10px; margin-top: 16px; }
+.inline-record-form .button { justify-self: start; }
 
 .security-status { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
 .security-status > div { display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 12px; padding: 15px; background: #fbf8f0; }
@@ -152,7 +163,7 @@ blockquote { margin: 24px 0; padding: 8px 0 8px 22px; border-left: 3px solid var
   main { width: min(100% - 22px, 1020px); padding-top: 24px; }
   .hero { align-items: flex-start; flex-direction: column; }
   .privacy-badge { align-self: flex-start; }
-  .form-grid, .evidence-grid, .recovery-form, .archive-tools-grid, .media-trigger-form { grid-template-columns: 1fr; }
+  .form-grid, .evidence-grid, .recovery-form, .archive-tools-grid, .media-trigger-form, .family-records-grid { grid-template-columns: 1fr; }
   .security-status { grid-template-columns: 1fr; }
   .stage-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .file-line { align-items: flex-start; flex-direction: column; }

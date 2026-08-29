@@ -31,6 +31,11 @@ class PersonCreate(BaseModel):
     role: str = Field(default="family_member", min_length=1, max_length=24)
 
 
+class PersonUpdate(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=80)
+    role: str | None = Field(default=None, min_length=1, max_length=24)
+
+
 class PersonRead(ORMModel):
     id: str
     family_id: str

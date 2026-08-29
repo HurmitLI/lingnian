@@ -41,11 +41,25 @@ def test_family_people_and_confirmed_relationships(client, db):
         f"/api/v1/families/{profile['family_id']}/relationships"
     ).json()
     assert len(listed) == 1
+    renamed = client.patch(
+        f"/api/v1/people/{child.json()['id']}",
+        json={"display_name": "测试女儿（已修改）"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["display_name"] == "测试女儿（已修改）"
+    deleted_relationship = client.delete(
+        f"/api/v1/relationships/{relationship.json()['id']}"
+    )
+    assert deleted_relationship.status_code == 204
+    deleted_person = client.delete(f"/api/v1/people/{child.json()['id']}")
+    assert deleted_person.status_code == 204
+    blocked_elder_delete = client.delete(f"/api/v1/people/{elder_person_id}")
+    assert blocked_elder_delete.status_code == 409
     assert len(
         db.scalars(
             select(Person).where(Person.family_id == profile["family_id"])
         ).all()
-    ) == 2
+    ) == 1
 
 
 def test_question_bank_rotates_and_avoid_preference_blocks_topic(client, db):

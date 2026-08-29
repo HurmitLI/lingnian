@@ -8,6 +8,8 @@ import { api, apiDownload, mediaUrl } from "@/lib/api";
 import type {
   ElderProfile,
   ElderMemoryContext,
+  FamilyPerson,
+  FamilyRelationship,
   Health,
   ModelConsent,
   MemoryBook,
@@ -19,6 +21,15 @@ import type {
 } from "@/lib/types";
 
 const LIFE_STAGES = ["童年", "求学", "工作", "婚恋", "育儿", "价值观", "老物件"];
+const RELATIONSHIP_LABELS: Record<string, string> = {
+  parent: "父母",
+  child: "子女",
+  spouse: "配偶",
+  sibling: "兄弟姐妹",
+  grandparent: "祖辈",
+  grandchild: "孙辈",
+  custom: "自定义",
+};
 
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
@@ -44,6 +55,8 @@ export default function Home() {
   const [memoryContext, setMemoryContext] = useState<ElderMemoryContext | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [memoryBooks, setMemoryBooks] = useState<MemoryBook[]>([]);
+  const [familyPeople, setFamilyPeople] = useState<FamilyPerson[]>([]);
+  const [familyRelationships, setFamilyRelationships] = useState<FamilyRelationship[]>([]);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioPreview, setAudioPreview] = useState<string | null>(null);
   const [triggerPreview, setTriggerPreview] = useState<string | null>(null);
@@ -104,6 +117,15 @@ export default function Home() {
     ]);
     setReminders(reminderResult);
     setMemoryBooks(bookResult);
+  }, []);
+
+  const loadFamilyRecords = useCallback(async (familyId: string) => {
+    const [peopleResult, relationshipResult] = await Promise.all([
+      api<FamilyPerson[]>(`/api/v1/families/${familyId}/people`),
+      api<FamilyRelationship[]>(`/api/v1/families/${familyId}/relationships`),
+    ]);
+    setFamilyPeople(peopleResult);
+    setFamilyRelationships(relationshipResult);
   }, []);
 
   const loadSession = useCallback(async (sessionId: string) => {
@@ -189,6 +211,23 @@ export default function Home() {
   }, [selectedProfileId, showError]);
 
   useEffect(() => {
+    if (!selectedProfile?.family_id) return;
+    let cancelled = false;
+    void Promise.all([
+      api<FamilyPerson[]>(`/api/v1/families/${selectedProfile.family_id}/people`),
+      api<FamilyRelationship[]>(`/api/v1/families/${selectedProfile.family_id}/relationships`),
+    ]).then(([peopleResult, relationshipResult]) => {
+      if (!cancelled) {
+        setFamilyPeople(peopleResult);
+        setFamilyRelationships(relationshipResult);
+      }
+    }).catch((value: unknown) => {
+      if (!cancelled) showError(value);
+    });
+    return () => { cancelled = true; };
+  }, [selectedProfile?.family_id, showError]);
+
+  useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
       if (!unsaved) return;
       event.preventDefault();
@@ -233,6 +272,107 @@ export default function Home() {
       setSelectedProfileId(profile.id);
       setNotice("虚构测试档案已保存。");
       formElement.reset();
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createFamilyMember(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedProfile) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/v1/families/${selectedProfile.family_id}/people`, {
+        method: "POST",
+        body: JSON.stringify({
+          display_name: form.get("memberName"),
+          role: form.get("memberRole"),
+        }),
+      });
+      await loadFamilyRecords(selectedProfile.family_id);
+      formElement.reset();
+      setNotice("家庭成员已添加。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createFamilyRelationship(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedProfile) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const relationshipType = String(form.get("relationshipType"));
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/v1/families/${selectedProfile.family_id}/relationships`, {
+        method: "POST",
+        body: JSON.stringify({
+          from_person_id: form.get("fromPersonId"),
+          to_person_id: form.get("toPersonId"),
+          relationship_type: relationshipType,
+          custom_label: relationshipType === "custom" ? form.get("customRelationship") : null,
+          confirmed_by: "本机家庭管理员",
+        }),
+      });
+      await loadFamilyRecords(selectedProfile.family_id);
+      formElement.reset();
+      setNotice("家庭关系已经人工确认并保存。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function renameFamilyPerson(person: FamilyPerson) {
+    const displayName = window.prompt("修改家庭成员的显示名称：", person.display_name)?.trim();
+    if (!displayName || displayName === person.display_name || !selectedProfile) return;
+    setBusy(true);
+    try {
+      await api(`/api/v1/people/${person.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ display_name: displayName }),
+      });
+      await loadFamilyRecords(selectedProfile.family_id);
+      await loadProfiles();
+      setNotice("家庭成员名称已修改。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteFamilyPerson(person: FamilyPerson) {
+    if (!selectedProfile || !window.confirm(`确认删除“${person.display_name}”吗？与其相关的家庭关系也会删除。`)) return;
+    setBusy(true);
+    try {
+      await api<void>(`/api/v1/people/${person.id}`, { method: "DELETE" });
+      await loadFamilyRecords(selectedProfile.family_id);
+      setNotice("家庭成员与其关系已删除。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteFamilyRelationship(relationship: FamilyRelationship) {
+    if (!selectedProfile || !window.confirm("确认删除这条家庭关系吗？")) return;
+    setBusy(true);
+    try {
+      await api<void>(`/api/v1/relationships/${relationship.id}`, { method: "DELETE" });
+      await loadFamilyRecords(selectedProfile.family_id);
+      setNotice("家庭关系已删除。");
     } catch (value) {
       showError(value);
     } finally {
@@ -682,6 +822,49 @@ export default function Home() {
             <button className="button primary" disabled={busy}>保存测试档案</button>
           </form>
         </details>
+        {selectedProfile && (
+          <details className="family-panel">
+            <summary>维护家庭成员与关系</summary>
+            <div className="family-records-grid">
+              <div>
+                <h3>家庭成员</h3>
+                <div className="family-person-list">
+                  {familyPeople.map((person) => (
+                    <div key={person.id}>
+                      <span><strong>{person.display_name}</strong><small>{person.role === "elder" ? "讲述者" : "家庭成员"}</small></span>
+                      <span className="record-actions"><button className="button quiet" disabled={busy} onClick={() => renameFamilyPerson(person)}>改名</button>{person.role !== "elder" && <button className="button quiet danger" disabled={busy} onClick={() => deleteFamilyPerson(person)}>删除</button>}</span>
+                    </div>
+                  ))}
+                </div>
+                <form className="inline-record-form" onSubmit={createFamilyMember}>
+                  <label className="field"><span>显示名称</span><input name="memberName" maxLength={80} required /></label>
+                  <label className="field"><span>角色</span><select name="memberRole"><option value="family_member">家庭成员</option><option value="caregiver">照护者</option><option value="archive_manager">档案管理者</option></select></label>
+                  <button className="button secondary" disabled={busy}>添加成员</button>
+                </form>
+              </div>
+              <div>
+                <h3>已确认关系</h3>
+                <div className="relationship-list">
+                  {familyRelationships.map((relationship) => {
+                    const from = familyPeople.find((person) => person.id === relationship.from_person_id)?.display_name ?? "未知成员";
+                    const to = familyPeople.find((person) => person.id === relationship.to_person_id)?.display_name ?? "未知成员";
+                    return <div key={relationship.id}><span>{from} <strong>{relationship.custom_label || RELATIONSHIP_LABELS[relationship.relationship_type]}</strong> {to}</span><button className="button quiet danger" disabled={busy} onClick={() => deleteFamilyRelationship(relationship)}>删除</button></div>;
+                  })}
+                  {!familyRelationships.length && <p className="hint">还没有建立家庭关系。</p>}
+                </div>
+                {familyPeople.length >= 2 && (
+                  <form className="inline-record-form relationship-form" onSubmit={createFamilyRelationship}>
+                    <label className="field"><span>从</span><select name="fromPersonId">{familyPeople.map((person) => <option key={person.id} value={person.id}>{person.display_name}</option>)}</select></label>
+                    <label className="field"><span>关系</span><select name="relationshipType">{Object.entries(RELATIONSHIP_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                    <label className="field"><span>到</span><select name="toPersonId">{[...familyPeople].reverse().map((person) => <option key={person.id} value={person.id}>{person.display_name}</option>)}</select></label>
+                    <label className="field"><span>自定义称谓（仅选自定义时）</span><input name="customRelationship" maxLength={80} /></label>
+                    <button className="button secondary" disabled={busy}>确认并保存关系</button>
+                  </form>
+                )}
+              </div>
+            </div>
+          </details>
+        )}
       </section>
 
       <SecurityPanel key={selectedProfile?.family_id ?? "no-family"} familyId={selectedProfile?.family_id ?? null} />

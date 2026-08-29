@@ -11,7 +11,7 @@ from uuid import uuid4
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse, Response
 from starlette.background import BackgroundTask
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -22,6 +22,7 @@ from app.models import (
     BackupManifest,
     ConsentEvent,
     ElderProfile,
+    EncryptedField,
     FamilyArchive,
     MediaAsset,
     MediaLink,
@@ -64,6 +65,7 @@ from app.schemas.api import (
     MemoryBookRead,
     PersonCreate,
     PersonRead,
+    PersonUpdate,
     PersonRelationshipCreate,
     PersonRelationshipRead,
     QuestionPromptRead,
@@ -1124,6 +1126,65 @@ def list_family_people(
     return [person_read(db, item, secret_store) for item in people]
 
 
+@router.patch("/people/{person_id}", response_model=PersonRead)
+def update_family_person(
+    person_id: str,
+    payload: PersonUpdate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> PersonRead:
+    person = require(db, Person, person_id, "PERSON_NOT_FOUND", "没有找到这位家庭成员。")
+    if person.elder_profile and payload.role and payload.role != "elder":
+        raise DomainError(
+            "ELDER_ROLE_LOCKED", "讲述者的老人角色不能直接改为其他角色。", 409
+        )
+    if payload.role:
+        person.role = payload.role.strip()
+    if payload.display_name:
+        display_name = payload.display_name.strip()
+        person.display_name = display_name
+        protect_values(
+            db,
+            person.family,
+            person,
+            {"display_name": display_name},
+            secret_store,
+        )
+    db.commit()
+    db.refresh(person)
+    return person_read(db, person, secret_store)
+
+
+@router.delete("/people/{person_id}", status_code=204)
+def delete_family_person(
+    person_id: str,
+    db: Session = Depends(get_db),
+) -> Response:
+    person = require(db, Person, person_id, "PERSON_NOT_FOUND", "没有找到这位家庭成员。")
+    if person.elder_profile:
+        raise DomainError(
+            "ELDER_DELETE_BLOCKED",
+            "讲述者档案可能包含故事与媒体，不能在家谱界面中删除。",
+            409,
+        )
+    relationship_ids = db.scalars(
+        select(PersonRelationship.id).where(
+            (PersonRelationship.from_person_id == person.id)
+            | (PersonRelationship.to_person_id == person.id)
+        )
+    ).all()
+    object_ids = [person.id, *relationship_ids]
+    db.execute(
+        delete(EncryptedField).where(
+            EncryptedField.family_id == person.family_id,
+            EncryptedField.object_id.in_(object_ids),
+        )
+    )
+    db.delete(person)
+    db.commit()
+    return Response(status_code=204)
+
+
 @router.post(
     "/families/{family_id}/relationships",
     response_model=PersonRelationshipRead,
@@ -1202,6 +1263,30 @@ def list_person_relationships(
         ).all()
     )
     return [relationship_read(db, item, secret_store) for item in relationships]
+
+
+@router.delete("/relationships/{relationship_id}", status_code=204)
+def delete_person_relationship(
+    relationship_id: str,
+    db: Session = Depends(get_db),
+) -> Response:
+    relationship = require(
+        db,
+        PersonRelationship,
+        relationship_id,
+        "RELATIONSHIP_NOT_FOUND",
+        "没有找到这条家庭关系。",
+    )
+    db.execute(
+        delete(EncryptedField).where(
+            EncryptedField.family_id == relationship.family_id,
+            EncryptedField.object_type == relationship.__tablename__,
+            EncryptedField.object_id == relationship.id,
+        )
+    )
+    db.delete(relationship)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/elder-profiles", response_model=list[ElderProfileRead])

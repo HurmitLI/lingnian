@@ -10,6 +10,25 @@ export type ElderProfile = {
   occupation_summary: string | null;
 };
 
+export type FamilyPerson = {
+  id: string;
+  family_id: string;
+  role: string;
+  display_name: string;
+  created_at: string;
+};
+
+export type FamilyRelationship = {
+  id: string;
+  family_id: string;
+  from_person_id: string;
+  to_person_id: string;
+  relationship_type: "parent" | "child" | "spouse" | "sibling" | "grandparent" | "grandchild" | "custom";
+  custom_label: string | null;
+  confirmed_by: string;
+  created_at: string;
+};
+
 export type MemorySession = {
   id: string;
   elder_id: string;

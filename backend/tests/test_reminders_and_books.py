@@ -4,6 +4,7 @@ import io
 from datetime import UTC, datetime, timedelta
 
 from app.core.config import get_settings
+from app.core.database import initialize_database
 from app.models import MemoryBook
 from pypdf import PdfReader
 from test_api_flow import create_profile, create_session, upload_test_audio
@@ -44,6 +45,12 @@ def test_local_reminder_is_idempotent_shown_once_and_respects_avoid(client):
     )
     assert first.status_code == 201
     assert repeated.json()["id"] == first.json()["id"]
+
+    initialize_database()
+    after_restart = client.get(
+        f"/api/v1/elder-profiles/{profile['id']}/reminders/due"
+    ).json()
+    assert [item["id"] for item in after_restart] == [first.json()["id"]]
 
     due = client.get(
         f"/api/v1/elder-profiles/{profile['id']}/reminders/due"
