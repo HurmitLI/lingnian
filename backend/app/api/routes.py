@@ -204,6 +204,18 @@ def elder_read(
     )
 
 
+def family_read(
+    db: Session, family: FamilyArchive, store: SecretStore
+) -> FamilyRead:
+    return FamilyRead(
+        id=family.id,
+        display_name=secure_value(db, family, family, "display_name", store),
+        schema_version=family.schema_version,
+        data_classification=family.data_classification,
+        created_at=family.created_at,
+    )
+
+
 def media_read(db: Session, asset: MediaAsset, store: SecretStore) -> MediaAssetRead:
     family = asset.session.elder.person.family
     return MediaAssetRead(
@@ -556,6 +568,19 @@ def encrypt_asset_if_needed(
     asset.encryption_version = 1
 
 
+def delete_secure_fields(
+    db: Session, *, family_id: str, object_ids: list[str]
+) -> None:
+    if not object_ids:
+        return
+    db.execute(
+        delete(EncryptedField).where(
+            EncryptedField.family_id == family_id,
+            EncryptedField.object_id.in_(object_ids),
+        )
+    )
+
+
 def reminder_read(reminder: Reminder) -> ReminderRead:
     def as_utc(value: datetime | None) -> datetime | None:
         if value is None:
@@ -593,7 +618,11 @@ def health() -> HealthRead:
 
 
 @router.post("/families", response_model=FamilyRead, status_code=201)
-def create_family(payload: FamilyCreate, db: Session = Depends(get_db)) -> FamilyArchive:
+def create_family(
+    payload: FamilyCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> FamilyRead:
     if payload.data_classification != "test":
         raise DomainError(
             "REAL_DATA_MODE_LOCKED",
@@ -607,7 +636,7 @@ def create_family(payload: FamilyCreate, db: Session = Depends(get_db)) -> Famil
             )
         )
         if existing:
-            return existing
+            return family_read(db, existing, secret_store)
     family = FamilyArchive(
         display_name=payload.display_name.strip(),
         idempotency_key=payload.idempotency_key,
@@ -616,7 +645,7 @@ def create_family(payload: FamilyCreate, db: Session = Depends(get_db)) -> Famil
     db.add(family)
     db.commit()
     db.refresh(family)
-    return family
+    return family_read(db, family, secret_store)
 
 
 def family_security_read(
@@ -1911,16 +1940,26 @@ def skip_memory_session(
         raise DomainError("ARCHIVED_SESSION_LOCKED", "已经归档的故事不能在这里跳过。", 409)
 
     settings = get_settings()
+    deleted_object_ids: list[str] = []
     for asset in list(session.media_assets):
+        deleted_object_ids.append(asset.id)
+        deleted_object_ids.extend(link.id for link in asset.links)
         path = resolve_controlled_path(settings.resolved_asset_root, asset.relative_path)
         path.unlink(missing_ok=True)
         db.delete(asset)
     if session.transcript:
+        deleted_object_ids.append(session.transcript.id)
         db.delete(session.transcript)
     if session.story_draft:
+        deleted_object_ids.append(session.story_draft.id)
         db.delete(session.story_draft)
     for task in list(session.tasks):
         db.delete(task)
+    delete_secure_fields(
+        db,
+        family_id=session.elder.person.family_id,
+        object_ids=deleted_object_ids,
+    )
     session.status = "SKIPPED"
     skip_event = ConsentEvent(
         action="skip",
@@ -2062,6 +2101,11 @@ def delete_trigger_image(asset_id: str, db: Session = Depends(get_db)) -> Respon
     if asset.session.status == "ARCHIVED":
         raise DomainError("ARCHIVED_MEDIA_LOCKED", "已归档故事的图片不能在这里删除。", 409)
     path = resolve_controlled_path(get_settings().resolved_asset_root, asset.relative_path)
+    delete_secure_fields(
+        db,
+        family_id=asset.session.elder.person.family_id,
+        object_ids=[asset.id, *[link.id for link in asset.links]],
+    )
     path.unlink(missing_ok=True)
     db.delete(asset)
     db.commit()

@@ -163,6 +163,10 @@ def test_verified_recovery_activates_real_encryption_and_preserves_api_reads(cli
         assert activated.json()["encryption_status"] == "active_encrypted"
         assert activated.json()["activated_at"] is not None
 
+        repeated_family = create_family(client)
+        assert repeated_family["id"] == family["id"]
+        assert repeated_family["display_name"] == "虚构安全测试家庭"
+
         db.expire_all()
         raw_family = db.get(FamilyArchive, family["id"])
         raw_profile = db.get(ElderProfile, profile["id"])
@@ -265,6 +269,81 @@ def test_verified_recovery_activates_real_encryption_and_preserves_api_reads(cli
         db.expire_all()
         second_profile = db.get(ElderProfile, second.json()["id"])
         assert db.get(Person, second_profile.person_id).display_name == "[niannian:encrypted:v1]"
+
+        disposable_session = client.post(
+            "/api/v1/memory-sessions",
+            json={"elder_id": profile["id"], "life_stage": "青年"},
+        ).json()
+        disposable_asset = client.post(
+            f"/api/v1/memory-sessions/{disposable_session['id']}/audio",
+            files={"audio": ("待清除录音.wav", wav_bytes(), "audio/wav")},
+        ).json()
+        assert client.post(
+            f"/api/v1/memory-sessions/{disposable_session['id']}/transcription-tasks"
+        ).status_code == 202
+        disposable_detail = client.get(
+            f"/api/v1/memory-sessions/{disposable_session['id']}"
+        ).json()
+        disposable_transcript_id = disposable_detail["transcript"]["id"]
+        assert client.patch(
+            f"/api/v1/transcripts/{disposable_transcript_id}",
+            json={"corrected_text": "这段虚构文字应随跳过一起清除。"},
+        ).status_code == 200
+        assert client.post(
+            f"/api/v1/memory-sessions/{disposable_session['id']}/organization-tasks"
+        ).status_code == 202
+        disposable_detail = client.get(
+            f"/api/v1/memory-sessions/{disposable_session['id']}"
+        ).json()
+        disposable_draft_id = disposable_detail["story_draft"]["id"]
+        disposable_object_ids = [
+            disposable_asset["id"],
+            disposable_transcript_id,
+            disposable_draft_id,
+        ]
+        db.expire_all()
+        assert db.scalars(
+            select(EncryptedField).where(
+                EncryptedField.object_id.in_(disposable_object_ids)
+            )
+        ).all()
+        assert client.post(
+            f"/api/v1/memory-sessions/{disposable_session['id']}/skip"
+        ).status_code == 200
+        db.expire_all()
+        assert not db.scalars(
+            select(EncryptedField).where(
+                EncryptedField.object_id.in_(disposable_object_ids)
+            )
+        ).all()
+
+        from test_media_triggers import png_bytes
+
+        photo_session = client.post(
+            "/api/v1/memory-sessions",
+            json={
+                "elder_id": profile["id"],
+                "life_stage": "照片",
+                "trigger_kind": "photo",
+            },
+        ).json()
+        photo = client.post(
+            f"/api/v1/memory-sessions/{photo_session['id']}/trigger-image",
+            data={"trigger_kind": "photo", "user_annotation": "待清除虚构标注"},
+            files={"image": ("待清除照片.png", png_bytes(), "image/png")},
+        ).json()
+        db.expire_all()
+        photo_asset = db.get(MediaAsset, photo["media_asset_id"])
+        photo_object_ids = [photo_asset.id, *[link.id for link in photo_asset.links]]
+        assert db.scalars(
+            select(EncryptedField).where(EncryptedField.object_id.in_(photo_object_ids))
+        ).all()
+        assert client.delete(f"/api/v1/media-assets/{photo_asset.id}").status_code == 204
+        db.expire_all()
+        assert not db.scalars(
+            select(EncryptedField).where(EncryptedField.object_id.in_(photo_object_ids))
+        ).all()
+
         raw_dump = "\n".join(
             db.connection().connection.driver_connection.iterdump()
         )
@@ -277,6 +356,10 @@ def test_verified_recovery_activates_real_encryption_and_preserves_api_reads(cli
             "虚构测试子女",
             "启用后新建姓名",
             "启用后称呼",
+            "待清除录音.wav",
+            "这段虚构文字应随跳过一起清除。",
+            "待清除虚构标注",
+            "待清除照片.png",
         ]:
             assert plaintext not in raw_dump
     finally:
