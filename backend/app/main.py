@@ -15,11 +15,13 @@ from app.core.errors import (
     unhandled_error_handler,
     validation_error_handler,
 )
+from app.services.keepsake import recover_interrupted_keepsakes
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     initialize_database()
+    recover_interrupted_keepsakes()
     yield
 
 
@@ -42,4 +44,3 @@ app.add_exception_handler(DomainError, domain_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
 app.include_router(router)
-

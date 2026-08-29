@@ -24,6 +24,8 @@ from app.models import (
     ElderProfile,
     EncryptedField,
     FamilyArchive,
+    Keepsake,
+    KeepsakeAuthorization,
     MediaAsset,
     MediaLink,
     MemoryBook,
@@ -63,6 +65,11 @@ from app.schemas.api import (
     MemoryFactRead,
     MemoryBookCreate,
     MemoryBookRead,
+    KeepsakeAuthorizationCreate,
+    KeepsakeAuthorizationRead,
+    KeepsakeCatalogItem,
+    KeepsakeCreate,
+    KeepsakeRead,
     PersonCreate,
     PersonRead,
     PersonUpdate,
@@ -101,6 +108,11 @@ from app.services.memory import (
     render_memory_book_pdf,
     select_question,
     SelectedQuestion,
+)
+from app.services.keepsake import (
+    build_keepsake_manifest,
+    manifest_sha256 as keepsake_manifest_sha256,
+    process_keepsake,
 )
 from app.services.privacy import (
     STORY_ORGANIZATION_PURPOSE,
@@ -261,6 +273,59 @@ def relationship_read(
             db, family, relationship, "confirmed_by", store, master_key=key
         ),
         created_at=relationship.created_at,
+    )
+
+
+def keepsake_authorization_read(
+    db: Session,
+    authorization: KeepsakeAuthorization,
+    store: SecretStore,
+) -> KeepsakeAuthorizationRead:
+    family = authorization.elder.person.family
+    return KeepsakeAuthorizationRead(
+        id=authorization.id,
+        elder_id=authorization.elder_id,
+        actor_label=secure_value(db, family, authorization, "actor_label", store),
+        story_ids=authorization.story_ids,
+        manifest_sha256=authorization.manifest_sha256,
+        original_voice_authorized=authorization.original_voice_authorized,
+        private_family_use=authorization.private_family_use,
+        no_impersonation=authorization.no_impersonation,
+        original_audio_only=authorization.original_audio_only,
+        decision=authorization.decision,
+        used_at=authorization.used_at,
+        created_at=authorization.created_at,
+    )
+
+
+def keepsake_read(
+    db: Session,
+    keepsake: Keepsake,
+    store: SecretStore,
+) -> KeepsakeRead:
+    family = keepsake.elder.person.family
+    return KeepsakeRead(
+        id=keepsake.id,
+        elder_id=keepsake.elder_id,
+        authorization_id=keepsake.authorization_id,
+        version=keepsake.version,
+        title=secure_value(db, family, keepsake, "title", store),
+        story_manifest=keepsake.story_manifest,
+        status=keepsake.status,
+        progress=keepsake.progress,
+        attempt=keepsake.attempt,
+        error_code=keepsake.error_code,
+        mime_type=keepsake.mime_type,
+        duration_ms=keepsake.duration_ms,
+        width=keepsake.width,
+        height=keepsake.height,
+        size_bytes=keepsake.plaintext_size_bytes if keepsake.encryption_version else keepsake.size_bytes,
+        renderer=keepsake.renderer,
+        cost_cents=keepsake.cost_cents,
+        source_mode=keepsake.source_mode,
+        content_url=f"/api/v1/keepsakes/{keepsake.id}/content" if keepsake.status == "ready" else None,
+        created_at=keepsake.created_at,
+        updated_at=keepsake.updated_at,
     )
 
 
@@ -1839,6 +1904,318 @@ def download_memory_book_pdf(
         media_type="application/pdf",
         filename=f"niannian-memory-book-v{book.version}.pdf",
         background=BackgroundTask(decrypted_path.unlink, missing_ok=True),
+    )
+
+
+@router.get(
+    "/elder-profiles/{profile_id}/keepsake-catalog",
+    response_model=list[KeepsakeCatalogItem],
+)
+def get_keepsake_catalog(
+    profile_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[KeepsakeCatalogItem]:
+    profile = require(
+        db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。"
+    )
+    family = profile.person.family
+    key = family_master_key(family, secret_store)
+    catalog: list[KeepsakeCatalogItem] = []
+    for story in sorted(profile.stories, key=lambda item: item.confirmed_at):
+        session = story.source_draft.session
+        audio = db.scalar(
+            select(MediaAsset)
+            .where(
+                MediaAsset.session_id == session.id,
+                MediaAsset.kind == "audio_original",
+                MediaAsset.is_original.is_(True),
+                MediaAsset.status == "ready",
+            )
+            .order_by(MediaAsset.created_at.desc())
+        )
+        image = db.scalar(
+            select(MediaAsset)
+            .where(
+                MediaAsset.session_id == session.id,
+                MediaAsset.kind.in_(["photo_original", "old_object_original"]),
+                MediaAsset.status == "ready",
+            )
+            .order_by(MediaAsset.created_at.desc())
+        )
+        catalog.append(
+            KeepsakeCatalogItem(
+                story_id=story.id,
+                title=secure_value(
+                    db, family, story, "title", secret_store, master_key=key
+                ),
+                life_stage=session.life_stage,
+                confirmed_at=story.confirmed_at,
+                has_original_audio=audio is not None,
+                audio_asset_id=audio.id if audio else None,
+                image_asset_id=image.id if image else None,
+                unavailable_reason=None if audio else "这篇故事没有保留可用的原始录音。",
+            )
+        )
+    return catalog
+
+
+@router.post(
+    "/elder-profiles/{profile_id}/keepsake-authorizations",
+    response_model=KeepsakeAuthorizationRead,
+    status_code=201,
+)
+def create_keepsake_authorization(
+    profile_id: str,
+    payload: KeepsakeAuthorizationCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> KeepsakeAuthorizationRead:
+    profile = require(
+        db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。"
+    )
+    if not all(
+        [
+            payload.original_voice_authorized,
+            payload.private_family_use,
+            payload.no_impersonation,
+            payload.original_audio_only,
+        ]
+    ):
+        raise DomainError(
+            "KEEPSAKE_AUTHORIZATION_INCOMPLETE",
+            "四项授权说明都确认后才能制作数字念想。",
+            409,
+        )
+    manifest = build_keepsake_manifest(db, profile, payload.story_ids)
+    authorization = KeepsakeAuthorization(
+        elder_id=profile.id,
+        actor_label=payload.actor_label.strip(),
+        story_ids=list(payload.story_ids),
+        manifest_sha256=keepsake_manifest_sha256(manifest),
+        original_voice_authorized=True,
+        private_family_use=True,
+        no_impersonation=True,
+        original_audio_only=True,
+        decision="granted",
+    )
+    db.add(authorization)
+    db.flush()
+    protect_values(
+        db,
+        profile.person.family,
+        authorization,
+        {"actor_label": payload.actor_label.strip()},
+        secret_store,
+    )
+    db.commit()
+    db.refresh(authorization)
+    return keepsake_authorization_read(db, authorization, secret_store)
+
+
+@router.get(
+    "/elder-profiles/{profile_id}/keepsakes",
+    response_model=list[KeepsakeRead],
+)
+def list_keepsakes(
+    profile_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[KeepsakeRead]:
+    require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    items = list(
+        db.scalars(
+            select(Keepsake)
+            .where(Keepsake.elder_id == profile_id)
+            .order_by(Keepsake.version.desc())
+        ).all()
+    )
+    return [keepsake_read(db, item, secret_store) for item in items]
+
+
+@router.post(
+    "/elder-profiles/{profile_id}/keepsakes",
+    response_model=KeepsakeRead,
+    status_code=201,
+)
+def create_keepsake(
+    profile_id: str,
+    payload: KeepsakeCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> KeepsakeRead:
+    profile = require(
+        db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。"
+    )
+    existing = db.scalar(
+        select(Keepsake).where(
+            Keepsake.elder_id == profile.id,
+            Keepsake.idempotency_key == payload.idempotency_key,
+        )
+    )
+    if existing:
+        if existing.authorization_id != payload.authorization_id:
+            raise DomainError(
+                "IDEMPOTENCY_CONFLICT",
+                "这个提交标识已用于另一份念想。",
+                409,
+            )
+        return keepsake_read(db, existing, secret_store)
+    authorization = require(
+        db,
+        KeepsakeAuthorization,
+        payload.authorization_id,
+        "KEEPSAKE_AUTHORIZATION_REQUIRED",
+        "请先确认本次原始录音使用授权。",
+    )
+    if authorization.elder_id != profile.id or authorization.decision != "granted":
+        raise DomainError(
+            "KEEPSAKE_AUTHORIZATION_MISMATCH", "这份授权不属于当前讲述者。", 409
+        )
+    if authorization.used_at is not None:
+        raise DomainError(
+            "KEEPSAKE_AUTHORIZATION_USED", "这份一次性授权已经使用。", 409
+        )
+    manifest = build_keepsake_manifest(db, profile, authorization.story_ids)
+    if keepsake_manifest_sha256(manifest) != authorization.manifest_sha256:
+        raise DomainError(
+            "KEEPSAKE_AUTHORIZATION_MISMATCH",
+            "所选故事或原始素材已变化，请重新确认授权。",
+            409,
+        )
+    version = (
+        db.scalar(select(func.max(Keepsake.version)).where(Keepsake.elder_id == profile.id))
+        or 0
+    ) + 1
+    settings = get_settings()
+    keepsake = Keepsake(
+        elder_id=profile.id,
+        authorization_id=authorization.id,
+        version=version,
+        title=payload.title.strip(),
+        story_manifest=manifest,
+        status="queued",
+        progress=0,
+        attempt=1,
+        idempotency_key=payload.idempotency_key,
+        width=settings.keepsake_width,
+        height=settings.keepsake_height,
+        renderer="local_ffmpeg",
+        cost_cents=0,
+        source_mode="original_audio_only",
+    )
+    db.add(keepsake)
+    db.flush()
+    protect_values(
+        db,
+        profile.person.family,
+        keepsake,
+        {"title": payload.title.strip()},
+        secret_store,
+    )
+    authorization.used_at = now_utc()
+    db.commit()
+    db.refresh(keepsake)
+    result = keepsake_read(db, keepsake, secret_store)
+    background_tasks.add_task(process_keepsake, keepsake.id)
+    return result
+
+
+@router.get("/keepsakes/{keepsake_id}", response_model=KeepsakeRead)
+def get_keepsake(
+    keepsake_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> KeepsakeRead:
+    keepsake = require(
+        db, Keepsake, keepsake_id, "KEEPSAKE_NOT_FOUND", "没有找到这份数字念想。"
+    )
+    return keepsake_read(db, keepsake, secret_store)
+
+
+@router.post("/keepsakes/{keepsake_id}/retry", response_model=KeepsakeRead)
+def retry_keepsake(
+    keepsake_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> KeepsakeRead:
+    keepsake = require(
+        db, Keepsake, keepsake_id, "KEEPSAKE_NOT_FOUND", "没有找到这份数字念想。"
+    )
+    if keepsake.status != "failed_retryable" or keepsake.attempt >= 3:
+        raise DomainError(
+            "KEEPSAKE_NOT_RETRYABLE", "当前状态不能再次重试。", 409
+        )
+    keepsake.attempt += 1
+    keepsake.status = "queued"
+    keepsake.progress = 0
+    keepsake.error_code = None
+    db.commit()
+    db.refresh(keepsake)
+    result = keepsake_read(db, keepsake, secret_store)
+    background_tasks.add_task(process_keepsake, keepsake.id)
+    return result
+
+
+@router.get("/keepsakes/{keepsake_id}/content")
+def download_keepsake(
+    keepsake_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> FileResponse:
+    keepsake = require(
+        db, Keepsake, keepsake_id, "KEEPSAKE_NOT_FOUND", "没有找到这份数字念想。"
+    )
+    if keepsake.status != "ready" or not keepsake.relative_path:
+        raise DomainError("KEEPSAKE_NOT_READY", "这份数字念想还没有生成完成。", 409)
+    settings = get_settings()
+    stored = resolve_controlled_path(settings.resolved_asset_root, keepsake.relative_path)
+    if not keepsake.size_bytes or not keepsake.sha256 or not verify_asset_integrity(
+        stored, expected_size=keepsake.size_bytes, expected_sha256=keepsake.sha256
+    ):
+        keepsake.status = "corrupt"
+        db.commit()
+        raise DomainError("KEEPSAKE_CORRUPT", "视频完整性校验失败，已阻止播放和下载。", 409)
+    filename = f"niannian-keepsake-v{keepsake.version}.mp4"
+    if keepsake.encryption_version == 0:
+        return FileResponse(stored, media_type="video/mp4", filename=filename)
+    family = keepsake.elder.person.family
+    key = family_master_key(family, secret_store)
+    runtime_dir = settings.resolved_asset_root / "runtime" / "decrypted"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f"keepsake-{keepsake.id}-", suffix=".mp4", dir=runtime_dir
+    )
+    os.close(descriptor)
+    decrypted = Path(temporary_name)
+    decrypted.unlink(missing_ok=True)
+    try:
+        result = decrypt_media_file(
+            stored,
+            decrypted,
+            key,
+            associated_data=media_context(family.id, keepsake.id),
+        )
+    except Exception as exc:
+        decrypted.unlink(missing_ok=True)
+        raise DomainError(
+            "KEEPSAKE_DECRYPTION_FAILED", "视频无法解密，请从备份恢复。", 409
+        ) from exc
+    if (
+        result.plaintext_size != keepsake.plaintext_size_bytes
+        or result.plaintext_sha256 != keepsake.plaintext_sha256
+    ):
+        decrypted.unlink(missing_ok=True)
+        raise DomainError(
+            "KEEPSAKE_CORRUPT", "视频解密后完整性校验失败。", 409
+        )
+    return FileResponse(
+        decrypted,
+        media_type="video/mp4",
+        filename=filename,
+        background=BackgroundTask(decrypted.unlink, missing_ok=True),
     )
 
 

@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=60, gt=0)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
 
+    keepsake_max_stories: int = Field(default=10, ge=1, le=30)
+    keepsake_max_source_seconds: int = Field(default=1800, ge=30, le=10_800)
+    keepsake_width: int = Field(default=1280, ge=640, le=3840)
+    keepsake_height: int = Field(default=720, ge=360, le=2160)
+    keepsake_ffmpeg_timeout_seconds: int = Field(default=900, ge=30, le=3600)
+
     @property
     def resolved_asset_root(self) -> Path:
         root = self.asset_root

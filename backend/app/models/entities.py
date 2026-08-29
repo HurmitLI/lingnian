@@ -92,6 +92,12 @@ class ElderProfile(TimestampMixin, Base):
     memory_books: Mapped[list[MemoryBook]] = relationship(
         back_populates="elder", cascade="all, delete-orphan"
     )
+    keepsake_authorizations: Mapped[list[KeepsakeAuthorization]] = relationship(
+        back_populates="elder", cascade="all, delete-orphan"
+    )
+    keepsakes: Mapped[list[Keepsake]] = relationship(
+        back_populates="elder", cascade="all, delete-orphan"
+    )
 
 
 class MemorySession(TimestampMixin, Base):
@@ -469,3 +475,71 @@ class BackupManifest(TimestampMixin, Base):
     verification_summary: Mapped[dict] = mapped_column(JSON, default=dict)
 
     family: Mapped[FamilyArchive | None] = relationship(back_populates="backup_manifests")
+
+
+class KeepsakeAuthorization(Base):
+    __tablename__ = "keepsake_authorizations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    elder_id: Mapped[str] = mapped_column(
+        ForeignKey("elder_profiles.id", ondelete="CASCADE")
+    )
+    actor_label: Mapped[str] = mapped_column(String(80))
+    story_ids: Mapped[list] = mapped_column(JSON, default=list)
+    manifest_sha256: Mapped[str] = mapped_column(String(64))
+    original_voice_authorized: Mapped[bool] = mapped_column(Boolean, default=False)
+    private_family_use: Mapped[bool] = mapped_column(Boolean, default=False)
+    no_impersonation: Mapped[bool] = mapped_column(Boolean, default=False)
+    original_audio_only: Mapped[bool] = mapped_column(Boolean, default=True)
+    decision: Mapped[str] = mapped_column(String(24), default="granted")
+    used_at: Mapped[datetime | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(default=now_utc)
+
+    elder: Mapped[ElderProfile] = relationship(back_populates="keepsake_authorizations")
+    keepsake: Mapped[Keepsake | None] = relationship(
+        back_populates="authorization", uselist=False
+    )
+
+
+class Keepsake(TimestampMixin, Base):
+    __tablename__ = "keepsakes"
+    __table_args__ = (
+        UniqueConstraint("elder_id", "version", name="uq_elder_keepsake_version"),
+        UniqueConstraint("elder_id", "idempotency_key", name="uq_elder_keepsake_idempotency"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    elder_id: Mapped[str] = mapped_column(
+        ForeignKey("elder_profiles.id", ondelete="CASCADE")
+    )
+    authorization_id: Mapped[str] = mapped_column(
+        ForeignKey("keepsake_authorizations.id", ondelete="RESTRICT"), unique=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(200))
+    story_manifest: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    idempotency_key: Mapped[str] = mapped_column(String(100))
+    relative_path: Mapped[str | None] = mapped_column(String(500), unique=True)
+    mime_type: Mapped[str] = mapped_column(String(80), default="video/mp4")
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    width: Mapped[int] = mapped_column(Integer, default=1280)
+    height: Mapped[int] = mapped_column(Integer, default=720)
+    size_bytes: Mapped[int | None] = mapped_column(Integer)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    encryption_version: Mapped[int] = mapped_column(Integer, default=0)
+    plaintext_size_bytes: Mapped[int | None] = mapped_column(Integer)
+    plaintext_sha256: Mapped[str | None] = mapped_column(String(64))
+    renderer: Mapped[str] = mapped_column(String(80), default="local_ffmpeg")
+    cost_cents: Mapped[int] = mapped_column(Integer, default=0)
+    source_mode: Mapped[str] = mapped_column(
+        String(40), default="original_audio_only"
+    )
+
+    elder: Mapped[ElderProfile] = relationship(back_populates="keepsakes")
+    authorization: Mapped[KeepsakeAuthorization] = relationship(
+        back_populates="keepsake"
+    )

@@ -299,6 +299,71 @@ class MemoryBookRead(ORMModel):
     created_at: datetime
 
 
+class KeepsakeCatalogItem(BaseModel):
+    story_id: str
+    title: str
+    life_stage: str
+    confirmed_at: datetime
+    has_original_audio: bool
+    audio_asset_id: str | None
+    image_asset_id: str | None
+    unavailable_reason: str | None = None
+
+
+class KeepsakeAuthorizationCreate(BaseModel):
+    story_ids: list[str] = Field(min_length=1, max_length=30)
+    actor_label: str = Field(min_length=1, max_length=80)
+    original_voice_authorized: bool
+    private_family_use: bool
+    no_impersonation: bool
+    original_audio_only: bool
+
+
+class KeepsakeAuthorizationRead(ORMModel):
+    id: str
+    elder_id: str
+    actor_label: str
+    story_ids: list
+    manifest_sha256: str
+    original_voice_authorized: bool
+    private_family_use: bool
+    no_impersonation: bool
+    original_audio_only: bool
+    decision: str
+    used_at: datetime | None
+    created_at: datetime
+
+
+class KeepsakeCreate(BaseModel):
+    authorization_id: str
+    title: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=100)
+
+
+class KeepsakeRead(ORMModel):
+    id: str
+    elder_id: str
+    authorization_id: str
+    version: int
+    title: str
+    story_manifest: list
+    status: str
+    progress: int
+    attempt: int
+    error_code: str | None
+    mime_type: str
+    duration_ms: int | None
+    width: int
+    height: int
+    size_bytes: int | None
+    renderer: str
+    cost_cents: int
+    source_mode: str
+    content_url: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class ModelConsentCreate(BaseModel):
     actor_label: str = Field(min_length=1, max_length=80)
     purpose: str = Field(default="story_organization", pattern="^story_organization$")
