@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BookHeart, Home, Mic2, Users } from "lucide-react";
+import { BookHeart, Home, Mic2, ShieldCheck, Users } from "lucide-react";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
@@ -20,7 +20,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <aside className="desktop-sidebar" aria-label="主导航">
         <Link className="brand-mark" href="/" aria-label="念念首页">
           <span aria-hidden="true">念</span>
-          <strong>念念</strong>
+          <span className="brand-copy"><strong>念念</strong><small>家庭记忆</small></span>
         </Link>
         <nav className="primary-nav" aria-label="桌面主导航">
           {NAV_ITEMS.map((item) => {
@@ -34,7 +34,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
-        <p className="sidebar-note">资料保存在这台 Mac，并已启用本机加密。</p>
+        <div className="sidebar-note"><ShieldCheck size={20} strokeWidth={1.8} aria-hidden="true" /><span><strong>家庭私密空间</strong><small>资料保存在这台 Mac</small></span></div>
       </aside>
 
       <div className="app-content">{children}</div>

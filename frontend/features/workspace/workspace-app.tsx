@@ -975,7 +975,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
 
   return (
     <AppShell>
-    <main className="workspace-main">
+    <main className={`workspace-main workspace-${view}`}>
       <header className="workspace-header">
         <div className="workspace-heading">
           <p className="eyebrow">{pageMeta[view].eyebrow}</p>
@@ -985,7 +985,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         <div className="workspace-controls">
           {profiles.length > 0 && (
             <label className="profile-switcher">
-              <span>当前讲述者</span>
+              <span className="profile-switcher-label"><i aria-hidden="true">{selectedProfile?.preferred_name.slice(0, 1) ?? "家"}</i><b>当前讲述者</b></span>
               <select value={selectedProfileId} onChange={(event) => { setSelectedProfileId(event.target.value); setCloudConsentChecked(false); }}>
                 {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.display_name}</option>)}
               </select>
