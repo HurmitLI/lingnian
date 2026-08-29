@@ -8,8 +8,8 @@ export const metadata: Metadata = {
   },
   description: "把愿意讲的往事，慢慢留给家人。",
   icons: {
-    icon: "/brand/lingnian-mark-v2.png",
-    apple: "/brand/lingnian-mark-v2.png",
+    icon: "/brand/lingnian-mark-v3.png",
+    apple: "/brand/lingnian-mark-v3.png",
   },
 };
 
