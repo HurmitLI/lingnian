@@ -46,3 +46,6 @@ frontend/test-results/
 # Logs
 *.log
 .runtime/
+
+# Cloud deployment bindings are account and environment specific
+.vefaas/

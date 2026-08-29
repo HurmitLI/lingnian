@@ -1,0 +1,14 @@
+.env
+.env.*
+.venv/
+.vefaas/
+data/
+.model-cache/
+.pytest_cache/
+tests/
+htmlcov/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+.DS_Store
