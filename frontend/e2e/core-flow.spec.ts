@@ -39,7 +39,12 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
 
   const navigation = page.getByRole("navigation", { name: isMobile ? "手机主导航" : "桌面主导航" });
   await navigation.getByRole("link", { name: "开始记录" }).click();
-  await page.getByRole("button", { name: /童年/ }).click();
+  if (isMobile) {
+    await page.getByLabel("选择一个话题").selectOption("童年");
+    await page.getByRole("button", { name: "准备一个问题" }).click();
+  } else {
+    await page.getByRole("button", { name: /童年/ }).click();
+  }
   await expect(page.getByText("问题已准备", { exact: true })).toBeVisible();
 
   const audioInput = page.locator('input[aria-label="选择已有音频"]');
@@ -61,7 +66,8 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
   await expect(page.getByRole("heading", { name: "一段愿意留给家人的回忆" })).toBeVisible();
   await expect(page.locator("p.story-body")).toHaveText(correctedStory);
   await page.getByRole("button", { name: "人工确认并归档" }).click();
-  await expect(page.getByText("已确认归档", { exact: true })).toBeVisible();
+  await expect(page.getByText("这段故事已由人工确认并归档，可以到“回忆档案”查看。", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天想从哪一段聊起？" })).toBeVisible();
 
   await navigation.getByRole("link", { name: "回忆档案" }).click();
   await expect(page.getByRole("heading", { name: "一段愿意留给家人的回忆" })).toBeVisible();

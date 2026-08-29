@@ -14,7 +14,7 @@ import {
   recordingExtension,
 } from "@/lib/media/recording";
 import { pollWorkflowTask } from "@/lib/workflow/poll-task";
-import { sessionStatusLabel, taskStatusLabel } from "@/lib/workflow/status";
+import { isSessionTerminal, sessionStatusLabel, taskStatusLabel } from "@/lib/workflow/status";
 import type {
   ElderProfile,
   ElderMemoryContext,
@@ -66,6 +66,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const [notice, setNotice] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [selectedLifeStage, setSelectedLifeStage] = useState(LIFE_STAGES[0]);
   const [cloudConsentChecked, setCloudConsentChecked] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -179,11 +180,20 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               `/api/v1/memory-sessions/${sessionToRestore}`,
             );
             if (cancelled) return;
-            setDetail(sessionResult);
-            setSelectedProfileId(sessionResult.session.elder_id);
-            if (sessionResult.transcript) {
-              setCorrectedText(sessionResult.transcript.corrected_text);
-              setSavedCorrectedText(sessionResult.transcript.corrected_text);
+            if (isSessionTerminal(sessionResult.session.status)) {
+              window.localStorage.removeItem("niannian.sessionId");
+              if (requestedSession) {
+                const cleanUrl = new URL("/record", window.location.origin);
+                cleanUrl.searchParams.set("elder", sessionResult.session.elder_id);
+                window.history.replaceState({}, "", `${cleanUrl.pathname}${cleanUrl.search}`);
+              }
+            } else {
+              setDetail(sessionResult);
+              setSelectedProfileId(sessionResult.session.elder_id);
+              if (sessionResult.transcript) {
+                setCorrectedText(sessionResult.transcript.corrected_text);
+                setSavedCorrectedText(sessionResult.transcript.corrected_text);
+              }
             }
           } catch {
             window.localStorage.removeItem("niannian.sessionId");
@@ -333,6 +343,23 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     url.searchParams.set("elder", elderId);
     url.searchParams.set("session", sessionId);
     window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+  }
+
+  function clearActiveSession(message?: string) {
+    window.localStorage.removeItem("niannian.sessionId");
+    setDetail(null);
+    setAudioFile(null);
+    setAudioPreview(null);
+    setCorrectedText("");
+    setSavedCorrectedText("");
+    const url = new URL("/record", window.location.origin);
+    if (selectedProfileId) url.searchParams.set("elder", selectedProfileId);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+    if (message) setNotice(message);
+  }
+
+  function leaveSessionForLater() {
+    clearActiveSession("当前记录已经保存在本机。以后可以从首页的“继续记录”回来。");
   }
 
   async function createFamilyRelationship(event: FormEvent<HTMLFormElement>) {
@@ -703,8 +730,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         method: "POST",
         body: JSON.stringify({}),
       });
-      await loadSession(detail.session.id);
-      setNotice("已经跳过。临时音频和转写不会进入故事档案。 ");
+      await loadRecentSessions(detail.session.elder_id);
+      clearActiveSession("已经跳过。临时音频和转写不会进入故事档案。");
     } catch (value) {
       showError(value);
     } finally {
@@ -737,10 +764,10 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         method: "POST",
         body: JSON.stringify({ confirmed_by: "测试子女" }),
       });
-      await loadSession(detail.session.id);
       await loadTimeline(selectedProfile.id);
       await loadMemoryContext(selectedProfile.id);
-      setNotice("这段故事已由人工确认并归档。 ");
+      await loadRecentSessions(selectedProfile.id);
+      clearActiveSession("这段故事已由人工确认并归档，可以到“回忆档案”查看。");
     } catch (value) {
       showError(value);
     } finally {
@@ -868,6 +895,10 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     memoryContext?.preferences.find((item) => item.topic_key === stage)?.preference ?? "welcome";
   const stageCoverage = (stage: string) =>
     memoryContext?.coverage.find((item) => item.life_stage === stage);
+  const availableStages = LIFE_STAGES.filter((stage) => topicPreference(stage) !== "avoid");
+  const activeLifeStage = availableStages.includes(selectedLifeStage)
+    ? selectedLifeStage
+    : (availableStages[0] ?? "");
   const dueReminders = reminders.filter((item) => item.status === "due");
   const openSessions = recentSessions.filter(
     (item) => !["ARCHIVED", "SKIPPED"].includes(item.status),
@@ -976,7 +1007,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           {selectedProfile && timeline.length > 0 && (
             <section className="card recent-story-card">
               <div className="section-heading"><span>最近</span><div><h2>刚刚保存的故事</h2><p>这些内容都经过家人确认。</p></div></div>
-              {timeline.slice(0, 2).map((item) => (
+              {timeline.slice(0, 1).map((item) => (
                 <article key={item.story.id}>
                   <time>{new Date(item.story.confirmed_at).toLocaleDateString("zh-CN")}</time>
                   <h3>{item.story.title}</h3>
@@ -997,14 +1028,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
             <p>{profiles.length > 0 ? "选择当前要记录回忆的家人；资料只用于整理家庭记忆。" : "先用一位家人的称呼开始，其他资料可以以后再补。"}</p>
           </div>
         </div>
-        {profiles.length > 0 && (
-          <label className="field compact">
-            <span>当前讲述者</span>
-            <select value={selectedProfileId} onChange={(event) => { setSelectedProfileId(event.target.value); setCloudConsentChecked(false); }}>
-              {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.display_name}</option>)}
-            </select>
-          </label>
-        )}
+        {selectedProfile && <p className="current-profile-line">当前记录：<strong>{selectedProfile.display_name}</strong>。如需切换，使用页面顶部的“当前讲述者”。</p>}
         <details className="create-panel" open={profiles.length === 0}>
           <summary>{profiles.length ? "再建一个测试档案" : "创建测试档案"}</summary>
           <form onSubmit={createProfile} className="form-grid">
@@ -1066,43 +1090,11 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         <section className="card preference-card">
           <div className="section-heading">
             <span>02</span>
-            <div><h2>讲述意愿</h2><p>每个话题都可以随时改成“先问我”或“不要再问”，设置后立即生效。</p></div>
+            <div><h2>讲述意愿</h2><p>默认可以聊。只有想改成“先问我”或“不要再问”时才需要进入设置。</p></div>
           </div>
-          <div className="topic-list preference-list">
-            {LIFE_STAGES.map((stage) => (
-              <label key={stage}>
-                <span>{stage}</span>
-                <select value={topicPreference(stage)} disabled={busy} onChange={(event) => updateTopicPreference(stage, event.target.value as "welcome" | "ask_first" | "avoid")}>
-                  <option value="welcome">愿意聊</option>
-                  <option value="ask_first">先问我是否愿意</option>
-                  <option value="avoid">不要再问</option>
-                </select>
-              </label>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {!initialLoading && view === "family" && <SecurityPanel key={selectedProfile?.family_id ?? "no-family"} familyId={selectedProfile?.family_id ?? null} />}
-
-      {!initialLoading && view === "record" && <section className="card">
-        <div className="section-heading"><span>03</span><div><h2>选一个回忆入口</h2><p>一次一个问题，不催促，也可以直接跳过。</p></div></div>
-        <div className="stage-grid">
-          {LIFE_STAGES.map((stage) => {
-            const coverage = stageCoverage(stage);
-            const avoided = topicPreference(stage) === "avoid";
-            return (
-              <button className={`stage-button${avoided ? " avoided" : ""}`} key={stage} disabled={!selectedProfileId || busy || avoided} onClick={() => startMemory(stage)}>
-                <span>{stage}</span>
-                <small>{avoided ? "不再询问" : coverage ? `${coverage.confirmed_story_count} 篇已确认` : "尚未开始"}</small>
-              </button>
-            );
-          })}
-        </div>
-        {selectedProfile && (
-          <details className="topic-panel">
-            <summary>设置愿意聊或不要再问的话题</summary>
-            <div className="topic-list">
+          <details className="preference-settings">
+            <summary>查看或修改 7 个话题意愿</summary>
+            <div className="topic-list preference-list">
               {LIFE_STAGES.map((stage) => (
                 <label key={stage}>
                   <span>{stage}</span>
@@ -1115,21 +1107,52 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               ))}
             </div>
           </details>
-        )}
+        </section>
+      )}
+
+      {!initialLoading && view === "family" && <SecurityPanel key={selectedProfile?.family_id ?? "no-family"} familyId={selectedProfile?.family_id ?? null} />}
+
+      {!initialLoading && view === "record" && !detail && <section className="card entry-card">
+        <div className="section-heading"><span>01</span><div><h2>今天想从哪一段聊起？</h2><p>只选一个话题，念念会准备一个温和的问题。</p></div></div>
+        <div className="stage-grid">
+          {LIFE_STAGES.map((stage) => {
+            const coverage = stageCoverage(stage);
+            const avoided = topicPreference(stage) === "avoid";
+            return (
+              <button className={`stage-button${avoided ? " avoided" : ""}`} key={stage} disabled={!selectedProfileId || busy || avoided} onClick={() => startMemory(stage)}>
+                <span>{stage}</span>
+                <small>{avoided ? "不再询问" : coverage ? `${coverage.confirmed_story_count} 篇已确认` : "尚未开始"}</small>
+              </button>
+            );
+          })}
+        </div>
+        <div className="stage-select-form">
+          <label className="field">
+            <span>选择一个话题</span>
+            <select value={activeLifeStage} onChange={(event) => setSelectedLifeStage(event.target.value)}>
+              {availableStages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+            </select>
+          </label>
+          <button type="button" className="button primary" disabled={!activeLifeStage || !selectedProfileId || busy} onClick={() => activeLifeStage && startMemory(activeLifeStage)}>准备一个问题</button>
+        </div>
         {selectedProfile && (
-          <form className="media-trigger-form" onSubmit={startMediaTrigger}>
-            <div><h3>用照片或老物件触发回忆</h3><p className="hint">图片只保存在本机；系统不会识别人脸，也不会推断人物、地点、年代或事件。</p></div>
-            <label className="field"><span>触发类型</span><select name="triggerKind"><option value="photo">照片</option><option value="old_object">老物件</option></select></label>
-            <label className="field"><span>选择图片</span><input name="triggerImage" type="file" accept="image/jpeg,image/png,image/webp" required onChange={(event) => { const file = event.target.files?.[0]; if (triggerPreview) URL.revokeObjectURL(triggerPreview); setTriggerPreview(file ? URL.createObjectURL(file) : null); }} /></label>
-            <label className="field"><span>家人明确知道的信息（可选）</span><input name="annotation" maxLength={1000} placeholder="例如：这是外婆明确说过的旧院子" /></label>
-            {triggerPreview && <Image unoptimized width={420} height={300} className="trigger-preview" src={triggerPreview} alt="待上传图片预览" />}
-            <button className="button secondary" disabled={busy}>保存图片并开始回忆</button>
-          </form>
+          <details className="secondary-entry">
+            <summary>也可以用一张照片或老物件开始</summary>
+            <form className="media-trigger-form" onSubmit={startMediaTrigger}>
+              <div><h3>用照片或老物件触发回忆</h3><p className="hint">图片只保存在本机；系统不会识别人脸，也不会推断人物、地点、年代或事件。</p></div>
+              <label className="field"><span>触发类型</span><select name="triggerKind"><option value="photo">照片</option><option value="old_object">老物件</option></select></label>
+              <label className="field"><span>选择图片</span><input name="triggerImage" type="file" accept="image/jpeg,image/png,image/webp" required onChange={(event) => { const file = event.target.files?.[0]; if (triggerPreview) URL.revokeObjectURL(triggerPreview); setTriggerPreview(file ? URL.createObjectURL(file) : null); }} /></label>
+              <label className="field"><span>家人明确知道的信息（可选）</span><input name="annotation" maxLength={1000} placeholder="例如：这是外婆明确说过的旧院子" /></label>
+              {triggerPreview && <Image unoptimized width={420} height={300} className="trigger-preview" src={triggerPreview} alt="待上传图片预览" />}
+              <button className="button secondary" disabled={busy}>保存图片并开始回忆</button>
+            </form>
+          </details>
         )}
       </section>}
 
       {!initialLoading && view === "record" && detail && (
         <section className="card memory-card">
+          <div className="session-toolbar"><span>当前只完成这一段</span><button type="button" className="button quiet" disabled={busy || isRecording} onClick={leaveSessionForLater}>稍后继续，返回选题</button></div>
           <div className="session-meta"><span>{detail.session.life_stage}</span><strong>{sessionStatusLabel(detail.session.status)}</strong></div>
           <blockquote>{detail.session.question_text}</blockquote>
           {existingTrigger && (
@@ -1198,40 +1221,43 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       )}
 
       {!initialLoading && view === "archive" && selectedProfile && (
+        <section className="card timeline-card">
+          <div className="section-heading"><span>01</span><div><h2>{selectedProfile.preferred_name}的故事</h2><p>这里只显示经过人工确认的内容。</p></div></div>
+          {timeline.length === 0 ? <p className="empty">还没有已确认的故事。</p> : <div className="timeline-list">{timeline.map((item) => <article key={item.story.id}><time>{new Date(item.story.confirmed_at).toLocaleDateString("zh-CN")}</time><h3>{item.story.title}</h3><p>{item.story.body}</p>{mediaUrl(item.audio_url) && <audio controls src={mediaUrl(item.audio_url) ?? undefined} />}</article>)}</div>}
+        </section>
+      )}
+
+      {!initialLoading && view === "archive" && selectedProfile && (
         <section className="card archive-tools-card">
-          <div className="section-heading"><span>04</span><div><h2>本机提醒与文字回忆录</h2><p>提醒只在念念页面显示；回忆录只收录人工确认的故事。</p></div></div>
+          <div className="section-heading"><span>02</span><div><h2>更多保存工具</h2><p>有需要时，再设提醒或导出文字回忆录。</p></div></div>
           {dueReminders.map((item) => (
             <div className="due-reminder" role="status" key={item.id}>
               <div><strong>可以温和问一次“{item.topic_key}”了</strong><p>这是你之前设定的本机提醒，不会自动联系任何人。</p></div>
               <button className="button secondary" disabled={busy} onClick={() => acknowledgeReminder(item.id)}>我知道了，不再重复提醒</button>
             </div>
           ))}
-          <div className="archive-tools-grid">
-            <form className="local-reminder-form" onSubmit={createLocalReminder}>
-              <h3>添加应用内提醒</h3>
-              <label className="field"><span>话题</span><select name="topicKey">{LIFE_STAGES.map((stage) => <option key={stage} value={stage} disabled={topicPreference(stage) === "avoid"}>{stage}{topicPreference(stage) === "avoid" ? "（不要再问）" : ""}</option>)}</select></label>
-              <label className="field"><span>提醒时间</span><input name="remindAt" type="datetime-local" required /></label>
-              <button className="button secondary" disabled={busy}>保存本机提醒</button>
-              <p className="hint">不使用微信、短信、邮件或 macOS 系统通知。</p>
-            </form>
-            <div className="memory-book-panel">
-              <h3>文字回忆录</h3>
-              <p className="hint">每次生成一个新版本，旧版本不会被覆盖。Markdown 文件可长期恢复和迁移。</p>
-              <button className="button primary" disabled={busy || !memoryContext?.confirmed_facts.length} onClick={generateMemoryBook}>生成新版本</button>
-              <div className="book-list">
-                {memoryBooks.length === 0 ? <p className="empty">还没有回忆录版本。</p> : memoryBooks.map((book) => (
-                  <div key={book.id}><span>第 {book.version} 版 · {book.story_manifest.length} 篇故事</span><div className="book-actions"><button className="button quiet" disabled={busy} onClick={() => downloadMemoryBook(book, "markdown")}>下载 Markdown</button><button className="button quiet" disabled={busy} onClick={() => downloadMemoryBook(book, "pdf")}>{book.pdf_status === "ready" ? "下载 PDF" : "生成并下载 PDF"}</button></div></div>
-                ))}
+          <details className="archive-tool-details">
+            <summary>管理提醒和导出回忆录</summary>
+            <div className="archive-tools-grid">
+              <form className="local-reminder-form" onSubmit={createLocalReminder}>
+                <h3>添加应用内提醒</h3>
+                <label className="field"><span>话题</span><select name="topicKey">{LIFE_STAGES.map((stage) => <option key={stage} value={stage} disabled={topicPreference(stage) === "avoid"}>{stage}{topicPreference(stage) === "avoid" ? "（不要再问）" : ""}</option>)}</select></label>
+                <label className="field"><span>提醒时间</span><input name="remindAt" type="datetime-local" required /></label>
+                <button className="button secondary" disabled={busy}>保存本机提醒</button>
+                <p className="hint">不使用微信、短信、邮件或 macOS 系统通知。</p>
+              </form>
+              <div className="memory-book-panel">
+                <h3>文字回忆录</h3>
+                <p className="hint">每次生成一个新版本，旧版本不会被覆盖。Markdown 文件可长期恢复和迁移。</p>
+                <button className="button primary" disabled={busy || !memoryContext?.confirmed_facts.length} onClick={generateMemoryBook}>生成新版本</button>
+                <div className="book-list">
+                  {memoryBooks.length === 0 ? <p className="empty">还没有回忆录版本。</p> : memoryBooks.map((book) => (
+                    <div key={book.id}><span>第 {book.version} 版 · {book.story_manifest.length} 篇故事</span><div className="book-actions"><button className="button quiet" disabled={busy} onClick={() => downloadMemoryBook(book, "markdown")}>下载 Markdown</button><button className="button quiet" disabled={busy} onClick={() => downloadMemoryBook(book, "pdf")}>{book.pdf_status === "ready" ? "下载 PDF" : "生成并下载 PDF"}</button></div></div>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-        </section>
-      )}
-
-      {!initialLoading && view === "archive" && selectedProfile && (
-        <section className="card timeline-card">
-          <div className="section-heading"><span>05</span><div><h2>{selectedProfile.preferred_name}的时间线</h2><p>这里只显示经过人工确认的故事。</p></div></div>
-          {timeline.length === 0 ? <p className="empty">还没有已确认的故事。</p> : <div className="timeline-list">{timeline.map((item) => <article key={item.story.id}><time>{new Date(item.story.confirmed_at).toLocaleDateString("zh-CN")}</time><h3>{item.story.title}</h3><p>{item.story.body}</p>{mediaUrl(item.audio_url) && <audio controls src={mediaUrl(item.audio_url) ?? undefined} />}</article>)}</div>}
+          </details>
         </section>
       )}
     </main>

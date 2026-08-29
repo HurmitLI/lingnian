@@ -94,3 +94,32 @@ test("平板和宽屏断点保持可用", async ({ page, isMobile }) => {
     expect(layout.minButtonHeight).toBeGreaterThanOrEqual(48);
   }
 });
+
+test("手机记录页一次只突出一个开始动作", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "手机项目覆盖简化后的记录入口");
+  await page.goto("/record");
+  await expect(page.getByLabel("选择一个话题")).toBeVisible();
+  await expect(page.getByRole("button", { name: "准备一个问题" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "用照片或老物件触发回忆" })).toBeHidden();
+  await expect(page.getByRole("button", { name: /童年/ })).toBeHidden();
+});
+
+test("手机档案先看故事，低频工具默认收起", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "手机项目覆盖简化后的档案页");
+  await page.goto("/archive");
+  const storyHeading = page.getByRole("heading", { level: 2, name: "奶奶的故事" });
+  const toolsHeading = page.getByRole("heading", { name: "更多保存工具" });
+  await expect(storyHeading).toBeVisible();
+  await expect(toolsHeading).toBeVisible();
+  expect((await storyHeading.boundingBox())?.y).toBeLessThan((await toolsHeading.boundingBox())?.y ?? 0);
+  await expect(page.getByText("管理提醒和导出回忆录", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "添加应用内提醒" })).toBeHidden();
+});
+
+test("手机家庭管理去掉重复选择，话题设置默认收起", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "手机项目覆盖简化后的家庭管理页");
+  await page.goto("/family");
+  await expect(page.getByLabel("当前讲述者")).toHaveCount(1);
+  await expect(page.getByText("查看或修改 7 个话题意愿", { exact: true })).toBeVisible();
+  await expect(page.getByText("童年", { exact: true })).toBeHidden();
+});

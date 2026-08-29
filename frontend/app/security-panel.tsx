@@ -323,28 +323,31 @@ export default function SecurityPanel({ familyId }: Props) {
       )}
 
       {security?.encryption_status === "active_encrypted" && (
-        <div className="backup-panel">
-          <div>
-            <h3>本机备份与完整恢复演练</h3>
-            <p className="hint">备份包含 SQLite 快照与媒体清单，但不包含主密钥、恢复口令或恢复包。</p>
+        <details className="backup-panel">
+          <summary>管理本机备份与恢复演练</summary>
+          <div className="backup-panel-content">
+            <div>
+              <h3>本机备份与完整恢复演练</h3>
+              <p className="hint">备份包含 SQLite 快照与媒体清单，但不包含主密钥、恢复口令或恢复包。</p>
+            </div>
+            <button className="button secondary" disabled={busy} onClick={createAndVerifyBackup}>生成并验证新备份</button>
+            <div className="backup-list">
+              {backups.map((backup) => (
+                <div key={backup.id}><span>{new Date(backup.created_at).toLocaleString("zh-CN")} · {backup.asset_count} 个资产 · {backup.status}</span><button className="button quiet" disabled={busy} onClick={() => downloadBackup(backup)}>下载</button></div>
+              ))}
+              {!backups.length && <p className="hint">还没有本机备份。</p>}
+            </div>
+            {backups.length > 0 && (
+              <form className="recovery-form" onSubmit={rehearseBackupRecovery}>
+                <div><h3>用离线恢复包做完整恢复演练</h3><p className="hint">备份会在全新目录中展开，然后用恢复出的主密钥解密并校验文本和媒体。</p></div>
+                <label className="field"><span>选择备份</span><select value={selectedBackupId} onChange={(event) => setSelectedBackupId(event.target.value)}>{backups.map((backup) => <option key={backup.id} value={backup.id}>{new Date(backup.created_at).toLocaleString("zh-CN")} · {backup.status}</option>)}</select></label>
+                <label className="field"><span>离线恢复包</span><input type="file" accept="application/json,.json" required onChange={(event) => setBackupRecoveryFile(event.target.files?.[0] ?? null)} /></label>
+                <label className="field"><span>恢复口令</span><input type="password" autoComplete="off" minLength={12} value={backupPassphrase} onChange={(event) => setBackupPassphrase(event.target.value)} required /></label>
+                <button className="button primary" disabled={busy || !backupRecoveryFile}>开始完整恢复演练</button>
+              </form>
+            )}
           </div>
-          <button className="button secondary" disabled={busy} onClick={createAndVerifyBackup}>生成并验证新备份</button>
-          <div className="backup-list">
-            {backups.map((backup) => (
-              <div key={backup.id}><span>{new Date(backup.created_at).toLocaleString("zh-CN")} · {backup.asset_count} 个资产 · {backup.status}</span><button className="button quiet" disabled={busy} onClick={() => downloadBackup(backup)}>下载</button></div>
-            ))}
-            {!backups.length && <p className="hint">还没有本机备份。</p>}
-          </div>
-          {backups.length > 0 && (
-            <form className="recovery-form" onSubmit={rehearseBackupRecovery}>
-              <div><h3>用离线恢复包做完整恢复演练</h3><p className="hint">备份会在全新目录中展开，然后用恢复出的主密钥解密并校验文本和媒体。</p></div>
-              <label className="field"><span>选择备份</span><select value={selectedBackupId} onChange={(event) => setSelectedBackupId(event.target.value)}>{backups.map((backup) => <option key={backup.id} value={backup.id}>{new Date(backup.created_at).toLocaleString("zh-CN")} · {backup.status}</option>)}</select></label>
-              <label className="field"><span>离线恢复包</span><input type="file" accept="application/json,.json" required onChange={(event) => setBackupRecoveryFile(event.target.files?.[0] ?? null)} /></label>
-              <label className="field"><span>恢复口令</span><input type="password" autoComplete="off" minLength={12} value={backupPassphrase} onChange={(event) => setBackupPassphrase(event.target.value)} required /></label>
-              <button className="button primary" disabled={busy || !backupRecoveryFile}>开始完整恢复演练</button>
-            </form>
-          )}
-        </div>
+        </details>
       )}
     </section>
   );
