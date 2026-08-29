@@ -37,6 +37,7 @@ export NIANNIAN_PHONE_IP="$phone_ip"
 if [[ "$phone_host" == ".local" ]]; then
   phone_host="localhost"
 fi
+export NIANNIAN_ALLOWED_DEV_ORIGINS="$phone_host,$phone_ip"
 /usr/bin/sed -e "s/__PHONE_IP__/$phone_ip/g" -e "s/__PHONE_HOST__/$phone_host/g" "$script_dir/phone-server.ext" > "$cert_root/server.generated.ext"
 
 if [[ ! -f "$cert_root/ca.key" || ! -f "$cert_root/ca.pem" ]]; then
