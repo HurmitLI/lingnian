@@ -7,6 +7,7 @@ frontend/.env.local
 data/db/*
 data/assets/original/*
 data/assets/derived/*
+data/assets/keepsakes/*
 data/quarantine/*
 data/backups/*
 data/exports/*
