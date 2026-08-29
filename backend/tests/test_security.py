@@ -63,22 +63,34 @@ def test_master_key_manager_creates_once_and_refuses_silent_overwrite():
 def test_recovery_package_round_trip_wrong_password_and_metadata_tampering():
     key = generate_master_key()
     passphrase = "虚构恢复口令-长度足够-2026"
-    package = build_recovery_package(key, passphrase)
+    package = build_recovery_package(key, passphrase, scope="family:test-family")
 
     assert base64.urlsafe_b64encode(key).decode("ascii") not in package
-    assert recover_master_key(package, passphrase) == key
+    assert recover_master_key(package, passphrase, expected_scope="family:test-family") == key
     with pytest.raises(RecoveryPackageError, match="口令错误或恢复包已被篡改"):
-        recover_master_key(package, "另一个错误恢复口令-2026")
+        recover_master_key(
+            package,
+            "另一个错误恢复口令-2026",
+            expected_scope="family:test-family",
+        )
+    with pytest.raises(RecoveryPackageError, match="不属于当前家庭档案"):
+        recover_master_key(package, passphrase, expected_scope="family:other")
 
     payload = json.loads(package)
     payload["created_at"] = "2000-01-01T00:00:00+00:00"
     with pytest.raises(RecoveryPackageError, match="口令错误或恢复包已被篡改"):
-        recover_master_key(json.dumps(payload), passphrase)
+        recover_master_key(
+            json.dumps(payload), passphrase, expected_scope="family:test-family"
+        )
 
 
 def test_recovery_package_file_is_private_and_never_overwritten(tmp_path):
     package_path = tmp_path / "家庭档案.念念恢复包.json"
-    package = build_recovery_package(generate_master_key(), "虚构恢复口令-长度足够-2026")
+    package = build_recovery_package(
+        generate_master_key(),
+        "虚构恢复口令-长度足够-2026",
+        scope="family:test-family",
+    )
 
     write_recovery_package(package_path, package)
 

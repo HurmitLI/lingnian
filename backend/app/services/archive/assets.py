@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -48,6 +49,21 @@ def resolve_controlled_path(asset_root: Path, relative_path: str) -> Path:
     if candidate != root and root not in candidate.parents:
         raise DomainError("INVALID_ASSET_PATH", "文件路径不安全。", 400)
     return candidate
+
+
+def calculate_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_asset_integrity(path: Path, *, expected_size: int, expected_sha256: str) -> bool:
+    if not path.is_file() or path.stat().st_size != expected_size:
+        return False
+    actual_sha256 = calculate_sha256(path)
+    return hmac.compare_digest(actual_sha256, expected_sha256)
 
 
 async def store_audio_upload(
@@ -109,4 +125,3 @@ async def store_audio_upload(
         raise
     finally:
         await upload.close()
-

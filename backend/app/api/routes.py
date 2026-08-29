@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.errors import DomainError
 from app.models import (
+    ArchiveSecurity,
     ConsentEvent,
     ElderProfile,
     FamilyArchive,
@@ -23,16 +24,20 @@ from app.models import (
     Transcript,
     WorkflowTask,
 )
+from app.models.entities import now_utc
 from app.schemas.api import (
     ConfirmDraftRequest,
     ElderProfileCreate,
     ElderProfileRead,
+    FamilySecurityRead,
     FamilyCreate,
     FamilyRead,
     HealthRead,
     MediaAssetRead,
     MemorySessionCreate,
     MemorySessionRead,
+    RecoveryPackageCreate,
+    SecurityInitializeRequest,
     SessionDetail,
     StoryDraftRead,
     StoryRead,
@@ -42,8 +47,14 @@ from app.schemas.api import (
     TranscriptRead,
     TranscriptUpdate,
 )
-from app.services.archive.assets import resolve_controlled_path, store_audio_upload
+from app.services.archive.assets import (
+    resolve_controlled_path,
+    store_audio_upload,
+    verify_asset_integrity,
+)
 from app.services.llm import get_llm_provider
+from app.services.security import build_recovery_package, get_family_key_manager, get_secret_store
+from app.services.security.key_store import SecretStore, SecretStoreError
 from app.services.workflow.state import transition
 from app.services.workflow.tasks import process_organization, process_transcription
 
@@ -110,11 +121,129 @@ def create_family(payload: FamilyCreate, db: Session = Depends(get_db)) -> Famil
     family = FamilyArchive(
         display_name=payload.display_name.strip(),
         idempotency_key=payload.idempotency_key,
+        data_classification=payload.data_classification,
     )
     db.add(family)
     db.commit()
     db.refresh(family)
     return family
+
+
+def family_security_read(
+    family: FamilyArchive, metadata: ArchiveSecurity | None
+) -> FamilySecurityRead:
+    return FamilySecurityRead(
+        family_id=family.id,
+        key_version=metadata.key_version if metadata else None,
+        encryption_status=metadata.encryption_status if metadata else "not_initialized",
+        key_initialized=metadata is not None,
+        recovery_package_created_at=metadata.recovery_package_created_at if metadata else None,
+    )
+
+
+@router.get("/families/{family_id}/security", response_model=FamilySecurityRead)
+def get_family_security(
+    family_id: str, db: Session = Depends(get_db)
+) -> FamilySecurityRead:
+    family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    metadata = db.scalar(
+        select(ArchiveSecurity).where(ArchiveSecurity.family_id == family.id)
+    )
+    return family_security_read(family, metadata)
+
+
+@router.post(
+    "/families/{family_id}/security/initialize",
+    response_model=FamilySecurityRead,
+    status_code=201,
+)
+def initialize_family_security(
+    family_id: str,
+    payload: SecurityInitializeRequest,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> FamilySecurityRead:
+    family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    metadata = db.scalar(
+        select(ArchiveSecurity).where(ArchiveSecurity.family_id == family.id)
+    )
+    key_version = metadata.key_version if metadata else 1
+    try:
+        get_family_key_manager(
+            family.id, secret_store, key_version=key_version
+        ).get_or_create()
+    except SecretStoreError as exc:
+        raise DomainError(
+            "KEYCHAIN_UNAVAILABLE", "暂时无法使用 Mac 钥匙串，请解锁后重试。", 503
+        ) from exc
+
+    if metadata is None:
+        metadata = ArchiveSecurity(
+            family_id=family.id,
+            key_version=key_version,
+            encryption_status="key_ready",
+        )
+        db.add(metadata)
+        db.add(
+            ConsentEvent(
+                action="initialize_archive_security",
+                actor_label=payload.actor_label.strip(),
+                object_type="family_archive",
+                object_id=family.id,
+            )
+        )
+        db.commit()
+        db.refresh(metadata)
+    return family_security_read(family, metadata)
+
+
+@router.post("/families/{family_id}/security/recovery-package")
+def create_recovery_package(
+    family_id: str,
+    payload: RecoveryPackageCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> Response:
+    family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    metadata = db.scalar(
+        select(ArchiveSecurity).where(ArchiveSecurity.family_id == family.id)
+    )
+    if metadata is None:
+        raise DomainError("SECURITY_NOT_INITIALIZED", "请先初始化家庭档案安全设置。", 409)
+    try:
+        master_key = get_family_key_manager(
+            family.id, secret_store, key_version=metadata.key_version
+        ).get_existing()
+    except SecretStoreError as exc:
+        raise DomainError(
+            "KEYCHAIN_UNAVAILABLE", "暂时无法从 Mac 钥匙串读取家庭档案密钥。", 503
+        ) from exc
+    if master_key is None:
+        raise DomainError(
+            "MASTER_KEY_MISSING", "Mac 钥匙串中没有找到家庭档案密钥，请使用恢复包恢复。", 409
+        )
+
+    package_json = build_recovery_package(
+        master_key,
+        payload.recovery_passphrase.get_secret_value(),
+        scope=f"family:{family.id}",
+    )
+    metadata.recovery_package_created_at = now_utc()
+    db.add(
+        ConsentEvent(
+            action="export_recovery_package",
+            actor_label=payload.actor_label.strip(),
+            object_type="family_archive",
+            object_id=family.id,
+        )
+    )
+    db.commit()
+    filename = f"niannian-recovery-{family.id}.json"
+    return Response(
+        content=package_json,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/elder-profiles", response_model=ElderProfileRead, status_code=201)
@@ -479,5 +608,19 @@ def get_media_content(asset_id: str, db: Session = Depends(get_db)) -> FileRespo
     path = resolve_controlled_path(get_settings().resolved_asset_root, asset.relative_path)
     if not path.is_file():
         raise DomainError("ASSET_FILE_MISSING", "音频文件已经损坏或丢失。", 404)
+    if not verify_asset_integrity(
+        path,
+        expected_size=asset.size_bytes,
+        expected_sha256=asset.sha256,
+    ):
+        asset.status = "corrupt"
+        asset.integrity_checked_at = now_utc()
+        db.commit()
+        raise DomainError(
+            "ASSET_INTEGRITY_FAILED",
+            "音频文件校验失败，可能已经损坏，请从备份恢复。",
+            409,
+        )
+    asset.integrity_checked_at = now_utc()
+    db.commit()
     return FileResponse(path, media_type=asset.mime_type, filename=asset.original_filename)
-

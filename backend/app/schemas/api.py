@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 
 class ORMModel(BaseModel):
@@ -12,13 +12,35 @@ class ORMModel(BaseModel):
 class FamilyCreate(BaseModel):
     display_name: str = Field(min_length=1, max_length=80)
     idempotency_key: str | None = Field(default=None, max_length=80)
+    data_classification: str = Field(
+        default="test",
+        pattern="^(test|authorized_non_sensitive|authorized_sensitive)$",
+    )
 
 
 class FamilyRead(ORMModel):
     id: str
     display_name: str
     schema_version: int
+    data_classification: str
     created_at: datetime
+
+
+class SecurityInitializeRequest(BaseModel):
+    actor_label: str = Field(min_length=1, max_length=80)
+
+
+class FamilySecurityRead(BaseModel):
+    family_id: str
+    key_version: int | None
+    encryption_status: str
+    key_initialized: bool
+    recovery_package_created_at: datetime | None
+
+
+class RecoveryPackageCreate(BaseModel):
+    actor_label: str = Field(min_length=1, max_length=80)
+    recovery_passphrase: SecretStr = Field(min_length=12, max_length=200)
 
 
 class ElderProfileCreate(BaseModel):
@@ -189,4 +211,3 @@ class HealthRead(BaseModel):
     environment: str
     asr_provider: str
     llm_provider: str
-

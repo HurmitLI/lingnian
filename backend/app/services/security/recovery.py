@@ -58,6 +58,7 @@ def _authenticated_metadata(package: dict[str, Any]) -> bytes:
         "created_at": package["created_at"],
         "format": package["format"],
         "kdf": package["kdf"],
+        "scope": package["scope"],
         "version": package["version"],
     }
     return json.dumps(metadata, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
@@ -65,9 +66,11 @@ def _authenticated_metadata(package: dict[str, Any]) -> bytes:
     )
 
 
-def build_recovery_package(master_key: bytes, passphrase: str) -> str:
+def build_recovery_package(master_key: bytes, passphrase: str, *, scope: str) -> str:
     if not isinstance(master_key, bytes) or len(master_key) != MASTER_KEY_BYTES:
         raise RecoveryPackageError("家庭档案主密钥格式无效。")
+    if not isinstance(scope, str) or not scope:
+        raise RecoveryPackageError("恢复包必须绑定家庭档案范围。")
     passphrase_bytes = _validate_passphrase(passphrase)
     salt = os.urandom(SALT_BYTES)
     nonce = os.urandom(NONCE_BYTES)
@@ -76,6 +79,7 @@ def build_recovery_package(master_key: bytes, passphrase: str) -> str:
         "version": RECOVERY_VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "cipher": "AES-256-GCM",
+        "scope": scope,
         "kdf": {
             "name": "scrypt",
             "n": SCRYPT_N,
@@ -102,7 +106,7 @@ def build_recovery_package(master_key: bytes, passphrase: str) -> str:
     return json.dumps(package, ensure_ascii=False, indent=2, sort_keys=True)
 
 
-def recover_master_key(package_json: str, passphrase: str) -> bytes:
+def recover_master_key(package_json: str, passphrase: str, *, expected_scope: str) -> bytes:
     passphrase_bytes = _validate_passphrase(passphrase)
     try:
         package = json.loads(package_json)
@@ -114,6 +118,8 @@ def recover_master_key(package_json: str, passphrase: str) -> bytes:
         raise RecoveryPackageError("不支持的恢复包版本。")
     if package.get("cipher") != "AES-256-GCM":
         raise RecoveryPackageError("不支持的恢复包加密算法。")
+    if package.get("scope") != expected_scope:
+        raise RecoveryPackageError("恢复包不属于当前家庭档案。")
 
     kdf = package.get("kdf")
     if not isinstance(kdf, dict) or kdf.get("name") != "scrypt" or kdf.get("length") != 32:

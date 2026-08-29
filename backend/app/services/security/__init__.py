@@ -18,6 +18,11 @@ from app.services.security.recovery import (
     recover_master_key,
     write_recovery_package,
 )
+from app.services.security.service import (
+    family_key_account,
+    get_family_key_manager,
+    get_secret_store,
+)
 
 __all__ = [
     "EncryptionError",
@@ -32,6 +37,9 @@ __all__ = [
     "encrypt_payload",
     "encrypt_text",
     "generate_master_key",
+    "family_key_account",
+    "get_family_key_manager",
+    "get_secret_store",
     "recover_master_key",
     "write_recovery_package",
 ]

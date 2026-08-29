@@ -1,10 +1,12 @@
 from app.models.entities import (
+    ArchiveSecurity,
     Base,
     ConsentEvent,
     ElderProfile,
     FamilyArchive,
     MediaAsset,
     MemorySession,
+    ModelConsentEvent,
     Person,
     Story,
     StoryDraft,
@@ -15,10 +17,12 @@ from app.models.entities import (
 
 __all__ = [
     "Base",
+    "ArchiveSecurity",
     "FamilyArchive",
     "Person",
     "ElderProfile",
     "MemorySession",
+    "ModelConsentEvent",
     "MediaAsset",
     "Transcript",
     "StoryDraft",
@@ -27,4 +31,3 @@ __all__ = [
     "WorkflowTask",
     "ConsentEvent",
 ]
-

@@ -31,8 +31,12 @@ class FamilyArchive(TimestampMixin, Base):
     display_name: Mapped[str] = mapped_column(String(80))
     idempotency_key: Mapped[str | None] = mapped_column(String(80), unique=True)
     schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    data_classification: Mapped[str] = mapped_column(String(32), default="test")
 
     people: Mapped[list[Person]] = relationship(back_populates="family", cascade="all, delete-orphan")
+    security_metadata: Mapped[ArchiveSecurity | None] = relationship(
+        back_populates="family", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class Person(TimestampMixin, Base):
@@ -107,6 +111,8 @@ class MediaAsset(TimestampMixin, Base):
     sha256: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), default="ready")
     is_original: Mapped[bool] = mapped_column(Boolean, default=True)
+    encryption_version: Mapped[int] = mapped_column(Integer, default=0)
+    integrity_checked_at: Mapped[datetime | None] = mapped_column()
 
     session: Mapped[MemorySession] = relationship(back_populates="media_assets")
 
@@ -209,3 +215,38 @@ class ConsentEvent(Base):
     object_id: Mapped[str] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(default=now_utc)
 
+
+class ArchiveSecurity(TimestampMixin, Base):
+    __tablename__ = "archive_security"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(
+        ForeignKey("family_archives.id", ondelete="CASCADE"), unique=True
+    )
+    key_version: Mapped[int] = mapped_column(Integer, default=1)
+    encryption_status: Mapped[str] = mapped_column(String(40), default="key_ready")
+    initialized_at: Mapped[datetime] = mapped_column(default=now_utc)
+    recovery_package_created_at: Mapped[datetime | None] = mapped_column()
+
+    family: Mapped[FamilyArchive] = relationship(back_populates="security_metadata")
+
+
+class ModelConsentEvent(Base):
+    __tablename__ = "model_consent_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(
+        ForeignKey("family_archives.id", ondelete="CASCADE")
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("memory_sessions.id", ondelete="CASCADE")
+    )
+    actor_label: Mapped[str] = mapped_column(String(80))
+    purpose: Mapped[str] = mapped_column(String(40))
+    data_classification: Mapped[str] = mapped_column(String(32))
+    decision: Mapped[str] = mapped_column(String(24))
+    one_time: Mapped[bool] = mapped_column(Boolean, default=True)
+    input_sha256: Mapped[str | None] = mapped_column(String(64))
+    used_at: Mapped[datetime | None] = mapped_column()
+    revoked_at: Mapped[datetime | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(default=now_utc)

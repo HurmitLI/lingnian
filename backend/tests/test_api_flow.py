@@ -165,6 +165,22 @@ def test_invalid_audio_has_safe_error(client):
     assert "Traceback" not in response.text
 
 
+def test_corrupted_audio_is_blocked_on_read(client, db):
+    profile = create_profile(client)
+    session = create_session(client, profile["id"])
+    asset = upload_test_audio(client, session["id"])
+    stored = db.get(MediaAsset, asset["id"])
+    path = get_settings().resolved_asset_root / stored.relative_path
+    path.write_bytes(path.read_bytes() + b"tampered")
+
+    response = client.get(f"/api/v1/media-assets/{asset['id']}/content")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "ASSET_INTEGRITY_FAILED"
+    db.expire_all()
+    assert db.get(MediaAsset, asset["id"]).status == "corrupt"
+
+
 def test_family_idempotency_and_validation(client):
     payload = {"display_name": "虚构家庭", "idempotency_key": "same-request"}
     first = client.post("/api/v1/families", json=payload)
@@ -205,4 +221,3 @@ def test_running_tasks_are_recovered(client, db):
     recovered = db.get(WorkflowTask, task_id)
     assert recovered.status == "failed_retryable"
     assert recovered.error_code == "PROCESS_INTERRUPTED"
-
