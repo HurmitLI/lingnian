@@ -384,5 +384,8 @@ class MemoryBook(TimestampMixin, Base):
     story_manifest: Mapped[list] = mapped_column(JSON, default=list)
     created_by: Mapped[str] = mapped_column(String(80))
     status: Mapped[str] = mapped_column(String(24), default="ready")
+    pdf_status: Mapped[str] = mapped_column(String(24), default="not_generated")
+    pdf_relative_path: Mapped[str | None] = mapped_column(String(500))
+    pdf_sha256: Mapped[str | None] = mapped_column(String(64))
 
     elder: Mapped[ElderProfile] = relationship(back_populates="memory_books")

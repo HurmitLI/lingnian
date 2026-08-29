@@ -251,6 +251,8 @@ class MemoryBookRead(ORMModel):
     story_manifest: list
     created_by: str
     status: str
+    pdf_status: str
+    pdf_sha256: str | None
     created_at: datetime
 
 

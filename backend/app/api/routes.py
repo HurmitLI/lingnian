@@ -75,6 +75,7 @@ from app.schemas.api import (
     TopicPreferenceUpsert,
 )
 from app.services.archive.assets import (
+    calculate_sha256,
     resolve_controlled_path,
     store_audio_upload,
     verify_asset_integrity,
@@ -83,6 +84,7 @@ from app.services.memory import (
     ensure_question_bank,
     markdown_sha256,
     render_memory_book,
+    render_memory_book_pdf,
     select_question,
 )
 from app.services.privacy import (
@@ -760,6 +762,66 @@ def download_memory_book_markdown(
         headers={
             "Content-Disposition": f'attachment; filename="niannian-memory-book-v{book.version}.md"'
         },
+    )
+
+
+@router.get("/memory-books/{book_id}/pdf")
+def download_memory_book_pdf(
+    book_id: str, db: Session = Depends(get_db)
+) -> FileResponse:
+    book = require(
+        db, MemoryBook, book_id, "MEMORY_BOOK_NOT_FOUND", "没有找到这个回忆录版本。"
+    )
+    settings = get_settings()
+    relative_path = f"exports/memory-books/{book.elder_id}/{book.id}.pdf"
+    output_path = resolve_controlled_path(settings.resolved_asset_root, relative_path)
+    needs_generation = (
+        book.pdf_status != "ready"
+        or book.pdf_relative_path != relative_path
+        or not output_path.is_file()
+    )
+    if needs_generation:
+        stories_by_id = {story.id: story for story in book.elder.stories}
+        stories = [
+            stories_by_id[item["story_id"]]
+            for item in book.story_manifest
+            if item.get("story_id") in stories_by_id
+        ]
+        temporary_path = output_path.with_suffix(".tmp.pdf")
+        try:
+            pdf_sha256 = render_memory_book_pdf(
+                book.elder,
+                stories,
+                title=book.title,
+                output_path=temporary_path,
+            )
+            temporary_path.replace(output_path)
+        except Exception as exc:
+            temporary_path.unlink(missing_ok=True)
+            book.pdf_status = "failed"
+            db.commit()
+            raise DomainError(
+                "MEMORY_BOOK_PDF_FAILED",
+                "打印版 PDF 暂时生成失败，Markdown 版本仍可正常下载。",
+                503,
+            ) from exc
+        book.pdf_status = "ready"
+        book.pdf_relative_path = relative_path
+        book.pdf_sha256 = pdf_sha256
+        db.commit()
+        db.refresh(book)
+    if not book.pdf_sha256 or calculate_sha256(output_path) != book.pdf_sha256:
+        book.pdf_status = "corrupt"
+        db.commit()
+        raise DomainError(
+            "MEMORY_BOOK_PDF_INTEGRITY_FAILED",
+            "打印版 PDF 完整性校验失败，已阻止下载。",
+            409,
+        )
+    return FileResponse(
+        output_path,
+        media_type="application/pdf",
+        filename=f"niannian-memory-book-v{book.version}.pdf",
     )
 
 

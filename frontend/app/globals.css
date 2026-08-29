@@ -121,6 +121,7 @@ blockquote { margin: 24px 0; padding: 8px 0 8px 22px; border-left: 3px solid var
 .local-reminder-form .button, .memory-book-panel > .button { justify-self: start; }
 .book-list { display: grid; gap: 8px; border-top: 1px dashed var(--line); padding-top: 10px; }
 .book-list > div { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.book-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .book-list .button { min-height: 36px; padding: 6px 0; }
 
 .timeline-list { position: relative; margin-left: 8px; border-left: 1px solid var(--line); padding-left: 28px; }

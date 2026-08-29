@@ -15,8 +15,11 @@ dependencies = [
   "imageio-ffmpeg>=0.6,<1",
   "keyring>=25,<26",
   "openai>=1.68,<3",
+  "pdfplumber>=0.11,<1",
   "pydantic-settings>=2.8,<3",
+  "pypdf>=6,<7",
   "python-multipart>=0.0.20,<1",
+  "reportlab>=4.4,<5",
   "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.34,<1",
 ]

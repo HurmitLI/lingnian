@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import io
 from datetime import UTC, datetime, timedelta
 
+from app.core.config import get_settings
 from app.models import MemoryBook
+from pypdf import PdfReader
 from test_api_flow import create_profile, create_session, upload_test_audio
 
 
@@ -115,7 +118,25 @@ def test_memory_book_uses_only_confirmed_stories_and_verifies_hash(client, db):
     assert "这是一段会进入回忆录的已确认虚构故事。" in downloaded.text
     assert story["id"] in downloaded.text
 
+    pdf = client.get(f"/api/v1/memory-books/{created.json()['id']}/pdf")
+    assert pdf.status_code == 200
+    assert pdf.headers["content-type"] == "application/pdf"
+    assert pdf.content.startswith(b"%PDF")
+    reader = PdfReader(io.BytesIO(pdf.content))
+    assert len(reader.pages) >= 2
+    assert reader.metadata.title == "测试家庭回忆录"
+    assert "测试家庭回忆录" in "".join(page.extract_text() or "" for page in reader.pages)
+
+    db.expire_all()
     stored = db.get(MemoryBook, created.json()["id"])
+    assert stored.pdf_status == "ready"
+    assert stored.pdf_sha256
+    pdf_path = get_settings().resolved_asset_root / stored.pdf_relative_path
+    pdf_path.write_bytes(pdf_path.read_bytes() + b"tampered")
+    corrupted_pdf = client.get(f"/api/v1/memory-books/{stored.id}/pdf")
+    assert corrupted_pdf.status_code == 409
+    assert corrupted_pdf.json()["error"]["code"] == "MEMORY_BOOK_PDF_INTEGRITY_FAILED"
+
     stored.markdown_content += "被篡改"
     db.commit()
     blocked = client.get(

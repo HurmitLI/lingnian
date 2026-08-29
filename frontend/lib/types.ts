@@ -118,6 +118,8 @@ export type MemoryBook = {
   story_manifest: Array<{ story_id: string; life_stage: string }>;
   created_by: string;
   status: string;
+  pdf_status: "not_generated" | "ready" | "failed" | "corrupt";
+  pdf_sha256: string | null;
   created_at: string;
 };
 

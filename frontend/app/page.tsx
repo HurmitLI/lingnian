@@ -547,18 +547,19 @@ export default function Home() {
     }
   }
 
-  async function downloadMemoryBook(book: MemoryBook) {
+  async function downloadMemoryBook(book: MemoryBook, format: "markdown" | "pdf") {
     setBusy(true);
     setError("");
     try {
-      const download = await apiDownload(`/api/v1/memory-books/${book.id}/markdown`);
+      const download = await apiDownload(`/api/v1/memory-books/${book.id}/${format}`);
       const url = URL.createObjectURL(download.blob);
       const link = document.createElement("a");
       link.href = url;
       link.download = download.filename;
       link.click();
       URL.revokeObjectURL(url);
-      setNotice(`回忆录第 ${book.version} 版已下载。`);
+      if (selectedProfile) await loadArchiveTools(selectedProfile.id);
+      setNotice(`回忆录第 ${book.version} 版 ${format === "pdf" ? "PDF" : "Markdown"} 已下载。`);
     } catch (value) {
       showError(value);
     } finally {
@@ -738,7 +739,7 @@ export default function Home() {
               <button className="button primary" disabled={busy || !memoryContext?.confirmed_facts.length} onClick={generateMemoryBook}>生成新版本</button>
               <div className="book-list">
                 {memoryBooks.length === 0 ? <p className="empty">还没有回忆录版本。</p> : memoryBooks.map((book) => (
-                  <div key={book.id}><span>第 {book.version} 版 · {book.story_manifest.length} 篇故事</span><button className="button quiet" disabled={busy} onClick={() => downloadMemoryBook(book)}>下载 Markdown</button></div>
+                  <div key={book.id}><span>第 {book.version} 版 · {book.story_manifest.length} 篇故事</span><div className="book-actions"><button className="button quiet" disabled={busy} onClick={() => downloadMemoryBook(book, "markdown")}>下载 Markdown</button><button className="button quiet" disabled={busy} onClick={() => downloadMemoryBook(book, "pdf")}>{book.pdf_status === "ready" ? "下载 PDF" : "生成并下载 PDF"}</button></div></div>
                 ))}
               </div>
             </div>
