@@ -9,9 +9,11 @@ description = "念念第一阶段：家庭记忆采集纵向切片"
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "alembic>=1.14,<2",
+  "cryptography>=50,<51",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
   "imageio-ffmpeg>=0.6,<1",
+  "keyring>=25,<26",
   "openai>=1.68,<3",
   "pydantic-settings>=2.8,<3",
   "python-multipart>=0.0.20,<1",
