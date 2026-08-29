@@ -17,6 +17,9 @@ FONT_CANDIDATES = [
     Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
 ]
 
+DEFAULT_FOOTER_TEXT = "聆年 · 家庭记忆整理 · 原始录音 · 非实时影像"
+DEFAULT_MEDIA_COMMENT = "家庭记忆整理 · 原始录音 · 非实时影像"
+
 
 def _font(size: int) -> ImageFont.FreeTypeFont:
     font_path = next((path for path in FONT_CANDIDATES if path.is_file()), None)
@@ -55,6 +58,7 @@ def render_story_card(
     story_excerpt: str,
     life_stage: str,
     image_path: Path | None,
+    footer_text: str = DEFAULT_FOOTER_TEXT,
 ) -> None:
     if image_path:
         with Image.open(image_path) as source:
@@ -84,7 +88,7 @@ def render_story_card(
         y += int(body_font.size * 1.55)
     draw.text(
         (margin, height - 65),
-        "聆年 · 家庭记忆整理 · 原始录音 · 非实时影像",
+        footer_text,
         font=small_font,
         fill="#fffaf0",
     )
@@ -110,6 +114,9 @@ def render_keepsake_video(
     max_source_seconds: int,
     timeout_seconds: int,
     on_progress: Callable[[int], None] | None = None,
+    footer_text: str = DEFAULT_FOOTER_TEXT,
+    media_comment: str = DEFAULT_MEDIA_COMMENT,
+    audio_filter: str | None = None,
 ) -> int:
     ffmpeg = get_ffmpeg_binary()
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -133,8 +140,10 @@ def render_keepsake_video(
             story_excerpt=clip["story_excerpt"],
             life_stage=clip["life_stage"],
             image_path=clip.get("image_path"),
+            footer_text=footer_text,
         )
         rendered = work_dir / f"clip-{index:02d}.mp4"
+        audio_filter_args = ["-af", audio_filter] if audio_filter else []
         _run(
             [
                 ffmpeg,
@@ -161,6 +170,7 @@ def render_keepsake_video(
                 "stillimage",
                 "-pix_fmt",
                 "yuv420p",
+                *audio_filter_args,
                 "-c:a",
                 "aac",
                 "-b:a",
@@ -205,7 +215,7 @@ def render_keepsake_video(
             "-metadata",
             f"title={keepsake_title}",
             "-metadata",
-            "comment=家庭记忆整理 · 原始录音 · 非实时影像",
+            f"comment={media_comment}",
             str(output_path),
         ],
         timeout=timeout_seconds,
