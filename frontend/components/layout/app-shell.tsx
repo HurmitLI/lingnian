@@ -20,7 +20,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     <div className="app-shell">
       <aside className="desktop-sidebar" aria-label="主导航">
         <Link className="brand-mark" href="/" aria-label="聆年首页">
-          <span className="brand-symbol" aria-hidden="true"><Image src="/brand/lingnian-mark.png" width={42} height={42} alt="" preload /></span>
+          <span className="brand-symbol" aria-hidden="true"><Image src="/brand/lingnian-mark-v2.png" width={42} height={42} alt="" preload /></span>
           <span className="brand-copy"><strong>聆年</strong><small>家庭记忆</small></span>
         </Link>
         <nav className="primary-nav" aria-label="桌面主导航">
