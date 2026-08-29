@@ -26,6 +26,40 @@ class FamilyRead(ORMModel):
     created_at: datetime
 
 
+class PersonCreate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=80)
+    role: str = Field(default="family_member", min_length=1, max_length=24)
+
+
+class PersonRead(ORMModel):
+    id: str
+    family_id: str
+    role: str
+    display_name: str
+    created_at: datetime
+
+
+class PersonRelationshipCreate(BaseModel):
+    from_person_id: str
+    to_person_id: str
+    relationship_type: str = Field(
+        pattern="^(parent|child|spouse|sibling|grandparent|grandchild|custom)$"
+    )
+    custom_label: str | None = Field(default=None, max_length=80)
+    confirmed_by: str = Field(min_length=1, max_length=80)
+
+
+class PersonRelationshipRead(ORMModel):
+    id: str
+    family_id: str
+    from_person_id: str
+    to_person_id: str
+    relationship_type: str
+    custom_label: str | None
+    confirmed_by: str
+    created_at: datetime
+
+
 class SecurityInitializeRequest(BaseModel):
     actor_label: str = Field(min_length=1, max_length=80)
 
@@ -70,6 +104,7 @@ class ElderProfileRead(ORMModel):
 class MemorySessionCreate(BaseModel):
     elder_id: str
     life_stage: str = Field(min_length=1, max_length=40)
+    topic_confirmed: bool = False
 
 
 class MemorySessionRead(ORMModel):
@@ -124,6 +159,56 @@ class TranscriptRead(ORMModel):
 
 class TranscriptUpdate(BaseModel):
     corrected_text: str = Field(min_length=1, max_length=100_000)
+
+
+class TopicPreferenceUpsert(BaseModel):
+    topic_key: str = Field(min_length=1, max_length=80)
+    preference: str = Field(pattern="^(welcome|ask_first|avoid)$")
+    note: str | None = Field(default=None, max_length=500)
+    updated_by: str = Field(min_length=1, max_length=80)
+
+
+class TopicPreferenceRead(ORMModel):
+    id: str
+    elder_id: str
+    topic_key: str
+    preference: str
+    note: str | None
+    updated_by: str
+    updated_at: datetime
+
+
+class QuestionPromptRead(ORMModel):
+    prompt_key: str
+    life_stage: str
+    question_text: str
+    sensitivity: str
+    version: int
+
+
+class MemoryFactRead(ORMModel):
+    id: str
+    elder_id: str
+    story_id: str
+    fact_type: str
+    subject_label: str
+    value_text: str
+    content_sha256: str
+    confidence: str
+    status: str
+    created_at: datetime
+
+
+class StageCoverage(BaseModel):
+    life_stage: str
+    session_count: int
+    confirmed_story_count: int
+
+
+class ElderMemoryContext(BaseModel):
+    coverage: list[StageCoverage]
+    preferences: list[TopicPreferenceRead]
+    confirmed_facts: list[MemoryFactRead]
 
 
 class ModelConsentCreate(BaseModel):

@@ -74,6 +74,32 @@ export type ModelConsent = {
   used_at: string | null;
 };
 
+export type TopicPreference = {
+  id: string;
+  elder_id: string;
+  topic_key: string;
+  preference: "welcome" | "ask_first" | "avoid";
+  note: string | null;
+  updated_by: string;
+  updated_at: string;
+};
+
+export type ElderMemoryContext = {
+  coverage: Array<{
+    life_stage: string;
+    session_count: number;
+    confirmed_story_count: number;
+  }>;
+  preferences: TopicPreference[];
+  confirmed_facts: Array<{
+    id: string;
+    story_id: string;
+    fact_type: string;
+    value_text: string;
+    confidence: "confirmed";
+  }>;
+};
+
 export type SessionDetail = {
   session: MemorySession;
   media_assets: MediaAsset[];

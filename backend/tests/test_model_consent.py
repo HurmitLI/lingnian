@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import wave
 
-from app.api import routes
 from app.core.config import get_settings
 from app.models import ElderProfile, FamilyArchive, ModelConsentEvent
 from app.services.llm.provider import MockLLMProvider
@@ -52,11 +51,6 @@ def prepare_reviewed_real_session(client, db, monkeypatch):
 
     settings = get_settings()
     monkeypatch.setattr(settings, "llm_provider", "qwen")
-    monkeypatch.setattr(
-        routes,
-        "get_llm_provider",
-        lambda: (_ for _ in ()).throw(AssertionError("真实资料问题不得调用云模型")),
-    )
     session_response = client.post(
         "/api/v1/memory-sessions",
         json={"elder_id": profile["id"], "life_stage": "童年"},

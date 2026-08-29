@@ -37,6 +37,9 @@ class FamilyArchive(TimestampMixin, Base):
     security_metadata: Mapped[ArchiveSecurity | None] = relationship(
         back_populates="family", uselist=False, cascade="all, delete-orphan"
     )
+    relationships: Mapped[list[PersonRelationship]] = relationship(
+        back_populates="family", cascade="all, delete-orphan"
+    )
 
 
 class Person(TimestampMixin, Base):
@@ -71,6 +74,12 @@ class ElderProfile(TimestampMixin, Base):
         back_populates="elder", cascade="all, delete-orphan"
     )
     stories: Mapped[list[Story]] = relationship(back_populates="elder")
+    topic_preferences: Mapped[list[TopicPreference]] = relationship(
+        back_populates="elder", cascade="all, delete-orphan"
+    )
+    memory_facts: Mapped[list[MemoryFact]] = relationship(
+        back_populates="elder", cascade="all, delete-orphan"
+    )
 
 
 class MemorySession(TimestampMixin, Base):
@@ -253,3 +262,83 @@ class ModelConsentEvent(Base):
     used_at: Mapped[datetime | None] = mapped_column()
     revoked_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(default=now_utc)
+
+
+class PersonRelationship(TimestampMixin, Base):
+    __tablename__ = "person_relationships"
+    __table_args__ = (
+        UniqueConstraint(
+            "from_person_id",
+            "to_person_id",
+            "relationship_type",
+            name="uq_person_relationship_direction",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(
+        ForeignKey("family_archives.id", ondelete="CASCADE")
+    )
+    from_person_id: Mapped[str] = mapped_column(
+        ForeignKey("people.id", ondelete="CASCADE")
+    )
+    to_person_id: Mapped[str] = mapped_column(
+        ForeignKey("people.id", ondelete="CASCADE")
+    )
+    relationship_type: Mapped[str] = mapped_column(String(40))
+    custom_label: Mapped[str | None] = mapped_column(String(80))
+    confirmed_by: Mapped[str] = mapped_column(String(80))
+
+    family: Mapped[FamilyArchive] = relationship(back_populates="relationships")
+
+
+class QuestionPrompt(TimestampMixin, Base):
+    __tablename__ = "question_prompts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    prompt_key: Mapped[str] = mapped_column(String(100), unique=True)
+    life_stage: Mapped[str] = mapped_column(String(40))
+    question_text: Mapped[str] = mapped_column(Text)
+    sensitivity: Mapped[str] = mapped_column(String(24), default="normal")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    source: Mapped[str] = mapped_column(String(40), default="built_in")
+
+
+class TopicPreference(TimestampMixin, Base):
+    __tablename__ = "topic_preferences"
+    __table_args__ = (
+        UniqueConstraint("elder_id", "topic_key", name="uq_elder_topic_preference"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    elder_id: Mapped[str] = mapped_column(
+        ForeignKey("elder_profiles.id", ondelete="CASCADE")
+    )
+    topic_key: Mapped[str] = mapped_column(String(80))
+    preference: Mapped[str] = mapped_column(String(24))
+    note: Mapped[str | None] = mapped_column(Text)
+    updated_by: Mapped[str] = mapped_column(String(80))
+
+    elder: Mapped[ElderProfile] = relationship(back_populates="topic_preferences")
+
+
+class MemoryFact(TimestampMixin, Base):
+    __tablename__ = "memory_facts"
+    __table_args__ = (
+        UniqueConstraint("story_id", "fact_type", name="uq_story_memory_fact_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    elder_id: Mapped[str] = mapped_column(
+        ForeignKey("elder_profiles.id", ondelete="CASCADE")
+    )
+    story_id: Mapped[str] = mapped_column(ForeignKey("stories.id", ondelete="CASCADE"))
+    fact_type: Mapped[str] = mapped_column(String(40))
+    subject_label: Mapped[str] = mapped_column(String(120))
+    value_text: Mapped[str] = mapped_column(Text)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    confidence: Mapped[str] = mapped_column(String(24), default="confirmed")
+    status: Mapped[str] = mapped_column(String(24), default="active")
+
+    elder: Mapped[ElderProfile] = relationship(back_populates="memory_facts")

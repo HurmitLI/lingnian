@@ -79,8 +79,15 @@ h1 { font-size: clamp(46px, 8vw, 76px); line-height: .95; font-weight: 500; lett
 @keyframes pulse { 50% { box-shadow: 0 0 0 7px rgba(155,63,54,.12); } }
 
 .stage-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 9px; }
-.stage-button { min-height: 70px; background: #f7f1e5; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; color: var(--ink); }
+.stage-button { min-height: 76px; display: grid; place-content: center; gap: 5px; background: #f7f1e5; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; color: var(--ink); }
+.stage-button small { color: var(--muted); font-family: ui-sans-serif, system-ui; font-size: 10px; }
+.stage-button.avoided { background: #eee9df; text-decoration: line-through; }
 .stage-button:hover:not(:disabled) { border-color: var(--gold); background: #fffaf0; }
+.topic-panel { border-top: 1px dashed var(--line); margin-top: 18px; padding-top: 16px; }
+.topic-panel summary { cursor: pointer; color: var(--red-deep); }
+.topic-list { display: grid; gap: 8px; margin-top: 14px; }
+.topic-list label { display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 1px solid #ece5d7; padding: 7px 0; }
+.topic-list select { border: 1px solid var(--line); border-radius: 9px; background: #fffdf8; padding: 8px 10px; color: var(--ink); }
 
 .session-meta { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 14px; }
 .session-meta strong { color: var(--green); font-weight: 600; }
@@ -122,6 +129,7 @@ blockquote { margin: 24px 0; padding: 8px 0 8px 22px; border-left: 3px solid var
   .security-status { grid-template-columns: 1fr; }
   .stage-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .file-line { align-items: flex-start; flex-direction: column; }
+  .topic-list label { align-items: flex-start; flex-direction: column; gap: 7px; }
 }
 
 @media (max-width: 410px) {

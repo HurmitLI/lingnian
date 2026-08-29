@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
@@ -16,13 +17,17 @@ from app.models import (
     ElderProfile,
     FamilyArchive,
     MediaAsset,
+    MemoryFact,
     MemorySession,
     ModelConsentEvent,
     Person,
+    PersonRelationship,
+    QuestionPrompt,
     Story,
     StoryDraft,
     TimelineEvent,
     Transcript,
+    TopicPreference,
     WorkflowTask,
 )
 from app.models.entities import now_utc
@@ -34,12 +39,19 @@ from app.schemas.api import (
     FamilyCreate,
     FamilyRead,
     HealthRead,
+    ElderMemoryContext,
     MediaAssetRead,
     MemorySessionCreate,
     MemorySessionRead,
     ModelConsentCreate,
     ModelConsentRead,
     OrganizationTaskCreate,
+    MemoryFactRead,
+    PersonCreate,
+    PersonRead,
+    PersonRelationshipCreate,
+    PersonRelationshipRead,
+    QuestionPromptRead,
     RecoveryPackageCreate,
     SecurityInitializeRequest,
     SessionDetail,
@@ -47,17 +59,20 @@ from app.schemas.api import (
     StoryRead,
     TaskRead,
     TaskRetryRequest,
+    StageCoverage,
     TimelineEventRead,
     TimelineItem,
     TranscriptRead,
     TranscriptUpdate,
+    TopicPreferenceRead,
+    TopicPreferenceUpsert,
 )
 from app.services.archive.assets import (
     resolve_controlled_path,
     store_audio_upload,
     verify_asset_integrity,
 )
-from app.services.llm import generate_local_question, get_llm_provider
+from app.services.memory import ensure_question_bank, select_question
 from app.services.privacy import (
     STORY_ORGANIZATION_PURPOSE,
     corrected_text_sha256,
@@ -288,6 +303,105 @@ def create_elder_profile(
     return elder_read(profile)
 
 
+@router.post(
+    "/families/{family_id}/people", response_model=PersonRead, status_code=201
+)
+def create_family_person(
+    family_id: str,
+    payload: PersonCreate,
+    db: Session = Depends(get_db),
+) -> Person:
+    require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    person = Person(
+        family_id=family_id,
+        role=payload.role.strip(),
+        display_name=payload.display_name.strip(),
+    )
+    db.add(person)
+    db.commit()
+    db.refresh(person)
+    return person
+
+
+@router.get("/families/{family_id}/people", response_model=list[PersonRead])
+def list_family_people(
+    family_id: str, db: Session = Depends(get_db)
+) -> list[Person]:
+    require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    return list(
+        db.scalars(
+            select(Person)
+            .where(Person.family_id == family_id)
+            .order_by(Person.created_at)
+        ).all()
+    )
+
+
+@router.post(
+    "/families/{family_id}/relationships",
+    response_model=PersonRelationshipRead,
+    status_code=201,
+)
+def create_person_relationship(
+    family_id: str,
+    payload: PersonRelationshipCreate,
+    db: Session = Depends(get_db),
+) -> PersonRelationship:
+    require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    from_person = require(
+        db, Person, payload.from_person_id, "PERSON_NOT_FOUND", "没有找到关系起点人物。"
+    )
+    to_person = require(
+        db, Person, payload.to_person_id, "PERSON_NOT_FOUND", "没有找到关系终点人物。"
+    )
+    if from_person.id == to_person.id:
+        raise DomainError("RELATIONSHIP_SELF_REFERENCE", "不能把同一个人关联为自己的亲属。", 409)
+    if from_person.family_id != family_id or to_person.family_id != family_id:
+        raise DomainError(
+            "RELATIONSHIP_FAMILY_MISMATCH", "关系中的两个人必须属于同一个家庭档案。", 409
+        )
+    if payload.relationship_type == "custom" and not payload.custom_label:
+        raise DomainError("CUSTOM_RELATIONSHIP_LABEL_REQUIRED", "自定义关系需要填写称谓。", 422)
+    existing = db.scalar(
+        select(PersonRelationship).where(
+            PersonRelationship.from_person_id == from_person.id,
+            PersonRelationship.to_person_id == to_person.id,
+            PersonRelationship.relationship_type == payload.relationship_type,
+        )
+    )
+    if existing:
+        return existing
+    relationship = PersonRelationship(
+        family_id=family_id,
+        from_person_id=from_person.id,
+        to_person_id=to_person.id,
+        relationship_type=payload.relationship_type,
+        custom_label=payload.custom_label.strip() if payload.custom_label else None,
+        confirmed_by=payload.confirmed_by.strip(),
+    )
+    db.add(relationship)
+    db.commit()
+    db.refresh(relationship)
+    return relationship
+
+
+@router.get(
+    "/families/{family_id}/relationships",
+    response_model=list[PersonRelationshipRead],
+)
+def list_person_relationships(
+    family_id: str, db: Session = Depends(get_db)
+) -> list[PersonRelationship]:
+    require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    return list(
+        db.scalars(
+            select(PersonRelationship)
+            .where(PersonRelationship.family_id == family_id)
+            .order_by(PersonRelationship.created_at)
+        ).all()
+    )
+
+
 @router.get("/elder-profiles", response_model=list[ElderProfileRead])
 def list_elder_profiles(db: Session = Depends(get_db)) -> list[ElderProfileRead]:
     profiles = db.scalars(select(ElderProfile).order_by(ElderProfile.created_at.desc())).all()
@@ -302,6 +416,115 @@ def get_elder_profile(profile_id: str, db: Session = Depends(get_db)) -> ElderPr
     return elder_read(profile)
 
 
+@router.put(
+    "/elder-profiles/{profile_id}/topic-preferences/{topic_key}",
+    response_model=TopicPreferenceRead,
+)
+def upsert_topic_preference(
+    profile_id: str,
+    topic_key: str,
+    payload: TopicPreferenceUpsert,
+    db: Session = Depends(get_db),
+) -> TopicPreference:
+    require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    normalized_topic = topic_key.strip()
+    if payload.topic_key.strip() != normalized_topic:
+        raise DomainError("TOPIC_KEY_MISMATCH", "路径和内容中的话题不一致。", 422)
+    preference = db.scalar(
+        select(TopicPreference).where(
+            TopicPreference.elder_id == profile_id,
+            TopicPreference.topic_key == normalized_topic,
+        )
+    )
+    values = {
+        "preference": payload.preference,
+        "note": payload.note.strip() if payload.note else None,
+        "updated_by": payload.updated_by.strip(),
+    }
+    if preference:
+        for key, value in values.items():
+            setattr(preference, key, value)
+    else:
+        preference = TopicPreference(
+            elder_id=profile_id,
+            topic_key=normalized_topic,
+            **values,
+        )
+        db.add(preference)
+    db.commit()
+    db.refresh(preference)
+    return preference
+
+
+@router.get(
+    "/elder-profiles/{profile_id}/topic-preferences",
+    response_model=list[TopicPreferenceRead],
+)
+def list_topic_preferences(
+    profile_id: str, db: Session = Depends(get_db)
+) -> list[TopicPreference]:
+    require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    return list(
+        db.scalars(
+            select(TopicPreference)
+            .where(TopicPreference.elder_id == profile_id)
+            .order_by(TopicPreference.topic_key)
+        ).all()
+    )
+
+
+@router.get("/question-prompts", response_model=list[QuestionPromptRead])
+def list_question_prompts(db: Session = Depends(get_db)) -> list[QuestionPrompt]:
+    ensure_question_bank(db)
+    db.commit()
+    return list(
+        db.scalars(
+            select(QuestionPrompt)
+            .where(QuestionPrompt.enabled.is_(True))
+            .order_by(QuestionPrompt.life_stage, QuestionPrompt.prompt_key)
+        ).all()
+    )
+
+
+@router.get(
+    "/elder-profiles/{profile_id}/memory-context",
+    response_model=ElderMemoryContext,
+)
+def get_elder_memory_context(
+    profile_id: str, db: Session = Depends(get_db)
+) -> ElderMemoryContext:
+    profile = require(
+        db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。"
+    )
+    sessions = db.scalars(
+        select(MemorySession).where(MemorySession.elder_id == profile.id)
+    ).all()
+    session_counts: dict[str, int] = {}
+    for session in sessions:
+        session_counts[session.life_stage] = session_counts.get(session.life_stage, 0) + 1
+    confirmed_counts: dict[str, int] = {}
+    for story in profile.stories:
+        stage = story.source_draft.session.life_stage
+        confirmed_counts[stage] = confirmed_counts.get(stage, 0) + 1
+    stages = sorted(set(session_counts) | set(confirmed_counts))
+    return ElderMemoryContext(
+        coverage=[
+            StageCoverage(
+                life_stage=stage,
+                session_count=session_counts.get(stage, 0),
+                confirmed_story_count=confirmed_counts.get(stage, 0),
+            )
+            for stage in stages
+        ],
+        preferences=[TopicPreferenceRead.model_validate(item) for item in profile.topic_preferences],
+        confirmed_facts=[
+            MemoryFactRead.model_validate(item)
+            for item in profile.memory_facts
+            if item.status == "active"
+        ],
+    )
+
+
 @router.post("/memory-sessions", response_model=MemorySessionRead, status_code=201)
 def create_memory_session(
     payload: MemorySessionCreate, db: Session = Depends(get_db)
@@ -310,25 +533,33 @@ def create_memory_session(
         db, ElderProfile, payload.elder_id, "ELDER_NOT_FOUND", "没有找到这位老人的测试档案。"
     )
     try:
-        family = elder.person.family
-        settings = get_settings()
-        if requires_explicit_model_consent(
-            settings.llm_provider, family.data_classification
-        ):
-            question = generate_local_question(
-                elder.preferred_name, payload.life_stage.strip()
-            )
-        else:
-            question = get_llm_provider().generate_question(
-                elder.preferred_name, payload.life_stage.strip()
-            )
+        question = select_question(
+            db,
+            elder_id=elder.id,
+            life_stage=payload.life_stage.strip(),
+            topic_confirmed=payload.topic_confirmed,
+        )
+    except ValueError as exc:
+        if str(exc) == "TOPIC_BLOCKED_BY_PREFERENCE":
+            raise DomainError(
+                "TOPIC_BLOCKED_BY_PREFERENCE",
+                "这位讲述者已经选择不要再问这个话题。",
+                409,
+            ) from exc
+        if str(exc) == "TOPIC_CONFIRMATION_REQUIRED":
+            raise DomainError(
+                "TOPIC_CONFIRMATION_REQUIRED",
+                "请先询问讲述者是否愿意聊这个话题。",
+                409,
+            ) from exc
+        raise
     except Exception as exc:
         raise DomainError("QUESTION_GENERATION_FAILED", "暂时没能生成回忆问题，请重试。", 503) from exc
     session = MemorySession(
         elder_id=elder.id,
         life_stage=payload.life_stage.strip(),
-        prompt_id=f"{payload.life_stage.strip()}-v1",
-        question_text=question.question,
+        prompt_id=question.prompt_id,
+        question_text=question.question_text,
         status="PROMPT_READY",
     )
     db.add(session)
@@ -684,6 +915,18 @@ def confirm_story_draft(
     )
     db.add(story)
     db.flush()
+    db.add(
+        MemoryFact(
+            elder_id=session.elder_id,
+            story_id=story.id,
+            fact_type="confirmed_story",
+            subject_label=session.elder.preferred_name,
+            value_text=story.body,
+            content_sha256=hashlib.sha256(story.body.encode("utf-8")).hexdigest(),
+            confidence="confirmed",
+            status="active",
+        )
+    )
     for mention in draft.timeline_mentions:
         db.add(
             TimelineEvent(

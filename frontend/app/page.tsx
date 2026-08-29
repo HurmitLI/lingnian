@@ -6,6 +6,7 @@ import SecurityPanel from "@/app/security-panel";
 import { api, mediaUrl } from "@/lib/api";
 import type {
   ElderProfile,
+  ElderMemoryContext,
   Health,
   ModelConsent,
   SessionDetail,
@@ -36,6 +37,7 @@ export default function Home() {
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
+  const [memoryContext, setMemoryContext] = useState<ElderMemoryContext | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioPreview, setAudioPreview] = useState<string | null>(null);
   const [correctedText, setCorrectedText] = useState("");
@@ -77,6 +79,14 @@ export default function Home() {
     if (!profileId) return;
     const result = await api<TimelineItem[]>(`/api/v1/elder-profiles/${profileId}/timeline`);
     setTimeline(result);
+  }, []);
+
+  const loadMemoryContext = useCallback(async (profileId: string) => {
+    if (!profileId) return;
+    const result = await api<ElderMemoryContext>(
+      `/api/v1/elder-profiles/${profileId}/memory-context`,
+    );
+    setMemoryContext(result);
   }, []);
 
   const loadSession = useCallback(async (sessionId: string) => {
@@ -139,10 +149,14 @@ export default function Home() {
     let cancelled = false;
     async function syncTimeline() {
       try {
-        const result = await api<TimelineItem[]>(
-          `/api/v1/elder-profiles/${selectedProfileId}/timeline`,
-        );
-        if (!cancelled) setTimeline(result);
+        const [timelineResult, contextResult] = await Promise.all([
+          api<TimelineItem[]>(`/api/v1/elder-profiles/${selectedProfileId}/timeline`),
+          api<ElderMemoryContext>(`/api/v1/elder-profiles/${selectedProfileId}/memory-context`),
+        ]);
+        if (!cancelled) {
+          setTimeline(timelineResult);
+          setMemoryContext(contextResult);
+        }
       } catch (value) {
         if (!cancelled) showError(value);
       }
@@ -207,15 +221,22 @@ export default function Home() {
 
   async function startMemory(lifeStage: string) {
     if (!selectedProfileId) return;
+    const needsConfirmation = topicPreference(lifeStage) === "ask_first";
+    if (needsConfirmation && !window.confirm(`请先询问讲述者：现在愿意聊“${lifeStage}”吗？\n\n只有对方明确同意后再继续。`)) return;
     setBusy(true);
     setError("");
     try {
       const session = await api<{ id: string }>("/api/v1/memory-sessions", {
         method: "POST",
-        body: JSON.stringify({ elder_id: selectedProfileId, life_stage: lifeStage }),
+        body: JSON.stringify({
+          elder_id: selectedProfileId,
+          life_stage: lifeStage,
+          topic_confirmed: needsConfirmation,
+        }),
       });
       window.localStorage.setItem("niannian.sessionId", session.id);
       await loadSession(session.id);
+      await loadMemoryContext(selectedProfileId);
       setAudioFile(null);
       setNotice("回忆问题已准备好，一次只聊一个点。 ");
     } catch (value) {
@@ -407,7 +428,36 @@ export default function Home() {
       });
       await loadSession(detail.session.id);
       await loadTimeline(selectedProfile.id);
+      await loadMemoryContext(selectedProfile.id);
       setNotice("这段故事已由人工确认并归档。 ");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateTopicPreference(
+    topicKey: string,
+    preference: "welcome" | "ask_first" | "avoid",
+  ) {
+    if (!selectedProfile) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(
+        `/api/v1/elder-profiles/${selectedProfile.id}/topic-preferences/${encodeURIComponent(topicKey)}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            topic_key: topicKey,
+            preference,
+            updated_by: "本机家庭管理员",
+          }),
+        },
+      );
+      await loadMemoryContext(selectedProfile.id);
+      setNotice(preference === "avoid" ? `以后不会再主动询问“${topicKey}”。` : `“${topicKey}”的话题偏好已更新。`);
     } catch (value) {
       showError(value);
     } finally {
@@ -417,6 +467,10 @@ export default function Home() {
 
   const latestFailedTask = detail?.tasks.find((task) => task.status === "failed_retryable");
   const existingOriginal = detail?.media_assets.find((asset) => asset.is_original);
+  const topicPreference = (stage: string) =>
+    memoryContext?.preferences.find((item) => item.topic_key === stage)?.preference ?? "welcome";
+  const stageCoverage = (stage: string) =>
+    memoryContext?.coverage.find((item) => item.life_stage === stage);
 
   return (
     <main>
@@ -469,8 +523,34 @@ export default function Home() {
       <section className="card">
         <div className="section-heading"><span>03</span><div><h2>选一个回忆入口</h2><p>一次一个问题，不催促，也可以直接跳过。</p></div></div>
         <div className="stage-grid">
-          {LIFE_STAGES.map((stage) => <button className="stage-button" key={stage} disabled={!selectedProfileId || busy} onClick={() => startMemory(stage)}>{stage}</button>)}
+          {LIFE_STAGES.map((stage) => {
+            const coverage = stageCoverage(stage);
+            const avoided = topicPreference(stage) === "avoid";
+            return (
+              <button className={`stage-button${avoided ? " avoided" : ""}`} key={stage} disabled={!selectedProfileId || busy || avoided} onClick={() => startMemory(stage)}>
+                <span>{stage}</span>
+                <small>{avoided ? "不再询问" : coverage ? `${coverage.confirmed_story_count} 篇已确认` : "尚未开始"}</small>
+              </button>
+            );
+          })}
         </div>
+        {selectedProfile && (
+          <details className="topic-panel">
+            <summary>设置愿意聊或不要再问的话题</summary>
+            <div className="topic-list">
+              {LIFE_STAGES.map((stage) => (
+                <label key={stage}>
+                  <span>{stage}</span>
+                  <select value={topicPreference(stage)} disabled={busy} onChange={(event) => updateTopicPreference(stage, event.target.value as "welcome" | "ask_first" | "avoid")}>
+                    <option value="welcome">愿意聊</option>
+                    <option value="ask_first">先问我是否愿意</option>
+                    <option value="avoid">不要再问</option>
+                  </select>
+                </label>
+              ))}
+            </div>
+          </details>
+        )}
       </section>
 
       {detail && (
