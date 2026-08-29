@@ -2,24 +2,21 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: "demo-access.spec.ts",
-  fullyParallel: true,
+  testMatch: "demo-access.spec.ts",
+  fullyParallel: false,
   workers: 1,
   forbidOnly: true,
   retries: 0,
   reporter: [["list"]],
   use: {
-    baseURL: "http://127.0.0.1:3021",
+    baseURL: "http://127.0.0.1:3022",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
   projects: [
+    { name: "邀请体验·桌面 Chrome", use: { ...devices["Desktop Chrome"], channel: "chrome" } },
     {
-      name: "桌面 Chrome",
-      use: { ...devices["Desktop Chrome"], channel: "chrome" },
-    },
-    {
-      name: "手机 Chrome",
+      name: "邀请体验·手机 Chrome",
       use: {
         ...devices["Desktop Chrome"],
         channel: "chrome",
@@ -30,9 +27,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "../scripts/start_e2e.sh",
-    url: "http://127.0.0.1:3021",
-    reuseExistingServer: true,
+    command: "../scripts/start_demo_e2e.sh",
+    url: "http://127.0.0.1:3022/demo-login",
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });

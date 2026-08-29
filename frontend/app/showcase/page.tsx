@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import {
   ArrowLeft,
   BookOpenText,
@@ -12,10 +14,20 @@ import {
   Sparkles,
   Type,
 } from "lucide-react";
+import {
+  DEMO_SESSION_COOKIE,
+  getDemoSessionSecret,
+  isDemoModeEnabled,
+  verifyDemoSessionToken,
+} from "@/lib/demo-auth/session";
+import { DemoLogoutButton } from "./logout-button";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: { absolute: "一段完整的家庭记忆 · 聆年" },
   description: "从一段讲述，到一篇故事和一支家庭影像。",
+  robots: { index: false, follow: false },
 };
 
 const STORY_PARAGRAPHS = [
@@ -33,19 +45,33 @@ const OUTPUT_STEPS = [
   { icon: Film, label: "生成家庭影像", detail: "声音、照片与字幕合成" },
 ] as const;
 
-export default function ShowcasePage() {
+export default async function ShowcasePage() {
+  const demoMode = isDemoModeEnabled();
+  if (demoMode) {
+    const secret = getDemoSessionSecret();
+    const session = (await cookies()).get(DEMO_SESSION_COOKIE)?.value;
+    if (!secret || !await verifyDemoSessionToken(session, secret)) redirect("/demo-login");
+  }
+
   return (
     <div className="showcase-shell">
       <header className="showcase-topbar">
-        <Link className="showcase-brand" href="/" aria-label="返回聆年首页">
+        <Link className="showcase-brand" href={demoMode ? "/showcase" : "/"} aria-label={demoMode ? "聆年只读体验" : "返回聆年首页"}>
           <Image src="/brand/lingnian-mark-v3.png" width={40} height={40} alt="" preload />
           <span><strong>聆年</strong><small>家庭记忆</small></span>
         </Link>
-        <div className="showcase-access"><LockKeyhole size={16} aria-hidden="true" />邀请码体验 · 只读空间</div>
+        <div className="showcase-topbar-actions">
+          <div className="showcase-access"><LockKeyhole size={16} aria-hidden="true" />邀请码体验 · 只读空间</div>
+          {demoMode && <DemoLogoutButton compact />}
+        </div>
       </header>
 
       <main className="showcase-main">
-        <Link className="showcase-back" href="/"><ArrowLeft size={17} aria-hidden="true" />返回家庭空间</Link>
+        {demoMode ? (
+          <p className="showcase-back showcase-demo-status"><LockKeyhole size={17} aria-hidden="true" />已进入独立的只读体验空间</p>
+        ) : (
+          <Link className="showcase-back" href="/"><ArrowLeft size={17} aria-hidden="true" />返回家庭空间</Link>
+        )}
 
         <section className="showcase-intro" aria-labelledby="showcase-title">
           <div>
@@ -116,7 +142,7 @@ export default function ShowcasePage() {
 
         <section className="showcase-boundary" aria-label="演示空间说明">
           <div><LockKeyhole size={22} aria-hidden="true" /><span><strong>这是独立的只读空间</strong><small>不会读取、修改或展示任何真实家庭档案。</small></span></div>
-          <Link className="button secondary button-link" href="/">回到聆年首页</Link>
+          {demoMode ? <DemoLogoutButton /> : <Link className="button secondary button-link" href="/">回到聆年首页</Link>}
         </section>
         <p className="showcase-creation-note"><Sparkles size={13} aria-hidden="true" />本页人物与故事为创作内容，声音为合成演绎。</p>
       </main>

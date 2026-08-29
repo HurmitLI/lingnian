@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22 <25"
+    "node": ">=20.9 <25"
   },
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 -p 3011",
@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:demo": "playwright test --config playwright.demo.config.ts"
   },
   "dependencies": {
     "lucide-react": "^1.37.0",
