@@ -27,15 +27,16 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
   const correctedStory = `${preferredName}小时候常跟家里人去河边。这是第三阶段隔离验收内容。`;
 
   await page.goto("/family");
-  const familyNameInput = page.getByLabel("虚构家庭名称");
-  if (!(await familyNameInput.isVisible())) {
-    await page.getByText("再建一个测试档案", { exact: true }).click();
+  const addNarrator = page.getByText("添加一位讲述者", { exact: true });
+  if (await addNarrator.isVisible()) {
+    await addNarrator.click();
   }
-  await familyNameInput.fill(`隔离家庭${suffix}`);
-  await page.getByLabel("档案显示名").fill(`${preferredName}（虚构）`);
-  await page.getByLabel("希望怎么称呼").fill(preferredName);
-  await page.getByRole("button", { name: "保存测试档案" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "虚构测试档案已保存" })).toBeVisible();
+  const familyNameInput = page.getByLabel("家庭档案名称");
+  if (await familyNameInput.isVisible()) await familyNameInput.fill(`隔离家庭${suffix}`);
+  await page.getByLabel("新讲述者的显示名称").fill(`${preferredName}（虚构）`);
+  await page.getByLabel("家人怎么称呼这位讲述者").fill(preferredName);
+  await page.getByRole("button", { name: /(建立讲述者档案|添加并切换到此人)/ }).click();
+  await expect(page.getByRole("status").filter({ hasText: /(讲述者档案已建立|新讲述者已添加)/ })).toBeVisible();
 
   const navigation = page.getByRole("navigation", { name: isMobile ? "手机主导航" : "桌面主导航" });
   await navigation.getByRole("link", { name: "开始记录" }).click();

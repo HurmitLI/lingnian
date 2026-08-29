@@ -117,6 +117,15 @@ class ElderProfileCreate(BaseModel):
     occupation_summary: str | None = Field(default=None, max_length=240)
 
 
+class ElderProfileUpdate(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=80)
+    preferred_name: str | None = Field(default=None, min_length=1, max_length=80)
+    birth_year: int | None = Field(default=None, ge=1900, le=2100)
+    birth_era: str | None = Field(default=None, max_length=40)
+    native_place: str | None = Field(default=None, max_length=120)
+    occupation_summary: str | None = Field(default=None, max_length=240)
+
+
 class ElderProfileRead(ORMModel):
     id: str
     person_id: str

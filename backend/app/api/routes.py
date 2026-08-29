@@ -50,6 +50,7 @@ from app.schemas.api import (
     BackupRead,
     ElderProfileCreate,
     ElderProfileRead,
+    ElderProfileUpdate,
     FamilySecurityRead,
     FamilyCreate,
     FamilyRead,
@@ -1390,6 +1391,56 @@ def list_elder_profiles(
 ) -> list[ElderProfileRead]:
     profiles = db.scalars(select(ElderProfile).order_by(ElderProfile.created_at.desc())).all()
     return [elder_read(db, profile, secret_store) for profile in profiles]
+
+
+@router.patch("/elder-profiles/{profile_id}", response_model=ElderProfileRead)
+def update_elder_profile(
+    profile_id: str,
+    payload: ElderProfileUpdate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> ElderProfileRead:
+    profile = require(
+        db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。"
+    )
+    family = profile.person.family
+    changes = payload.model_dump(exclude_unset=True)
+
+    if "display_name" in changes and changes["display_name"] is not None:
+        display_name = changes["display_name"].strip()
+        profile.person.display_name = display_name
+        protect_values(
+            db,
+            family,
+            profile.person,
+            {"display_name": display_name},
+            secret_store,
+        )
+
+    profile_changes: dict[str, object | None] = {}
+    for field_name in (
+        "preferred_name",
+        "birth_year",
+        "birth_era",
+        "native_place",
+        "occupation_summary",
+    ):
+        if field_name not in changes:
+            continue
+        value = changes[field_name]
+        if isinstance(value, str):
+            value = value.strip() or None
+        if field_name == "preferred_name" and value is None:
+            continue
+        setattr(profile, field_name, value)
+        profile_changes[field_name] = value
+
+    if profile_changes:
+        protect_values(db, family, profile, profile_changes, secret_store)
+
+    db.commit()
+    db.refresh(profile)
+    return elder_read(db, profile, secret_store)
 
 
 @router.get("/elder-profiles/{profile_id}", response_model=ElderProfileRead)

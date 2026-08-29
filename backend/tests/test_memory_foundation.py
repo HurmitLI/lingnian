@@ -62,6 +62,39 @@ def test_family_people_and_confirmed_relationships(client, db):
     ) == 1
 
 
+def test_elder_profile_can_be_added_to_family_and_edited(client):
+    profile = create_profile(client)
+    second = client.post(
+        "/api/v1/elder-profiles",
+        json={
+            "family_id": profile["family_id"],
+            "display_name": "测试外公",
+            "preferred_name": "外公",
+        },
+    )
+    assert second.status_code == 201
+
+    updated = client.patch(
+        f"/api/v1/elder-profiles/{second.json()['id']}",
+        json={
+            "display_name": "测试爷爷",
+            "preferred_name": "爷爷",
+            "birth_year": 1946,
+            "native_place": "测试故乡",
+            "occupation_summary": "测试职业",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["display_name"] == "测试爷爷"
+    assert updated.json()["preferred_name"] == "爷爷"
+    assert updated.json()["birth_year"] == 1946
+    assert updated.json()["native_place"] == "测试故乡"
+
+    listed = client.get("/api/v1/elder-profiles")
+    assert listed.status_code == 200
+    assert {item["id"] for item in listed.json()} >= {profile["id"], second.json()["id"]}
+
+
 def test_question_bank_rotates_and_avoid_preference_blocks_topic(client, db):
     profile = create_profile(client)
     first = create_session(client, profile["id"])

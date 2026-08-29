@@ -119,6 +119,18 @@ h1 { font-size: clamp(46px, 8vw, 76px); line-height: .95; font-weight: 500; lett
 .field input:focus, .field select:focus, textarea:focus { border-color: var(--red); box-shadow: 0 0 0 3px rgba(155,63,54,.1); }
 .create-panel { border-top: 1px dashed var(--line); padding-top: 16px; }
 .create-panel summary { cursor: pointer; color: var(--red-deep); }
+.profile-directory { display: grid; gap: 12px; margin: 0 0 22px; }
+.narrator-card { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,253,248,.76); }
+.narrator-card.current { border-color: rgba(83,112,91,.5); box-shadow: inset 3px 0 0 var(--green); }
+.narrator-summary { min-height: 82px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 14px 16px; }
+.narrator-avatar { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; color: white; background: linear-gradient(145deg, var(--red), var(--red-deep)); font-size: 20px; }
+.narrator-summary > div { min-width: 0; display: grid; gap: 4px; }
+.narrator-summary strong { overflow-wrap: anywhere; }
+.narrator-summary small { color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; }
+.narrator-summary .button { min-height: 42px; }
+.profile-edit-details { border-top: 1px solid var(--line); }
+.profile-edit-details > summary { min-height: 50px; display: flex; align-items: center; padding: 0 16px; color: var(--red-deep); cursor: pointer; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; }
+.profile-edit-details .form-grid { margin: 0; padding: 18px 16px 20px; border-top: 1px dashed var(--line); }
 .family-panel { border-top: 1px dashed var(--line); margin-top: 18px; padding-top: 16px; }
 .family-panel summary { color: var(--red-deep); cursor: pointer; }
 .current-profile-line { margin: -2px 0 18px; color: var(--muted); line-height: 1.7; }
@@ -321,6 +333,8 @@ blockquote { margin: 9px 0 0; padding: 2px 0 2px 19px; border-left: 3px solid va
   .stage-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .file-line { align-items: flex-start; flex-direction: column; }
   .topic-list label { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .narrator-summary { grid-template-columns: auto minmax(0, 1fr); }
+  .narrator-summary .button { grid-column: 1 / -1; width: 100%; }
   .preference-list { grid-template-columns: 1fr; }
   .due-reminder, .book-list > div { align-items: flex-start; flex-direction: column; }
   .archive-keepsake-entry, .keepsake-submit-row { align-items: flex-start; flex-direction: column; }

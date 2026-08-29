@@ -289,17 +289,21 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     setError("");
     const form = new FormData(formElement);
     try {
-      const family = await api<{ id: string }>("/api/v1/families", {
-        method: "POST",
-        body: JSON.stringify({
-          display_name: form.get("familyName"),
-          idempotency_key: crypto.randomUUID(),
-        }),
-      });
+      const familyId = selectedProfile
+        ? selectedProfile.family_id
+        : (
+            await api<{ id: string }>("/api/v1/families", {
+              method: "POST",
+              body: JSON.stringify({
+                display_name: form.get("familyName"),
+                idempotency_key: crypto.randomUUID(),
+              }),
+            })
+          ).id;
       const profile = await api<ElderProfile>("/api/v1/elder-profiles", {
         method: "POST",
         body: JSON.stringify({
-          family_id: family.id,
+          family_id: familyId,
           display_name: form.get("displayName"),
           preferred_name: form.get("preferredName"),
           birth_year: form.get("birthYear") ? Number(form.get("birthYear")) : null,
@@ -309,8 +313,36 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       });
       await loadProfiles();
       setSelectedProfileId(profile.id);
-      setNotice("虚构测试档案已保存。");
+      setNotice(selectedProfile ? "新讲述者已添加，并切换为当前讲述者。" : "讲述者档案已建立。");
       formElement.reset();
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateProfile(event: FormEvent<HTMLFormElement>, profile: ElderProfile) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setBusy(true);
+    setError("");
+    try {
+      await api<ElderProfile>(`/api/v1/elder-profiles/${profile.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          display_name: form.get("displayName"),
+          preferred_name: form.get("preferredName"),
+          birth_year: form.get("birthYear") ? Number(form.get("birthYear")) : null,
+          native_place: form.get("nativePlace") || null,
+          occupation_summary: form.get("occupation") || null,
+        }),
+      });
+      await loadProfiles();
+      if (selectedProfile?.family_id === profile.family_id) {
+        await loadFamilyRecords(profile.family_id);
+      }
+      setNotice("讲述者资料已更新。");
     } catch (value) {
       showError(value);
     } finally {
@@ -915,6 +947,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   );
   const activeSession = openSessions[0] ?? null;
   const currentWorkflowStep = detail ? memoryWorkflowStep(detail.session.status) : 0;
+  const currentFamilyProfiles = selectedProfile
+    ? profiles.filter((profile) => profile.family_id === selectedProfile.family_id)
+    : profiles;
   const pageMeta: Record<WorkspaceView, { eyebrow: string; title: string; subtitle: string }> = {
     home: {
       eyebrow: "家庭记忆首页",
@@ -1058,17 +1093,50 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
             <p>{profiles.length > 0 ? "选择当前要记录回忆的家人；资料只用于整理家庭记忆。" : "先用一位家人的称呼开始，其他资料可以以后再补。"}</p>
           </div>
         </div>
-        {selectedProfile && <p className="current-profile-line">当前记录：<strong>{selectedProfile.display_name}</strong>。如需切换，使用页面顶部的“当前讲述者”。</p>}
+        {selectedProfile && (
+          <div className="profile-directory" aria-label="讲述者列表">
+            {currentFamilyProfiles.map((profile) => {
+              const isCurrent = profile.id === selectedProfile.id;
+              return (
+                <article className={`narrator-card${isCurrent ? " current" : ""}`} key={profile.id}>
+                  <div className="narrator-summary">
+                    <span className="narrator-avatar" aria-hidden="true">{profile.preferred_name.slice(0, 1)}</span>
+                    <div><strong>{profile.display_name}</strong><small>家人称呼：{profile.preferred_name}</small></div>
+                    <button
+                      type="button"
+                      className={`button ${isCurrent ? "quiet" : "secondary"}`}
+                      disabled={busy || isCurrent}
+                      onClick={() => { setSelectedProfileId(profile.id); setNotice(`已切换到“${profile.preferred_name}”的档案。`); }}
+                    >
+                      {isCurrent ? "当前讲述者" : "切换到此人"}
+                    </button>
+                  </div>
+                  <details className="profile-edit-details">
+                    <summary>编辑这位讲述者的资料</summary>
+                    <form onSubmit={(event) => updateProfile(event, profile)} className="form-grid">
+                      <label className="field"><span>档案显示名</span><input name="displayName" defaultValue={profile.display_name} required /></label>
+                      <label className="field"><span>家人希望怎么称呼</span><input name="preferredName" defaultValue={profile.preferred_name} required /></label>
+                      <label className="field"><span>出生年份（可选）</span><input name="birthYear" type="number" min="1900" max="2100" defaultValue={profile.birth_year ?? ""} /></label>
+                      <label className="field"><span>籍贯（可选）</span><input name="nativePlace" defaultValue={profile.native_place ?? ""} /></label>
+                      <label className="field"><span>职业摘要（可选）</span><input name="occupation" defaultValue={profile.occupation_summary ?? ""} /></label>
+                      <button className="button primary" disabled={busy}>保存资料修改</button>
+                    </form>
+                  </details>
+                </article>
+              );
+            })}
+          </div>
+        )}
         <details className="create-panel" open={profiles.length === 0}>
-          <summary>{profiles.length ? "再建一个测试档案" : "创建测试档案"}</summary>
+          <summary>{profiles.length ? "添加一位讲述者" : "创建第一位讲述者"}</summary>
           <form onSubmit={createProfile} className="form-grid">
-            <label className="field"><span>虚构家庭名称</span><input name="familyName" required placeholder="例如：虚构的林家" /></label>
-            <label className="field"><span>档案显示名</span><input name="displayName" required placeholder="例如：林奶奶（虚构）" /></label>
-            <label className="field"><span>希望怎么称呼</span><input name="preferredName" required placeholder="例如：林奶奶" /></label>
+            {!selectedProfile && <label className="field"><span>家庭档案名称</span><input name="familyName" required placeholder="例如：林家的回忆" /></label>}
+            <label className="field"><span>新讲述者的显示名称</span><input name="displayName" required placeholder="例如：林奶奶" /></label>
+            <label className="field"><span>家人怎么称呼这位讲述者</span><input name="preferredName" required placeholder="例如：奶奶" /></label>
             <label className="field"><span>出生年份（可选）</span><input name="birthYear" type="number" min="1900" max="2100" /></label>
             <label className="field"><span>籍贯（可选）</span><input name="nativePlace" /></label>
             <label className="field"><span>职业摘要（可选）</span><input name="occupation" /></label>
-            <button className="button primary" disabled={busy}>保存测试档案</button>
+            <button className="button primary" disabled={busy}>{profiles.length ? "添加并切换到此人" : "建立讲述者档案"}</button>
           </form>
         </details>
         {selectedProfile && (
