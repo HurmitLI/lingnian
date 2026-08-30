@@ -4,15 +4,18 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import {
-  ArrowLeft,
+  Archive,
   BookOpenText,
   Check,
   Film,
+  Home,
+  ImageIcon,
   LockKeyhole,
   Mic2,
   Quote,
-  Sparkles,
+  ShieldCheck,
   Type,
+  Users,
 } from "lucide-react";
 import {
   DEMO_SESSION_COOKIE,
@@ -25,8 +28,8 @@ import { DemoLogoutButton } from "./logout-button";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: { absolute: "一段完整的家庭记忆 · 聆年" },
-  description: "从一段讲述，到一篇故事和一支家庭影像。",
+  title: { absolute: "沈家的回忆 · 聆年" },
+  description: "一段由口述、文字、照片和原声影像共同保存的家庭记忆。",
   robots: { index: false, follow: false },
 };
 
@@ -38,11 +41,11 @@ const STORY_PARAGRAPHS = [
   "要是她现在还在，我想告诉她：那两个鸡蛋，我一个没舍得在车上吃；到了无锡才发现都压裂了。可那是我这一辈子吃过最香的两个鸡蛋。",
 ];
 
-const OUTPUT_STEPS = [
-  { icon: Mic2, label: "留下讲述", detail: "保留原声与停顿" },
-  { icon: Type, label: "转成文字", detail: "家人可以逐字校对" },
-  { icon: BookOpenText, label: "整理成故事", detail: "不添加没有说过的事实" },
-  { icon: Film, label: "生成家庭影像", detail: "声音、照片与字幕合成" },
+const MEMORY_STEPS = [
+  { icon: Mic2, label: "原声讲述", detail: "保留语气和停顿" },
+  { icon: Type, label: "家人校对", detail: "确认每一句原话" },
+  { icon: BookOpenText, label: "整理故事", detail: "不补写未知事实" },
+  { icon: Film, label: "家庭影像", detail: "照片、原声和字幕" },
 ] as const;
 
 export default async function ShowcasePage() {
@@ -54,98 +57,157 @@ export default async function ShowcasePage() {
   }
 
   return (
-    <div className="showcase-shell">
-      <header className="showcase-topbar">
-        <Link className="showcase-brand" href={demoMode ? "/showcase" : "/"} aria-label={demoMode ? "聆年只读体验" : "返回聆年首页"}>
-          <Image src="/brand/lingnian-mark-v3.png" width={40} height={40} alt="" preload />
+    <div className="demo-app-shell">
+      <aside className="demo-app-sidebar">
+        <Link className="demo-app-brand" href={demoMode ? "/showcase" : "/"} aria-label="聆年家庭记忆">
+          <Image src="/brand/lingnian-mark-v3.png" width={42} height={42} alt="" preload />
           <span><strong>聆年</strong><small>家庭记忆</small></span>
         </Link>
-        <div className="showcase-topbar-actions">
-          <div className="showcase-access"><LockKeyhole size={16} aria-hidden="true" />邀请码体验 · 只读空间</div>
-          {demoMode && <DemoLogoutButton compact />}
+
+        <nav className="demo-app-nav" aria-label="体验导航">
+          <span><Home size={19} aria-hidden="true" />首页</span>
+          <span className="is-active" aria-current="page"><Archive size={19} aria-hidden="true" />回忆档案</span>
+          <span><Users size={19} aria-hidden="true" />家庭成员</span>
+        </nav>
+
+        <div className="demo-app-sidebar-note">
+          <LockKeyhole size={17} aria-hidden="true" />
+          <span><strong>受邀只读体验</strong><small>不会写入或读取真实家庭资料</small></span>
         </div>
-      </header>
+      </aside>
 
-      <main className="showcase-main">
-        {demoMode ? (
-          <p className="showcase-back showcase-demo-status"><LockKeyhole size={17} aria-hidden="true" />已进入独立的只读体验空间</p>
-        ) : (
-          <Link className="showcase-back" href="/"><ArrowLeft size={17} aria-hidden="true" />返回家庭空间</Link>
-        )}
-
-        <section className="showcase-intro" aria-labelledby="showcase-title">
+      <div className="demo-app-stage">
+        <header className="demo-app-header">
           <div>
-            <p className="showcase-kicker">一段完整的家庭记忆</p>
-            <h1 id="showcase-title">包里还装着<br />那天没说完的话</h1>
-            <p className="showcase-lead">从一次口述开始，聆年把原声、文字和老照片，整理成家人愿意反复打开的故事。</p>
+            <p>家庭空间</p>
+            <h1>沈家的回忆</h1>
           </div>
-          <aside className="showcase-person" aria-label="讲述者信息">
-            <span className="showcase-avatar">沈</span>
-            <div><small>本期讲述者</small><strong>沈素琴</strong><span>63 岁 · 浙江湖州</span></div>
-          </aside>
-        </section>
-
-        <section className="showcase-film" aria-labelledby="film-title">
-          <div className="showcase-film-frame">
-            <h2 className="sr-only" id="film-title">包里还装着那天没说完的话</h2>
-            <video
-              controls
-              playsInline
-              preload="metadata"
-              poster="/showcase/shen-suqin-home.png"
-              aria-label="播放家庭影像：包里还装着那天没说完的话"
-            >
-              <source src="/showcase/shen-suqin-story.mp4?v=4" type="video/mp4" />
-              当前浏览器不支持视频播放。
-            </video>
-            <span className="showcase-film-label">家庭影像 · 01:29</span>
+          <div className="demo-app-header-actions">
+            <span className="demo-app-private"><LockKeyhole size={15} aria-hidden="true" />仅受邀人可见</span>
+            {demoMode && <DemoLogoutButton compact />}
           </div>
-        </section>
+        </header>
 
-        <ol className="showcase-pipeline" aria-label="一段家庭记忆的生成过程">
-          {OUTPUT_STEPS.map(({ icon: Icon, label, detail }, index) => (
-            <li key={label}>
-              <span className="showcase-step-icon"><Icon size={20} strokeWidth={1.8} aria-hidden="true" /></span>
-              <div><small>0{index + 1}</small><strong>{label}</strong><span>{detail}</span></div>
-              <Check className="showcase-step-check" size={17} aria-label="已完成" />
-            </li>
-          ))}
-        </ol>
+        <main className="demo-app-main">
+          <div className="demo-app-grid">
+            <div className="demo-app-feed">
+              <section className="demo-memory-card" aria-labelledby="memory-title">
+                <div className="demo-card-heading">
+                  <div>
+                    <p>最近整理</p>
+                    <h2 id="memory-title">包里还装着那天没说完的话</h2>
+                  </div>
+                  <span className="demo-confirmed"><Check size={14} aria-hidden="true" />家人已确认</span>
+                </div>
 
-        <section className="showcase-story" aria-labelledby="story-title">
-          <div className="showcase-story-heading">
-            <p className="showcase-kicker">由讲述整理的故事</p>
-            <h2 id="story-title">不是舍不得你走，<br />是想让你放心走。</h2>
-            <div className="showcase-story-meta"><span>沈素琴 口述</span><span>家人校对</span><span>童年与离家</span></div>
+                <div className="demo-video-frame">
+                  <video
+                    controls
+                    playsInline
+                    preload="metadata"
+                    poster="/showcase/shen-suqin-home.png"
+                    aria-label="播放家庭影像：包里还装着那天没说完的话"
+                  >
+                    <source src="/showcase/shen-suqin-story.mp4?v=5" type="video/mp4" />
+                    当前浏览器不支持视频播放。
+                  </video>
+                </div>
+
+                <div className="demo-memory-meta">
+                  <span><Film size={15} aria-hidden="true" />原声影像 · 01:29</span>
+                  <span>离家 · 母亲 · 1982 年</span>
+                </div>
+              </section>
+
+              <section className="demo-story-card" aria-labelledby="story-title">
+                <div className="demo-section-heading">
+                  <div>
+                    <p>口述故事</p>
+                    <h2 id="story-title">不是舍不得你走，是想让你放心走。</h2>
+                  </div>
+                  <BookOpenText size={22} aria-hidden="true" />
+                </div>
+
+                <article>
+                  <Quote size={25} strokeWidth={1.5} aria-hidden="true" />
+                  {STORY_PARAGRAPHS.slice(0, 2).map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+                  <details>
+                    <summary>继续读完整故事</summary>
+                    {STORY_PARAGRAPHS.slice(2).map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+                  </details>
+                </article>
+
+                <footer><span>沈素琴 口述</span><span>女儿校对</span><time dateTime="2026-08-28">2026 年 8 月整理</time></footer>
+              </section>
+
+              <section className="demo-photo-card" aria-labelledby="photo-title">
+                <div className="demo-section-heading">
+                  <div><p>关联照片</p><h2 id="photo-title">照片和故事放在一起</h2></div>
+                  <ImageIcon size={22} aria-hidden="true" />
+                </div>
+                <div className="demo-photo-grid">
+                  <figure>
+                    <div className="demo-photo-image"><Image src="/showcase/shen-suqin-station-1982.png" fill unoptimized sizes="(max-width: 760px) 100vw, 45vw" alt="1982 年春，年轻的沈素琴在县城火车站抱着蓝布包" /></div>
+                    <figcaption><time dateTime="1982-03">1982 年春</time><strong>第一次离开湖州</strong><span>去无锡纺织厂工作的那天</span></figcaption>
+                  </figure>
+                  <figure>
+                    <div className="demo-photo-image"><Image src="/showcase/shen-suqin-blue-bag.png" fill unoptimized sizes="(max-width: 760px) 100vw, 35vw" alt="旧蓝布包里放着搪瓷缸、手帕和两个鸡蛋" /></div>
+                    <figcaption><time>留存至今</time><strong>那只旧蓝布包</strong><span>母亲没说出口的话还在里面</span></figcaption>
+                  </figure>
+                </div>
+              </section>
+            </div>
+
+            <aside className="demo-app-aside" aria-label="档案概览">
+              <section className="demo-profile-card">
+                <div className="demo-profile-cover">
+                  <Image src="/showcase/shen-suqin-home.png" fill unoptimized sizes="320px" alt="沈素琴坐在家中，怀里抱着旧蓝布包" />
+                </div>
+                <div className="demo-profile-copy">
+                  <span className="demo-profile-avatar">沈</span>
+                  <p>讲述者</p>
+                  <h2>沈素琴</h2>
+                  <span>63 岁 · 浙江湖州</span>
+                  <dl>
+                    <div><dt>故事</dt><dd>1</dd></div>
+                    <div><dt>照片</dt><dd>2</dd></div>
+                    <div><dt>影像</dt><dd>1</dd></div>
+                  </dl>
+                </div>
+              </section>
+
+              <section className="demo-process-card" aria-labelledby="process-title">
+                <div className="demo-aside-title"><span><ShieldCheck size={17} aria-hidden="true" /></span><div><p>这段回忆</p><h2 id="process-title">已经完成整理</h2></div></div>
+                <ol>
+                  {MEMORY_STEPS.map(({ icon: Icon, label, detail }) => (
+                    <li key={label}>
+                      <span><Icon size={17} aria-hidden="true" /></span>
+                      <div><strong>{label}</strong><small>{detail}</small></div>
+                      <Check size={15} aria-label="已完成" />
+                    </li>
+                  ))}
+                </ol>
+              </section>
+
+              <section className="demo-readonly-card">
+                <LockKeyhole size={19} aria-hidden="true" />
+                <div><strong>只读体验空间</strong><p>这里展示的是一份示例档案。你可以阅读和播放，但不会改动任何内容。</p></div>
+              </section>
+            </aside>
           </div>
-          <article>
-            <Quote size={30} strokeWidth={1.4} aria-hidden="true" />
-            {STORY_PARAGRAPHS.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-          </article>
-        </section>
 
-        <section className="showcase-gallery" aria-labelledby="gallery-title">
-          <div className="showcase-gallery-heading">
-            <p className="showcase-kicker">照片进入故事</p>
-            <h2 id="gallery-title">不只是把照片排成幻灯片</h2>
-            <p>聆年会把照片放回它对应的语境里：哪一年、在哪里、为什么一直被留下。</p>
-          </div>
-          <figure className="showcase-photo showcase-photo-wide">
-            <Image src="/showcase/shen-suqin-station-1982.png" fill sizes="(max-width: 760px) 100vw, 60vw" alt="1982 年春天，年轻的沈素琴在县城火车站抱着蓝布包" />
-            <figcaption><span>1982 年春</span>第一次离开湖州，去无锡工作</figcaption>
-          </figure>
-          <figure className="showcase-photo">
-            <Image src="/showcase/shen-suqin-blue-bag.png" fill sizes="(max-width: 760px) 100vw, 40vw" alt="旧蓝布包里放着搪瓷缸、手帕和两个鸡蛋" />
-            <figcaption><span>一只旧蓝布包</span>留下来的不是物件，是当时没说出口的话</figcaption>
-          </figure>
-        </section>
+          <footer className="demo-app-footer">
+            <span>示例档案，不对应真实家庭</span>
+            {demoMode ? <DemoLogoutButton /> : <Link className="button secondary button-link" href="/">返回家庭空间</Link>}
+          </footer>
+        </main>
 
-        <section className="showcase-boundary" aria-label="演示空间说明">
-          <div><LockKeyhole size={22} aria-hidden="true" /><span><strong>这是独立的只读空间</strong><small>不会读取、修改或展示任何真实家庭档案。</small></span></div>
-          {demoMode ? <DemoLogoutButton /> : <Link className="button secondary button-link" href="/">回到聆年首页</Link>}
-        </section>
-        <p className="showcase-creation-note"><Sparkles size={13} aria-hidden="true" />本页人物与故事为创作内容，声音为合成演绎。</p>
-      </main>
+        <nav className="demo-app-mobile-nav" aria-label="手机体验导航">
+          <span><Home size={20} aria-hidden="true" /><small>首页</small></span>
+          <span className="is-active" aria-current="page"><Archive size={20} aria-hidden="true" /><small>回忆</small></span>
+          <span><Users size={20} aria-hidden="true" /><small>家人</small></span>
+        </nav>
+      </div>
     </div>
   );
 }

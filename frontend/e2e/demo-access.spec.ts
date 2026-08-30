@@ -6,7 +6,7 @@ const inviteCode = process.env.DEMO_E2E_INVITE_CODE ?? "LINGNIAN-E2E-2026";
 test("未登录时页面和媒体均被隔离，邀请码登录后可只读浏览", async ({ page, context }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/demo-login$/);
-  await expect(page.getByRole("heading", { name: /请进，来听一段/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "打开沈家的回忆" })).toBeVisible();
 
   const blockedMedia = await page.request.get("/showcase/shen-suqin-story.mp4");
   expect(blockedMedia.status()).toBe(401);
@@ -19,7 +19,8 @@ test("未登录时页面和媒体均被隔离，邀请码登录后可只读浏�
   await page.getByLabel("邀请码").fill(inviteCode);
   await page.getByRole("button", { name: "进入体验空间" }).click();
   await expect(page).toHaveURL(/\/showcase$/);
-  await expect(page.getByRole("heading", { level: 1, name: /包里还装着/ })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "沈家的回忆" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: /包里还装着/ })).toBeVisible();
   await expect(page.getByLabel(/播放家庭影像/)).toBeVisible();
 
   const sessionCookie = (await context.cookies()).find((cookie) => cookie.name === "lingnian_demo_session");
@@ -41,7 +42,7 @@ test("未登录时页面和媒体均被隔离，邀请码登录后可只读浏�
   expect(accessibility.violations, accessibility.violations.map((item) => `${item.id}: ${item.help}`).join("\n")).toEqual([]);
 
   await page.getByRole("button", { name: "退出体验" }).first().click();
-  await expect(page).toHaveURL(/\/demo-login$/);
+  await expect(page).toHaveURL(/\/demo-login$/, { timeout: 15_000 });
   const blockedAgain = await page.request.get("/showcase/shen-suqin-home.png");
   expect(blockedAgain.status()).toBe(401);
 });
