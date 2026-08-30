@@ -213,6 +213,7 @@ def elder_read(
         birth_era=secure_value(db, family, profile, "birth_era", store, master_key=key),
         native_place=secure_value(db, family, profile, "native_place", store, master_key=key),
         occupation_summary=secure_value(db, family, profile, "occupation_summary", store, master_key=key),
+        health_notes=secure_value(db, family, profile, "health_notes", store, master_key=key),
         created_at=profile.created_at,
     )
 
@@ -1139,6 +1140,12 @@ def create_elder_profile(
     secret_store: SecretStore = Depends(get_secret_store),
 ) -> ElderProfileRead:
     family = require(db, FamilyArchive, payload.family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    if payload.health_notes and family.data_classification != "authorized_sensitive":
+        raise DomainError(
+            "SENSITIVE_PROFILE_REQUIRES_ENCRYPTION",
+            "健康与照护备注只能在完成恢复演练并启用敏感资料加密后保存。",
+            409,
+        )
     person = Person(
         family_id=payload.family_id,
         role="elder",
@@ -1151,6 +1158,7 @@ def create_elder_profile(
         birth_era=payload.birth_era,
         native_place=payload.native_place,
         occupation_summary=payload.occupation_summary,
+        health_notes=payload.health_notes,
     )
     db.add(profile)
     db.flush()
@@ -1171,6 +1179,7 @@ def create_elder_profile(
             "birth_era": payload.birth_era,
             "native_place": payload.native_place,
             "occupation_summary": payload.occupation_summary,
+            "health_notes": payload.health_notes,
         },
         secret_store,
     )
@@ -1418,12 +1427,22 @@ def update_elder_profile(
         )
 
     profile_changes: dict[str, object | None] = {}
+    if (
+        changes.get("health_notes")
+        and family.data_classification != "authorized_sensitive"
+    ):
+        raise DomainError(
+            "SENSITIVE_PROFILE_REQUIRES_ENCRYPTION",
+            "健康与照护备注只能在完成恢复演练并启用敏感资料加密后保存。",
+            409,
+        )
     for field_name in (
         "preferred_name",
         "birth_year",
         "birth_era",
         "native_place",
         "occupation_summary",
+        "health_notes",
     ):
         if field_name not in changes:
             continue
@@ -2958,6 +2977,7 @@ def get_timeline(
     ).all()
     items: list[TimelineItem] = []
     for story in stories:
+        session = story.source_draft.session
         original = db.scalar(
             select(MediaAsset)
             .join(MemorySession, MediaAsset.session_id == MemorySession.id)
@@ -2968,9 +2988,24 @@ def get_timeline(
             )
             .order_by(MediaAsset.created_at.desc())
         )
+        trigger_image = db.scalar(
+            select(MediaAsset)
+            .where(
+                MediaAsset.session_id == session.id,
+                MediaAsset.kind.in_(["photo_original", "old_object_original"]),
+                MediaAsset.is_original.is_(True),
+            )
+            .order_by(MediaAsset.created_at.desc())
+        )
+        trigger_link = (
+            trigger_image.links[0]
+            if trigger_image and trigger_image.links
+            else None
+        )
         items.append(
             TimelineItem(
                 story=story_read(db, story, secret_store),
+                life_stage=session.life_stage,
                 events=[
                     timeline_event_read(
                         db, event, profile.person.family, secret_store
@@ -2978,6 +3013,16 @@ def get_timeline(
                     for event in story.timeline_events
                 ],
                 audio_url=f"/api/v1/media-assets/{original.id}/content" if original else None,
+                image_url=(
+                    f"/api/v1/media-assets/{trigger_image.id}/content"
+                    if trigger_image
+                    else None
+                ),
+                image_annotation=(
+                    media_link_read(db, trigger_link, secret_store).user_annotation
+                    if trigger_link
+                    else None
+                ),
             )
         )
     return items

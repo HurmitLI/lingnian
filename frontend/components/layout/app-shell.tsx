@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { BookHeart, Home, Mic2, ShieldCheck, Users } from "lucide-react";
+import { BookHeart, Film, Home, Mic2, ShieldCheck, Users } from "lucide-react";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
@@ -11,6 +11,14 @@ const NAV_ITEMS = [
   { href: "/record", label: "开始记录", icon: Mic2 },
   { href: "/archive", label: "回忆档案", icon: BookHeart },
   { href: "/family", label: "家庭管理", icon: Users },
+] as const;
+
+const DESKTOP_NAV_ITEMS = [
+  NAV_ITEMS[0],
+  NAV_ITEMS[1],
+  NAV_ITEMS[2],
+  { href: "/keepsake", label: "原声视频", icon: Film },
+  NAV_ITEMS[3],
 ] as const;
 
 export default function AppShell({ children }: { children: ReactNode }) {
@@ -24,8 +32,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <span className="brand-copy"><strong>聆年</strong><small>家庭记忆</small></span>
         </Link>
         <nav className="primary-nav" aria-label="桌面主导航">
-          {NAV_ITEMS.map((item) => {
-            const active = pathname === item.href || (pathname === "/keepsake" && item.href === "/archive");
+          {DESKTOP_NAV_ITEMS.map((item) => {
+            const active = pathname === item.href;
             const Icon = item.icon;
             return (
               <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined}>

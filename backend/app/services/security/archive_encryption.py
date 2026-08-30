@@ -133,6 +133,7 @@ def activate_archive_encryption(
                     "birth_era": TEXT_PLACEHOLDER,
                     "native_place": TEXT_PLACEHOLDER,
                     "occupation_summary": TEXT_PLACEHOLDER,
+                    "health_notes": TEXT_PLACEHOLDER,
                 },
                 master_key=master_key,
             )

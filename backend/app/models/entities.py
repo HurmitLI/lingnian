@@ -73,6 +73,7 @@ class ElderProfile(TimestampMixin, Base):
     birth_era: Mapped[str | None] = mapped_column(String(40))
     native_place: Mapped[str | None] = mapped_column(String(120))
     occupation_summary: Mapped[str | None] = mapped_column(String(240))
+    health_notes: Mapped[str | None] = mapped_column(Text)
     preferred_name: Mapped[str] = mapped_column(String(80))
 
     person: Mapped[Person] = relationship(back_populates="elder_profile")

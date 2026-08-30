@@ -131,7 +131,21 @@ def test_complete_vertical_slice(client, db):
     timeline = client.get(f"/api/v1/elder-profiles/{profile['id']}/timeline")
     assert timeline.status_code == 200
     assert len(timeline.json()) == 1
-    assert timeline.json()[0]["audio_url"].startswith("/api/v1/media-assets/")
+    timeline_item = timeline.json()[0]
+    assert timeline_item["life_stage"] == "童年"
+    assert timeline_item["audio_url"].startswith("/api/v1/media-assets/")
+    assert timeline_item["image_url"] is None
+    assert timeline_item["image_annotation"] is None
+
+
+def test_health_notes_require_sensitive_encrypted_mode(client):
+    profile = create_profile(client)
+    blocked = client.patch(
+        f"/api/v1/elder-profiles/{profile['id']}",
+        json={"health_notes": "虚构健康备注，仅用于自动化测试。"},
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["code"] == "SENSITIVE_PROFILE_REQUIRES_ENCRYPTION"
 
 
 def test_skip_removes_unarchived_content(client, db):

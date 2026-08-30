@@ -163,6 +163,14 @@ def test_verified_recovery_activates_real_encryption_and_preserves_api_reads(cli
         assert activated.json()["encryption_status"] == "active_encrypted"
         assert activated.json()["activated_at"] is not None
 
+        health_notes = "虚构健康与照护备注，只用于验证本机加密。"
+        updated_profile = client.patch(
+            f"/api/v1/elder-profiles/{profile['id']}",
+            json={"health_notes": health_notes},
+        )
+        assert updated_profile.status_code == 200, updated_profile.text
+        assert updated_profile.json()["health_notes"] == health_notes
+
         repeated_family = create_family(client)
         assert repeated_family["id"] == family["id"]
         assert repeated_family["display_name"] == "虚构安全测试家庭"
@@ -176,6 +184,7 @@ def test_verified_recovery_activates_real_encryption_and_preserves_api_reads(cli
         assert raw_person.display_name == "[niannian:encrypted:v1]"
         assert raw_profile.preferred_name == "[niannian:encrypted:v1]"
         assert raw_profile.birth_year is None
+        assert raw_profile.health_notes == "[niannian:encrypted:v1]"
         assert raw_asset.original_filename == "[niannian:encrypted:v1]"
         assert raw_asset.encryption_version == 1
         assert db.scalars(
@@ -190,6 +199,7 @@ def test_verified_recovery_activates_real_encryption_and_preserves_api_reads(cli
         assert readable_profile.json()["display_name"] == "机密测试姓名"
         assert readable_profile.json()["preferred_name"] == "机密称呼"
         assert readable_profile.json()["birth_year"] == 1948
+        assert readable_profile.json()["health_notes"] == health_notes
         readable_audio = client.get(f"/api/v1/media-assets/{uploaded['id']}/content")
         assert readable_audio.status_code == 200
         assert readable_audio.content == original_audio

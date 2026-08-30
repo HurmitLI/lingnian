@@ -76,6 +76,13 @@ def test_local_keepsake_real_ffmpeg_flow(client, db, tmp_path):
     profile = create_profile(client)
     story = create_archived_story(client, profile["id"])
 
+    timeline = client.get(f"/api/v1/elder-profiles/{profile['id']}/timeline")
+    assert timeline.status_code == 200
+    timeline_item = timeline.json()[0]
+    assert timeline_item["life_stage"] == "童年"
+    assert timeline_item["image_url"].startswith("/api/v1/media-assets/")
+    assert timeline_item["image_annotation"] == "虚构测试照片"
+
     catalog = client.get(
         f"/api/v1/elder-profiles/{profile['id']}/keepsake-catalog"
     )

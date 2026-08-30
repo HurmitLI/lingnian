@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { CalendarClock, ImageIcon, Search } from "lucide-react";
 
 import SecurityPanel from "@/app/security-panel";
 import AppShell from "@/components/layout/app-shell";
@@ -73,6 +74,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [selectedLifeStage, setSelectedLifeStage] = useState(LIFE_STAGES[0]);
+  const [archiveQuery, setArchiveQuery] = useState("");
+  const [archiveLifeStage, setArchiveLifeStage] = useState("all");
   const [cloudConsentChecked, setCloudConsentChecked] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -81,6 +84,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const recordingTimerRef = useRef<number | null>(null);
 
   const selectedProfile = profiles.find((item) => item.id === selectedProfileId) ?? null;
+  const selectedProfileLabel = selectedProfile && selectedProfile.preferred_name.length <= 8
+    ? selectedProfile.preferred_name
+    : "家人";
   const unsaved = Boolean(detail?.transcript && correctedText !== savedCorrectedText);
   const requiresCloudConsent = Boolean(
     selectedProfile &&
@@ -336,6 +342,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           birth_year: form.get("birthYear") ? Number(form.get("birthYear")) : null,
           native_place: form.get("nativePlace") || null,
           occupation_summary: form.get("occupation") || null,
+          health_notes: profile.data_classification === "authorized_sensitive"
+            ? form.get("healthNotes") || null
+            : undefined,
         }),
       });
       await loadProfiles();
@@ -891,6 +900,20 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     }
   }
 
+  async function dismissReminder(reminderId: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/v1/reminders/${reminderId}/dismiss`, { method: "POST" });
+      if (selectedProfile) await loadArchiveTools(selectedProfile.id);
+      setNotice("这条本机提醒已关闭。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function generateMemoryBook() {
     if (!selectedProfile) return;
     setBusy(true);
@@ -950,10 +973,19 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const currentFamilyProfiles = selectedProfile
     ? profiles.filter((profile) => profile.family_id === selectedProfile.family_id)
     : profiles;
+  const normalizedArchiveQuery = archiveQuery.trim().toLocaleLowerCase("zh-CN");
+  const archiveStageOptions = Array.from(new Set(timeline.map((item) => item.life_stage)));
+  const filteredTimeline = timeline.filter((item) => {
+    const matchesStage = archiveLifeStage === "all" || item.life_stage === archiveLifeStage;
+    const searchableText = `${item.story.title} ${item.story.body} ${item.life_stage} ${item.image_annotation ?? ""}`
+      .toLocaleLowerCase("zh-CN");
+    return matchesStage && (!normalizedArchiveQuery || searchableText.includes(normalizedArchiveQuery));
+  });
+  const activeReminders = reminders.filter((item) => !["dismissed", "paused_by_preference"].includes(item.status));
   const pageMeta: Record<WorkspaceView, { eyebrow: string; title: string; subtitle: string }> = {
     home: {
       eyebrow: "家庭记忆首页",
-      title: selectedProfile ? `今天，陪${selectedProfile.preferred_name}聊一点` : "从一位家人开始",
+      title: selectedProfile ? `今天，陪${selectedProfileLabel}聊一点` : "从一位家人开始",
       subtitle: "不用一次讲完。一段声音、一张照片，都可以慢慢成为留给家人的念想。",
     },
     record: {
@@ -963,7 +995,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     },
     archive: {
       eyebrow: "回忆档案",
-      title: selectedProfile ? `${selectedProfile.preferred_name}的故事` : "家人的故事",
+      title: selectedProfile ? `${selectedProfileLabel}的故事` : "家人的故事",
       subtitle: "这里只收录经过人工确认的内容，也可以生成长期保存的回忆录。",
     },
     family: {
@@ -1119,6 +1151,11 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                       <label className="field"><span>出生年份（可选）</span><input name="birthYear" type="number" min="1900" max="2100" defaultValue={profile.birth_year ?? ""} /></label>
                       <label className="field"><span>籍贯（可选）</span><input name="nativePlace" defaultValue={profile.native_place ?? ""} /></label>
                       <label className="field"><span>职业摘要（可选）</span><input name="occupation" defaultValue={profile.occupation_summary ?? ""} /></label>
+                      {profile.data_classification === "authorized_sensitive" ? (
+                        <label className="field profile-health-field"><span>健康与照护备注（可选，仅本机加密）</span><textarea name="healthNotes" rows={4} maxLength={2000} defaultValue={profile.health_notes ?? ""} placeholder="只记录本人愿意由家人保存的信息；不会发送给云模型" /></label>
+                      ) : (
+                        <p className="profile-health-lock">健康资料属于敏感信息。完成恢复演练并启用“授权敏感资料”加密后，才会开放记录入口。</p>
+                      )}
                       <button className="button primary" disabled={busy}>保存资料修改</button>
                     </form>
                   </details>
@@ -1324,7 +1361,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         <section className="card timeline-card archive-library">
           <div className="section-heading archive-heading">
             <span>01</span>
-            <div><h2>{selectedProfile.preferred_name}的故事</h2><p>这里只收藏经过家人逐篇确认的内容，原声会和故事放在一起。</p></div>
+            <div><h2>{selectedProfileLabel}的故事</h2><p>这里只收藏经过家人逐篇确认的内容，原声会和故事放在一起。</p></div>
             <strong className="archive-story-count">{timeline.length} 篇故事</strong>
           </div>
           {timeline.length === 0 ? (
@@ -1334,20 +1371,56 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               <Link className="button primary button-link" href={`/record?elder=${selectedProfile.id}`}>记录第一段回忆</Link>
             </div>
           ) : (
-            <div className="timeline-list archive-story-grid">
-              {timeline.map((item, index) => (
+            <>
+              <div className="archive-toolbar" role="search" aria-label="筛选回忆档案">
+                <label className="archive-search-field">
+                  <Search size={18} aria-hidden="true" />
+                  <span className="sr-only">搜索故事</span>
+                  <input
+                    type="search"
+                    value={archiveQuery}
+                    onChange={(event) => setArchiveQuery(event.target.value)}
+                    placeholder="搜索标题、正文或照片说明"
+                  />
+                </label>
+                <label className="archive-stage-filter">
+                  <span>人生阶段</span>
+                  <select value={archiveLifeStage} onChange={(event) => setArchiveLifeStage(event.target.value)}>
+                    <option value="all">全部阶段</option>
+                    {archiveStageOptions.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                  </select>
+                </label>
+                <span className="archive-result-count">找到 {filteredTimeline.length} 篇</span>
+              </div>
+              {filteredTimeline.length === 0 ? (
+                <div className="archive-filter-empty">
+                  <Search size={24} aria-hidden="true" />
+                  <div><h3>没有找到符合条件的故事</h3><p>换一个关键词或查看全部阶段。</p></div>
+                  <button className="button quiet" onClick={() => { setArchiveQuery(""); setArchiveLifeStage("all"); }}>清除筛选</button>
+                </div>
+              ) : <div className="timeline-list archive-story-grid">
+              {filteredTimeline.map((item, index) => (
                 <article key={item.story.id}>
                   <div className="archive-story-meta">
                     <time>{new Date(item.story.confirmed_at).toLocaleDateString("zh-CN")}</time>
-                    <span>故事 {String(timeline.length - index).padStart(2, "0")}</span>
+                    <span>{item.life_stage} · 故事 {String(filteredTimeline.length - index).padStart(2, "0")}</span>
                   </div>
-                  <div className="archive-story-content"><h3>{item.story.title}</h3><p>{item.story.body}</p></div>
+                  <div className={`archive-story-body${item.image_url ? " with-image" : ""}`}>
+                    {item.image_url && (
+                      <figure className="archive-story-image">
+                        <Image unoptimized width={960} height={720} src={mediaUrl(item.image_url) ?? ""} alt={item.image_annotation || `与“${item.story.title}”相关的家庭照片`} />
+                        <figcaption><ImageIcon size={14} aria-hidden="true" />{item.image_annotation || "本次回忆使用的照片或老物件"}</figcaption>
+                      </figure>
+                    )}
+                    <div className="archive-story-content"><h3>{item.story.title}</h3><p>{item.story.body}</p></div>
+                  </div>
                   {mediaUrl(item.audio_url) && (
                     <div className="archive-story-audio"><span>亲口讲述</span><audio controls preload="metadata" src={mediaUrl(item.audio_url) ?? undefined} /></div>
                   )}
                 </article>
               ))}
-            </div>
+            </div>}
+            </>
           )}
           {timeline.length > 0 && (
             <div className="archive-keepsake-entry">
@@ -1376,6 +1449,15 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 <label className="field"><span>提醒时间</span><input name="remindAt" type="datetime-local" required /></label>
                 <button className="button secondary" disabled={busy}>保存本机提醒</button>
                 <p className="hint">不使用微信、短信、邮件或 macOS 系统通知。</p>
+                <div className="reminder-list" aria-label="现有本机提醒">
+                  <h4><CalendarClock size={17} aria-hidden="true" />现有提醒</h4>
+                  {activeReminders.length === 0 ? <p className="empty">还没有待处理的提醒。</p> : activeReminders.map((item) => (
+                    <div key={item.id}>
+                      <span><strong>{item.topic_key}</strong><small>{new Date(item.remind_at).toLocaleString("zh-CN")}{item.status === "due" ? " · 已到时间" : item.status === "shown_once" ? " · 已查看" : ""}</small></span>
+                      <button type="button" className="button quiet danger" disabled={busy} onClick={() => dismissReminder(item.id)}>关闭</button>
+                    </div>
+                  ))}
+                </div>
               </form>
               <div className="memory-book-panel">
                 <h3>文字回忆录</h3>

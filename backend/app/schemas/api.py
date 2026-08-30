@@ -115,6 +115,7 @@ class ElderProfileCreate(BaseModel):
     birth_era: str | None = Field(default=None, max_length=40)
     native_place: str | None = Field(default=None, max_length=120)
     occupation_summary: str | None = Field(default=None, max_length=240)
+    health_notes: str | None = Field(default=None, max_length=2000)
 
 
 class ElderProfileUpdate(BaseModel):
@@ -124,6 +125,7 @@ class ElderProfileUpdate(BaseModel):
     birth_era: str | None = Field(default=None, max_length=40)
     native_place: str | None = Field(default=None, max_length=120)
     occupation_summary: str | None = Field(default=None, max_length=240)
+    health_notes: str | None = Field(default=None, max_length=2000)
 
 
 class ElderProfileRead(ORMModel):
@@ -137,6 +139,7 @@ class ElderProfileRead(ORMModel):
     birth_era: str | None
     native_place: str | None
     occupation_summary: str | None
+    health_notes: str | None
     created_at: datetime
 
 
@@ -442,8 +445,11 @@ class TimelineEventRead(ORMModel):
 
 class TimelineItem(BaseModel):
     story: StoryRead
+    life_stage: str
     events: list[TimelineEventRead]
     audio_url: str | None = None
+    image_url: str | None = None
+    image_annotation: str | None = None
 
 
 class SessionDetail(BaseModel):

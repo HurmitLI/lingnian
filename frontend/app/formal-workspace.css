@@ -1,0 +1,576 @@
+/* 正式版工作台：只作用于 AppShell，不影响邀请码演示页。 */
+.app-shell {
+  --formal-panel: #fffefa;
+  --formal-canvas: #f1efeb;
+  --formal-border: #ddd8d1;
+  --formal-soft: #f7f4ef;
+  --muted: #69625d;
+  grid-template-columns: 232px minmax(0, 1fr);
+  background: var(--formal-canvas);
+}
+
+.app-shell .sidebar-note small {
+  color: #aaa29a;
+}
+
+.app-shell .desktop-sidebar {
+  padding: 22px 15px 18px;
+  background: #282624;
+}
+
+.app-shell .brand-mark {
+  padding: 0 9px 27px;
+}
+
+.app-shell .brand-symbol {
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.app-shell .primary-nav {
+  gap: 3px;
+}
+
+.app-shell .primary-nav a {
+  min-height: 47px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+.app-shell .primary-nav a[aria-current="page"] {
+  background: #3a3734;
+  box-shadow: inset 3px 0 0 #c58c63;
+}
+
+.app-shell .workspace-main {
+  width: min(1180px, calc(100% - 52px));
+  padding: 26px 0 84px;
+}
+
+.app-shell .workspace-header {
+  min-height: 76px;
+  align-items: center;
+  margin: 0 0 20px;
+  padding: 0 2px 19px;
+}
+
+.app-shell .workspace-header h1 {
+  font-size: clamp(29px, 3vw, 38px);
+  line-height: 1.22;
+  letter-spacing: .005em;
+}
+
+.app-shell .workspace-header .eyebrow {
+  margin-bottom: 5px;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .14em;
+}
+
+.app-shell .workspace-header .subtitle {
+  margin-top: 7px;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.app-shell .workspace-controls {
+  min-width: 238px;
+  gap: 8px;
+}
+
+.app-shell .profile-switcher {
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 8px 10px;
+  border: 1px solid var(--formal-border);
+  border-radius: 12px;
+  background: rgba(255, 254, 250, .82);
+}
+
+.app-shell .profile-switcher-label i {
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+}
+
+.app-shell .privacy-badge {
+  font-size: 10px;
+}
+
+.app-shell .card {
+  margin: 14px 0;
+  padding: clamp(20px, 2.7vw, 30px);
+  border-color: var(--formal-border);
+  border-radius: 17px;
+  background: var(--formal-panel);
+  box-shadow: 0 6px 20px rgba(50, 42, 36, .045);
+}
+
+.app-shell .section-heading {
+  margin-bottom: 19px;
+}
+
+.app-shell .section-heading h2 {
+  font-size: 23px;
+}
+
+.app-shell .section-heading p,
+.app-shell .hint,
+.app-shell .empty {
+  font-size: 13px;
+}
+
+.app-shell .home-focus {
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, .65fr);
+  gap: 14px;
+}
+
+.app-shell .welcome-card,
+.app-shell .home-progress-card {
+  min-height: 340px;
+  margin: 0;
+}
+
+.app-shell .welcome-card {
+  justify-content: flex-end;
+  padding: 32px;
+  border-radius: 17px;
+  background: linear-gradient(135deg, #302a28 0%, #543431 62%, #743c37 100%);
+  box-shadow: 0 14px 36px rgba(58, 35, 32, .16);
+}
+
+.app-shell .welcome-card h2 {
+  max-width: 620px;
+  margin: 3px 0 9px;
+  font-size: clamp(27px, 3.4vw, 38px);
+}
+
+.app-shell .welcome-card > p:not(.card-kicker) {
+  margin-bottom: 19px;
+  font-size: 14px;
+}
+
+.app-shell .home-trust-list {
+  margin-top: 24px;
+  padding-top: 16px;
+}
+
+.app-shell .home-progress-card {
+  padding: 25px 23px;
+}
+
+.app-shell .home-progress-card h2 {
+  font-size: 21px;
+}
+
+.app-shell .memory-tally {
+  margin: 18px 0 14px;
+}
+
+.app-shell .memory-tally > div {
+  padding: 13px 0;
+}
+
+.app-shell .memory-tally dd {
+  font-size: 26px;
+}
+
+.app-shell .home-reminders,
+.app-shell .recent-story-card {
+  margin-top: 14px;
+}
+
+.app-shell .recent-story-card {
+  grid-template-columns: minmax(210px, .42fr) minmax(0, 1.58fr);
+}
+
+.app-shell .entry-card,
+.app-shell .memory-card,
+.app-shell .family-profile-card,
+.app-shell .archive-library,
+.app-shell .keepsake-create-card,
+.app-shell .keepsake-result-card {
+  border-top: 3px solid rgba(150, 63, 58, .72);
+}
+
+.app-shell .stage-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.app-shell .stage-button {
+  min-height: 86px;
+  justify-content: start;
+  padding: 15px 17px;
+  border-radius: 13px;
+  background: var(--formal-soft);
+  text-align: left;
+}
+
+.app-shell .stage-button span {
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.app-shell .memory-stepper {
+  margin-bottom: 22px;
+  background: transparent;
+}
+
+.app-shell .memory-stepper li {
+  border-color: var(--formal-border);
+  border-radius: 11px;
+  background: var(--formal-soft);
+}
+
+.app-shell .memory-question {
+  padding: 22px 24px;
+  border: 1px solid #e5d8cb;
+  border-radius: 14px;
+  background: #f8f1e9;
+}
+
+.app-shell blockquote {
+  font-size: clamp(22px, 3vw, 29px);
+}
+
+.app-shell .workflow-block[data-state="current"] {
+  margin-inline: 0;
+  padding: 22px;
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+.app-shell .archive-library {
+  padding: clamp(22px, 3vw, 32px);
+}
+
+.app-shell .archive-toolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 18px;
+  padding: 11px;
+  border: 1px solid var(--formal-border);
+  border-radius: 13px;
+  background: var(--formal-soft);
+}
+
+.app-shell .archive-search-field {
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  color: var(--muted);
+  border: 1px solid var(--formal-border);
+  border-radius: 10px;
+  background: white;
+}
+
+.app-shell .archive-search-field input {
+  min-width: 0;
+  width: 100%;
+  height: 42px;
+  padding: 0;
+  color: var(--ink);
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 13px;
+}
+
+.app-shell .archive-stage-filter {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.app-shell .archive-stage-filter select {
+  min-height: 36px;
+  padding: 0 28px 0 10px;
+  color: var(--ink);
+  border: 1px solid var(--formal-border);
+  border-radius: 9px;
+  background: white;
+  font-size: 12px;
+}
+
+.app-shell .archive-result-count {
+  padding-right: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.app-shell .archive-filter-empty {
+  min-height: 150px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 24px;
+  color: var(--muted);
+  border: 1px dashed var(--formal-border);
+  border-radius: 13px;
+}
+
+.app-shell .archive-filter-empty h3,
+.app-shell .archive-filter-empty p {
+  margin: 0;
+}
+
+.app-shell .archive-filter-empty h3 {
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.app-shell .archive-filter-empty p {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.app-shell .archive-story-grid {
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.app-shell .archive-story-grid article {
+  border-radius: 14px;
+  background: white;
+  box-shadow: none;
+}
+
+.app-shell .archive-story-body.with-image {
+  display: grid;
+  grid-template-columns: minmax(230px, .62fr) minmax(0, 1.38fr);
+}
+
+.app-shell .archive-story-image {
+  min-width: 0;
+  margin: 0;
+  border-right: 1px solid var(--formal-border);
+  background: #ece8e2;
+}
+
+.app-shell .archive-story-image img {
+  width: 100%;
+  height: 100%;
+  min-height: 250px;
+  max-height: 390px;
+  display: block;
+  object-fit: cover;
+}
+
+.app-shell .archive-story-image figcaption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 11px;
+  color: var(--muted);
+  background: #f6f3ee;
+  font-size: 10px;
+}
+
+.app-shell .archive-story-content {
+  padding: 25px 24px 22px;
+}
+
+.app-shell .archive-story-content h3 {
+  font-size: 24px;
+}
+
+.app-shell .archive-story-content p {
+  font-size: 15px;
+}
+
+.app-shell .reminder-list {
+  display: grid;
+  gap: 0;
+  margin-top: 4px;
+  padding-top: 13px;
+  border-top: 1px solid var(--formal-border);
+}
+
+.app-shell .reminder-list h4 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 7px;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+}
+
+.app-shell .reminder-list > div {
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #ebe6e0;
+}
+
+.app-shell .reminder-list > div > span {
+  display: grid;
+  gap: 2px;
+}
+
+.app-shell .reminder-list strong {
+  font-size: 12px;
+}
+
+.app-shell .reminder-list small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.app-shell .reminder-list .button {
+  min-height: 36px;
+  font-size: 11px;
+}
+
+.app-shell .profile-health-field,
+.app-shell .profile-health-lock {
+  grid-column: 1 / -1;
+}
+
+.app-shell .profile-health-lock {
+  margin: 0;
+  padding: 12px 14px;
+  color: #5a554f;
+  border: 1px solid #e1d2a8;
+  border-radius: 10px;
+  background: #fff8e7;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.app-shell .keepsake-guide {
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+.app-shell .keepsake-story-option,
+.app-shell .keepsake-authorization,
+.app-shell .keepsake-player video {
+  border-radius: 12px;
+}
+
+@media (max-width: 980px) {
+  .app-shell {
+    display: block;
+  }
+
+  .app-shell .workspace-main {
+    width: min(100% - 28px, 860px);
+    padding: 21px 0 132px;
+  }
+
+  .app-shell .workspace-header {
+    align-items: flex-start;
+  }
+
+  .app-shell .home-focus {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell .welcome-card,
+  .app-shell .home-progress-card {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .app-shell .workspace-main {
+    width: calc(100% - 18px);
+    padding-top: 14px;
+  }
+
+  .app-shell .workspace-header {
+    gap: 13px;
+    margin-bottom: 12px;
+    padding: 4px 4px 14px;
+  }
+
+  .app-shell .workspace-header h1 {
+    font-size: 27px;
+  }
+
+  .app-shell .workspace-controls {
+    width: 100%;
+  }
+
+  .app-shell .profile-switcher {
+    max-width: none;
+  }
+
+  .app-shell .card {
+    padding: 18px 15px;
+    border-radius: 14px;
+  }
+
+  .app-shell .welcome-card {
+    padding: 24px 19px;
+  }
+
+  .app-shell .welcome-card h2 {
+    font-size: 27px;
+  }
+
+  .app-shell .recent-story-card {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .app-shell .recent-story-card .text-link {
+    grid-column: 1;
+    margin-top: -4px;
+  }
+
+  .app-shell .archive-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell .archive-stage-filter {
+    justify-content: space-between;
+    padding-inline: 2px;
+  }
+
+  .app-shell .archive-stage-filter select {
+    min-width: 150px;
+  }
+
+  .app-shell .archive-result-count {
+    padding: 0 2px 3px;
+  }
+
+  .app-shell .archive-filter-empty {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .app-shell .archive-filter-empty .button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .app-shell .archive-story-body.with-image {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell .archive-story-image {
+    border-right: 0;
+    border-bottom: 1px solid var(--formal-border);
+  }
+
+  .app-shell .archive-story-image img {
+    min-height: 210px;
+    max-height: 310px;
+  }
+}

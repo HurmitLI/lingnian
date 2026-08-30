@@ -8,6 +8,7 @@ export type ElderProfile = {
   birth_era: string | null;
   native_place: string | null;
   occupation_summary: string | null;
+  health_notes: string | null;
 };
 
 export type FamilyPerson = {
@@ -241,6 +242,7 @@ export type TimelineItem = {
     confirmed_by: string;
     confirmed_at: string;
   };
+  life_stage: string;
   events: Array<{
     id: string;
     time_expression: string | null;
@@ -248,6 +250,8 @@ export type TimelineItem = {
     confidence: string;
   }>;
   audio_url: string | null;
+  image_url: string | null;
+  image_annotation: string | null;
 };
 
 export type Health = {

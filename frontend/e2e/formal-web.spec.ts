@@ -24,6 +24,21 @@ const session = {
   updated_at: "2026-08-29T08:00:00Z",
 };
 
+const timelineItem = {
+  story: {
+    id: "story-test",
+    title: "河边的夏天",
+    body: "小时候常跟家里人去河边，风吹过来的时候很凉快。",
+    confirmed_by: "测试家人",
+    confirmed_at: "2026-08-29T09:00:00Z",
+  },
+  life_stage: "童年",
+  events: [],
+  audio_url: null,
+  image_url: null,
+  image_annotation: null,
+};
+
 const unexpectedBrowserErrors = new WeakMap<Page, string[]>();
 
 async function mockLocalApi(page: Page) {
@@ -37,7 +52,7 @@ async function mockLocalApi(page: Page) {
     } else if (path === "/api/v1/elder-profiles") {
       body = [profile];
     } else if (path.endsWith("/timeline")) {
-      body = [];
+      body = [timelineItem];
     } else if (path.endsWith("/memory-context")) {
       body = { coverage: [], preferences: [], confirmed_facts: [] };
     } else if (path.endsWith("/reminders") || path.endsWith("/memory-books")) {
@@ -98,6 +113,16 @@ test("刷新后能从链接恢复未完成记录", async ({ page }) => {
   await expect(workflow.locator('[aria-current="step"]')).toContainText("留下声音");
   await page.reload();
   await expect(page.getByText(session.question_text)).toBeVisible();
+});
+
+test("回忆档案可以搜索并清除筛选", async ({ page }) => {
+  await page.goto("/archive");
+  await expect(page.getByRole("heading", { name: timelineItem.story.title })).toBeVisible();
+  const search = page.getByRole("searchbox", { name: "搜索故事" });
+  await search.fill("找不到的内容");
+  await expect(page.getByRole("heading", { name: "没有找到符合条件的故事" })).toBeVisible();
+  await page.getByRole("button", { name: "清除筛选" }).click();
+  await expect(page.getByRole("heading", { name: timelineItem.story.title })).toBeVisible();
 });
 
 test("平板和宽屏断点保持可用", async ({ page, isMobile }) => {
