@@ -279,6 +279,16 @@
 }
 .app-shell .mock-banner,
 .app-shell .message { border-radius: 10px; box-shadow: none; }
+.app-shell .organization-error {
+  margin: 2px 0 4px;
+  padding: 13px 14px;
+  color: #713124;
+  border: 1.5px solid #c98465;
+  border-radius: 8px;
+  background: #fff0e8;
+  font-size: 14px;
+  line-height: 1.7;
+}
 
 /* 首页：用“放在桌上的记忆卡片”代替深色 PPT 大横幅。 */
 .app-shell .home-focus {

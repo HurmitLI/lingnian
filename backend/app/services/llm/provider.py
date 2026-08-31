@@ -123,7 +123,10 @@ class QwenLLMProvider:
                 {"question": question, "corrected_transcript": corrected_text}, ensure_ascii=False
             ),
         )
-        return StoryOrganizationOutput.model_validate(parse_json_object(raw))
+        payload = parse_json_object(raw)
+        if not str(payload.get("body", "")).strip():
+            raise RuntimeError("INSUFFICIENT_STORY_CONTENT")
+        return StoryOrganizationOutput.model_validate(payload)
 
 
 @lru_cache

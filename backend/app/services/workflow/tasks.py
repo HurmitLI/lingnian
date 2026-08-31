@@ -347,6 +347,8 @@ def process_organization(task_id: str, secret_store: SecretStore | None = None) 
         message = str(exc)
         if message == "NO_REVIEWED_TRANSCRIPT":
             code = message
+        elif message == "INSUFFICIENT_STORY_CONTENT":
+            code = message
         elif message.startswith("MODEL_CONSENT_"):
             code = message
         elif "LLM_API_KEY" in message:

@@ -17,9 +17,11 @@ import {
 } from "@/lib/media/recording";
 import { pollWorkflowTask } from "@/lib/workflow/poll-task";
 import {
+  hasMeaningfulStoryContent,
   isSessionTerminal,
   memoryWorkflowStep,
   sessionStatusLabel,
+  taskErrorMessage,
   taskStatusLabel,
 } from "@/lib/workflow/status";
 import type {
@@ -71,6 +73,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [organizationError, setOrganizationError] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [selectedLifeStage, setSelectedLifeStage] = useState(LIFE_STAGES[0]);
@@ -705,8 +708,16 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
 
   async function runTask(kind: "transcription" | "organization") {
     if (!detail) return;
+    if (kind === "organization" && !hasMeaningfulStoryContent(correctedText)) {
+      const message = taskErrorMessage("INSUFFICIENT_STORY_CONTENT");
+      setError("");
+      setOrganizationError(message);
+      setCloudConsentChecked(false);
+      return;
+    }
     setBusy(true);
     setError("");
+    if (kind === "organization") setOrganizationError("");
     try {
       const path = kind === "transcription" ? "transcription-tasks" : "organization-tasks";
       let body: Record<string, string> = {};
@@ -729,9 +740,12 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       );
       const result = await waitForTask(task);
       await loadSession(detail.session.id);
-      if (result.status !== "succeeded") throw new Error(`处理失败（${result.error_code ?? "未知错误"}），可以稍后重试。`);
+      if (result.status !== "succeeded") throw new Error(taskErrorMessage(result.error_code));
       setNotice(kind === "transcription" ? "转写已完成，请先人工校对。" : "故事草稿已生成，请逐句核对后再确认。 ");
     } catch (value) {
+      if (kind === "organization") {
+        setOrganizationError(value instanceof Error ? value.message : "故事整理没有成功，请稍后再试。");
+      }
       showError(value);
     } finally {
       if (kind === "organization") setCloudConsentChecked(false);
@@ -1323,7 +1337,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               <div className="block-title"><h3>人工校对</h3><span>版本 {detail.transcript.version}</span></div>
               <div className="evidence-grid">
                 <div><h4>ASR 原始转写</h4><p className="evidence-text">{detail.transcript.raw_text}</p></div>
-                <label><h4>人工校对稿</h4><textarea value={correctedText} onChange={(event) => setCorrectedText(event.target.value)} rows={8} /></label>
+                <label><h4>人工校对稿</h4><textarea value={correctedText} onChange={(event) => { setCorrectedText(event.target.value); setCloudConsentChecked(false); setOrganizationError(""); }} rows={8} /></label>
               </div>
               {unsaved && <p className="unsaved">有尚未保存的修改</p>}
               <div className="button-row">
@@ -1334,6 +1348,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 <div className="cloud-consent">
                   <strong>本次发送授权</strong>
                   <p>原始录音不会发送。只有当前已保存的人工校对稿会发送给千问，用于生成这一版故事草稿；修改文字或再次整理都要重新授权。</p>
+                  {organizationError && <p className="organization-error" role="alert">{organizationError}</p>}
                   <label>
                     <input type="checkbox" checked={cloudConsentChecked} onChange={(event) => setCloudConsentChecked(event.target.checked)} />
                     我确认并授权本次发送当前人工校对稿

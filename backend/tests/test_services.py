@@ -5,7 +5,7 @@ import pytest
 from app.core.errors import DomainError
 from app.schemas.api import StoryOrganizationOutput, TimelineMention
 from app.services.asr.provider import normalize_chinese_spacing
-from app.services.llm.provider import parse_json_object
+from app.services.llm.provider import QwenLLMProvider, parse_json_object
 from app.services.workflow.fact_guard import detect_added_facts
 from app.services.workflow.state import transition
 
@@ -31,6 +31,19 @@ def test_json_parser_accepts_fenced_json():
     assert parse_json_object('```json\n{"question": "慢慢讲"}\n```') == {
         "question": "慢慢讲"
     }
+
+
+def test_qwen_story_organizer_rejects_empty_story_body(monkeypatch):
+    provider = QwenLLMProvider.__new__(QwenLLMProvider)
+    provider.story_prompt = "test"
+    monkeypatch.setattr(
+        provider,
+        "_complete",
+        lambda *_: '{"title":"无有效回忆内容","body":"","timeline_mentions":[],"people_mentions":[],"uncertainties":[],"source_coverage":1}',
+    )
+
+    with pytest.raises(RuntimeError, match="INSUFFICIENT_STORY_CONTENT"):
+        provider.organize_story("啊啊啊，没了", "小时候住在哪里？")
 
 
 def test_state_machine_rejects_direct_archive():

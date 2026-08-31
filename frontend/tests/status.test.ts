@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  hasMeaningfulStoryContent,
   isSessionTerminal,
   memoryWorkflowStep,
   sessionStatusLabel,
+  taskErrorMessage,
   taskStatusLabel,
 } from "@/lib/workflow/status";
 
@@ -17,6 +19,12 @@ describe("工作流状态文案", () => {
   it("未知状态不会直接暴露技术枚举", () => {
     expect(sessionStatusLabel("SOMETHING_NEW")).toBe("状态待确认，请刷新后再看");
     expect(taskStatusLabel("SOMETHING_NEW")).toBe("状态待确认");
+  });
+
+  it("把内容不足转换成可执行提示", () => {
+    expect(taskErrorMessage("INSUFFICIENT_STORY_CONTENT")).toContain("补充至少一句实际内容");
+    expect(hasMeaningfulStoryContent("啊啊啊哦哦，没了")).toBe(false);
+    expect(hasMeaningfulStoryContent("小时候我住在河边，最记得院子里的槐树。 ")).toBe(true);
   });
 
   it("只把归档和主动跳过视为会话终态", () => {
