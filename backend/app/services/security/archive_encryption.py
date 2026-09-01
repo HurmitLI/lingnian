@@ -351,9 +351,12 @@ def activate_archive_encryption(
                 },
                 master_key=master_key,
             )
-        for tag in db.scalars(
-            select(MediaPersonTag).where(MediaPersonTag.family_id == family.id)
-        ).all():
+        media_person_tags = list(
+            db.scalars(
+                select(MediaPersonTag).where(MediaPersonTag.family_id == family.id)
+            ).all()
+        )
+        for tag in media_person_tags:
             field_count += _protect_object(
                 db,
                 family=family,
@@ -387,6 +390,11 @@ def activate_archive_encryption(
             *session_ids,
             *[item.id for item in drafts],
             *story_ids,
+            *[item.id for item in details],
+            *[item.id for item in contributions],
+            *([legacy_plan.id] if legacy_plan else []),
+            *[item.id for item in media_person_tags],
+            *[item.id for item in requests],
         }
         for consent in db.scalars(
             select(ConsentEvent).where(ConsentEvent.object_id.in_(family_object_ids))

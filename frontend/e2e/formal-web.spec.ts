@@ -24,6 +24,14 @@ const session = {
   updated_at: "2026-08-29T08:00:00Z",
 };
 
+const gapSession = {
+  ...session,
+  id: "session-family-question",
+  life_stage: "家人提问",
+  prompt_id: "family-question:test",
+  question_text: "年轻时第一次离开家乡是什么时候？",
+};
+
 const timelineItem = {
   story: {
     id: "story-test",
@@ -48,7 +56,16 @@ const timelineItem = {
     updated_by: "测试家人",
     updated_at: "2026-08-29T09:00:00Z",
   },
-  contributions: [],
+  contributions: [{
+    id: "contribution-test",
+    story_id: "story-test",
+    contributor_person_id: "person-test",
+    contributor_label: "测试女儿",
+    contribution_type: "context",
+    body: "家里还保存着一张当时的车票。",
+    status: "open",
+    created_at: "2026-08-29T10:00:00Z",
+  }],
   person_tags: [],
 };
 
@@ -71,7 +88,7 @@ async function mockLocalApi(page: Page) {
     } else if (path.endsWith("/reminders") || path.endsWith("/memory-books")) {
       body = [];
     } else if (path.endsWith("/memory-sessions")) {
-      body = [session];
+      body = [session, gapSession];
     } else if (path.endsWith("/people")) {
       body = [{ id: "person-test", family_id: profile.family_id, role: "family_member", display_name: "测试女儿", created_at: "2026-08-29T08:00:00Z" }];
     } else if (path.endsWith("/legacy-plan")) {
@@ -85,7 +102,7 @@ async function mockLocalApi(page: Page) {
         question: "小时候常去哪里？",
         status: "grounded",
         answer: "在已确认的家庭档案里，最相关的是《河边的夏天》。",
-        citations: [{ story_id: timelineItem.story.id, title: timelineItem.story.title, life_stage: "童年", excerpt: timelineItem.story.body, audio_url: null, image_url: null, score: 0.9 }],
+        citations: [{ source_id: timelineItem.story.id, story_id: timelineItem.story.id, source_kind: "elder_story", source_label: "奶奶", title: timelineItem.story.title, life_stage: "童年", excerpt: timelineItem.story.body, audio_url: null, image_url: null, score: 0.9 }],
         follow_up_question: null,
         answer_mode: "local_extract_with_sources",
       };
@@ -158,12 +175,20 @@ test("回忆档案可以搜索并清除筛选", async ({ page }) => {
 test("家族记忆可以溯源回答并浏览人生轨迹", async ({ page }) => {
   await page.goto("/memory");
   await expect(page.getByRole("heading", { level: 1, name: "让后来的人，不只看到一份文件" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /年轻时第一次离开家乡/ })).toBeVisible();
   await page.getByLabel("你想知道什么？").fill("小时候常去哪里？");
   await page.getByRole("button", { name: "从家庭档案里找答案" }).click();
   await expect(page.getByText("来自已确认档案")).toBeVisible();
   await expect(page.getByRole("heading", { name: timelineItem.story.title })).toBeVisible();
   await page.getByRole("button", { name: "人生轨迹" }).click();
   await expect(page.getByText("测试河边")).toBeVisible();
+  await page.getByRole("button", { name: "家人补充" }).click();
+  await expect(page.getByText("家里还保存着一张当时的车票。")).toBeVisible();
+  await page.getByRole("button", { name: "确认这条补充" }).click();
+  await expect(page.getByText("家人核对状态已经保存。")).toBeVisible();
+  await page.getByRole("button", { name: "影像实验室" }).click();
+  await expect(page.getByRole("heading", { name: "先把修复或生成需要的材料整理好" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "下载本机制作包" })).toBeVisible();
   const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(hasOverflow).toBe(false);
   const accessibility = await new AxeBuilder({ page }).analyze();

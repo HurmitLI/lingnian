@@ -67,6 +67,7 @@ from app.schemas.api import (
     FamilyRead,
     HealthRead,
     HeritageExportCreate,
+    ProductionPackageCreate,
     GenerativeMediaCapability,
     GenerativeMediaRequestCreate,
     GenerativeMediaRequestRead,
@@ -105,6 +106,7 @@ from app.schemas.api import (
     StoryDraftRead,
     StoryContributionCreate,
     StoryContributionRead,
+    StoryContributionStatusUpdate,
     StoryDetailRead,
     StoryDetailUpsert,
     StoryRead,
@@ -128,14 +130,17 @@ from app.services.archive.assets import (
 from app.services.memory import (
     HeritageMedia,
     HeritageStory,
+    ProductionMedia,
     SearchDocument,
     build_heritage_package,
+    build_production_package,
     compose_grounded_answer,
     ensure_question_bank,
     markdown_sha256,
     render_memory_book,
     render_memory_book_pdf,
     rank_archive,
+    file_sha256,
     select_question,
     SelectedQuestion,
 )
@@ -3222,8 +3227,31 @@ def ask_family_archive(
                 life_stage=session.life_stage,
                 audio_url=f"/api/v1/media-assets/{audio.id}/content" if audio else None,
                 image_url=f"/api/v1/media-assets/{image.id}/content" if image else None,
+                source_id=story.id,
+                source_kind="elder_story",
+                source_label=secure_value(
+                    db, family, profile, "preferred_name", secret_store, master_key=key
+                ),
             )
         )
+        story_title = secure_value(db, family, story, "title", secret_store, master_key=key)
+        for contribution in story.contributions:
+            if contribution.status not in {"confirmed", "resolved"}:
+                continue
+            contribution_view = story_contribution_read(db, contribution, secret_store)
+            documents.append(
+                SearchDocument(
+                    story_id=story.id,
+                    title=f"关于《{story_title}》的家人补充",
+                    body=contribution_view.body,
+                    life_stage=session.life_stage,
+                    audio_url=None,
+                    image_url=None,
+                    source_id=contribution.id,
+                    source_kind="family_contribution",
+                    source_label=contribution_view.contributor_label,
+                )
+            )
     ranked = [item for item in rank_archive(payload.question, documents) if item.score >= 0.2]
     selected = ranked[: payload.max_citations]
     answer, follow_up = compose_grounded_answer(payload.question, selected)
@@ -3233,7 +3261,10 @@ def ask_family_archive(
         answer=answer,
         citations=[
             ArchiveCitation(
+                source_id=item.document.source_id or item.document.story_id,
                 story_id=item.document.story_id,
+                source_kind=item.document.source_kind,
+                source_label=item.document.source_label,
                 title=item.document.title,
                 life_stage=item.document.life_stage,
                 excerpt=item.excerpt,
@@ -3380,6 +3411,45 @@ def list_story_contributions(
         .order_by(StoryContribution.created_at)
     ).all()
     return [story_contribution_read(db, item, secret_store) for item in contributions]
+
+
+@router.patch(
+    "/story-contributions/{contribution_id}/status",
+    response_model=StoryContributionRead,
+)
+def update_story_contribution_status(
+    contribution_id: str,
+    payload: StoryContributionStatusUpdate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> StoryContributionRead:
+    contribution = require(
+        db,
+        StoryContribution,
+        contribution_id,
+        "CONTRIBUTION_NOT_FOUND",
+        "没有找到这条家人补充。",
+    )
+    family = contribution.story.elder.person.family
+    contribution.status = payload.status
+    event = ConsentEvent(
+        action=f"review_story_contribution:{payload.status}",
+        actor_label=payload.actor_label.strip(),
+        object_type="story_contribution",
+        object_id=contribution.id,
+    )
+    db.add(event)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        event,
+        {"actor_label": payload.actor_label.strip()},
+        secret_store,
+    )
+    db.commit()
+    db.refresh(contribution)
+    return story_contribution_read(db, contribution, secret_store)
 
 
 @router.post(
@@ -3690,6 +3760,162 @@ def download_heritage_package(
         output,
         media_type="application/zip",
         filename=filename,
+        background=BackgroundTask(shutil.rmtree, temp_root, ignore_errors=True),
+    )
+
+
+@router.post("/elder-profiles/{profile_id}/production-package")
+def download_generation_production_package(
+    profile_id: str,
+    payload: ProductionPackageCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> FileResponse:
+    profile = require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    story = require(db, Story, payload.story_id, "STORY_NOT_FOUND", "没有找到这篇故事。")
+    if story.elder_id != profile.id:
+        raise DomainError("CROSS_ELDER_STORY", "不能使用其他讲述者的故事。", 409)
+    if not payload.rights_confirmed or not payload.no_impersonation:
+        raise DomainError("MEDIA_RIGHTS_REQUIRED", "请先确认素材使用权和不用于冒充本人。", 409)
+    if payload.generation_type != "photo_restore" and not payload.subject_consent:
+        raise DomainError("SUBJECT_CONSENT_REQUIRED", "人物或家庭故事演绎必须有讲述者本人明确授权。", 409)
+
+    family = profile.person.family
+    key = family_master_key(family, secret_store)
+    story_view = story_read(db, story, secret_store)
+    profile_view = elder_read(db, profile, secret_store)
+    session = story.source_draft.session
+    audio = db.scalar(
+        select(MediaAsset)
+        .where(
+            MediaAsset.session_id == session.id,
+            MediaAsset.kind == "audio_original",
+            MediaAsset.is_original.is_(True),
+        )
+        .order_by(MediaAsset.created_at.desc())
+    )
+    image = db.scalar(
+        select(MediaAsset)
+        .where(
+            MediaAsset.session_id == session.id,
+            MediaAsset.kind.in_(["photo_original", "old_object_original"]),
+            MediaAsset.is_original.is_(True),
+        )
+        .order_by(MediaAsset.created_at.desc())
+    )
+    if payload.generation_type != "photo_restore" and not audio:
+        raise DomainError("ORIGINAL_AUDIO_REQUIRED", "这篇故事没有可用的原始录音。", 409)
+    if payload.generation_type in {"photo_restore", "portrait_video"} and not image:
+        message = (
+            "老照片修复需要先为这篇故事关联一张原始照片。"
+            if payload.generation_type == "photo_restore"
+            else "人物讲述视频需要先为这篇故事关联一张本人授权照片。"
+        )
+        raise DomainError("PORTRAIT_IMAGE_REQUIRED", message, 409)
+
+    temp_root = Path(tempfile.mkdtemp(prefix="lingnian-production-"))
+    try:
+        sources_root = temp_root / "sources"
+        sources_root.mkdir(mode=0o700)
+
+        def materialize(asset: MediaAsset, name: str) -> Path:
+            source_path = resolve_controlled_path(
+                get_settings().resolved_asset_root, asset.relative_path
+            )
+            if not verify_asset_integrity(
+                source_path,
+                expected_size=asset.size_bytes,
+                expected_sha256=asset.sha256,
+            ):
+                raise DomainError("ASSET_INTEGRITY_FAILED", "制作包素材校验失败，请先从备份恢复。", 409)
+            target = sources_root / name
+            if asset.encryption_version == 0:
+                shutil.copyfile(source_path, target)
+            elif asset.encryption_version == 1 and key is not None:
+                decrypt_media_file(
+                    source_path,
+                    target,
+                    key,
+                    associated_data=media_context(family.id, asset.id),
+                )
+            else:
+                raise DomainError("ASSET_ENCRYPTION_UNSUPPORTED", "无法读取这份加密素材。", 409)
+            target.chmod(0o600)
+            return target
+
+        audio_media = None
+        if audio:
+            audio_extension = {
+                "audio/wav": ".wav",
+                "audio/mpeg": ".mp3",
+                "audio/mp4": ".m4a",
+                "audio/webm": ".webm",
+                "audio/ogg": ".ogg",
+            }.get(audio.mime_type, ".audio")
+            audio_path = materialize(audio, f"original-audio{audio_extension}")
+            audio_media = ProductionMedia(
+                source_path=audio_path,
+                archive_path=f"sources/original-audio{audio_extension}",
+                mime_type=audio.mime_type,
+                sha256=file_sha256(audio_path),
+            )
+        image_media = None
+        if image:
+            image_extension = {
+                "image/jpeg": ".jpg",
+                "image/png": ".png",
+                "image/webp": ".webp",
+            }.get(image.mime_type, ".image")
+            image_path = materialize(image, f"authorized-image{image_extension}")
+            image_media = ProductionMedia(
+                source_path=image_path,
+                archive_path=f"sources/authorized-image{image_extension}",
+                mime_type=image.mime_type,
+                sha256=file_sha256(image_path),
+            )
+        detail = story_detail_read(db, story.detail, secret_store) if story.detail else None
+        output = temp_root / f"lingnian-production-{story.id}.zip"
+        build_production_package(
+            output_path=output,
+            generation_type=payload.generation_type,
+            storyteller_name=profile_view.preferred_name,
+            story_id=story.id,
+            title=story_view.title,
+            body=story_view.body,
+            life_stage=session.life_stage,
+            place_name=detail.place_name if detail else None,
+            event_year=detail.event_year if detail else None,
+            theme_tags=detail.theme_tags if detail else [],
+            actor_label=payload.actor_label.strip(),
+            subject_consent=payload.subject_consent,
+            rights_confirmed=payload.rights_confirmed,
+            no_impersonation=payload.no_impersonation,
+            audio=audio_media,
+            image=image_media,
+        )
+        event = ConsentEvent(
+            action=f"export_{payload.generation_type}_production_package",
+            actor_label=payload.actor_label.strip(),
+            object_type="story",
+            object_id=story.id,
+        )
+        db.add(event)
+        db.flush()
+        protect_values(
+            db,
+            family,
+            event,
+            {"actor_label": payload.actor_label.strip()},
+            secret_store,
+        )
+        db.commit()
+    except Exception:
+        shutil.rmtree(temp_root, ignore_errors=True)
+        raise
+    return FileResponse(
+        output,
+        media_type="application/zip",
+        filename=f"lingnian-production-{story.id}.zip",
         background=BackgroundTask(shutil.rmtree, temp_root, ignore_errors=True),
     )
 

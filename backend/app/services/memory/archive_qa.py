@@ -26,6 +26,9 @@ class SearchDocument:
     life_stage: str
     audio_url: str | None
     image_url: str | None
+    source_id: str | None = None
+    source_kind: str = "elder_story"
+    source_label: str | None = None
 
 
 @dataclass(frozen=True)

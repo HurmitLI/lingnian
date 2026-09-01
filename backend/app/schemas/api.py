@@ -315,6 +315,15 @@ class HeritageExportCreate(BaseModel):
     actor_label: str = Field(min_length=1, max_length=80)
 
 
+class ProductionPackageCreate(BaseModel):
+    story_id: str
+    generation_type: str = Field(pattern="^(photo_restore|portrait_video|scene_video)$")
+    actor_label: str = Field(min_length=1, max_length=80)
+    subject_consent: bool
+    rights_confirmed: bool
+    no_impersonation: bool
+
+
 class KeepsakeCatalogItem(BaseModel):
     story_id: str
     title: str
@@ -492,13 +501,21 @@ class StoryContributionRead(ORMModel):
     created_at: datetime
 
 
+class StoryContributionStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(open|confirmed|disputed|resolved)$")
+    actor_label: str = Field(min_length=1, max_length=80)
+
+
 class ArchiveAskRequest(BaseModel):
     question: str = Field(min_length=2, max_length=300)
     max_citations: int = Field(default=3, ge=1, le=5)
 
 
 class ArchiveCitation(BaseModel):
+    source_id: str
     story_id: str
+    source_kind: str
+    source_label: str | None = None
     title: str
     life_stage: str
     excerpt: str

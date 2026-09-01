@@ -29,6 +29,7 @@ import type {
   GenerativeMediaCapability,
   GenerativeMediaRequest,
   LegacyPlan,
+  MemorySession,
   TimelineItem,
 } from "@/lib/types";
 
@@ -49,6 +50,13 @@ const CONTRIBUTION_LABELS = {
   question: "继续追问",
   alternate_memory: "另一种记忆",
 } as const;
+
+const CONTRIBUTION_STATUS_LABELS: Record<string, string> = {
+  open: "待家人核对",
+  confirmed: "家人已确认",
+  disputed: "存在不同记忆",
+  resolved: "已完成核对",
+};
 
 function displayYear(item: TimelineItem): string {
   if (item.detail?.event_year) return String(item.detail.event_year);
@@ -77,10 +85,12 @@ export default function MemoryHubApp() {
   const [legacyPlan, setLegacyPlan] = useState<LegacyPlan | null>(null);
   const [capabilities, setCapabilities] = useState<GenerativeMediaCapability[]>([]);
   const [generationRequests, setGenerationRequests] = useState<GenerativeMediaRequest[]>([]);
+  const [recentSessions, setRecentSessions] = useState<MemorySession[]>([]);
   const [tab, setTab] = useState<HubTab>("ask");
   const [answer, setAnswer] = useState<ArchiveAnswer | null>(null);
   const [question, setQuestion] = useState("");
   const [activeStoryId, setActiveStoryId] = useState("");
+  const [productionType, setProductionType] = useState<"photo_restore" | "portrait_video" | "scene_video">("photo_restore");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -89,6 +99,18 @@ export default function MemoryHubApp() {
   const selectedProfile = profiles.find((item) => item.id === selectedProfileId) ?? null;
   const activeStory = timeline.find((item) => item.story.id === activeStoryId) ?? timeline[0] ?? null;
   const audioStories = useMemo(() => timeline.filter((item) => item.audio_url), [timeline]);
+  const interviewQuestions = useMemo(
+    () => recentSessions.filter((item) => item.life_stage === "家人提问" && !["ARCHIVED", "SKIPPED"].includes(item.status)),
+    [recentSessions],
+  );
+  const themeAlbums = useMemo(() => {
+    const groups = new Map<string, TimelineItem[]>();
+    for (const item of timeline.filter((value) => value.image_url)) {
+      const tags = item.detail?.theme_tags.length ? item.detail.theme_tags : [item.life_stage];
+      for (const tag of tags) groups.set(tag, [...(groups.get(tag) ?? []), item]);
+    }
+    return Array.from(groups.entries()).map(([name, stories]) => ({ name, stories }));
+  }, [timeline]);
 
   const showError = useCallback((value: unknown) => {
     setNotice("");
@@ -96,18 +118,20 @@ export default function MemoryHubApp() {
   }, []);
 
   const loadProfileData = useCallback(async (profile: ElderProfile) => {
-    const [timelineResult, peopleResult, planResult, capabilityResult, requestResult] = await Promise.all([
+    const [timelineResult, peopleResult, planResult, capabilityResult, requestResult, sessionResult] = await Promise.all([
       api<TimelineItem[]>(`/api/v1/elder-profiles/${profile.id}/timeline`),
       api<FamilyPerson[]>(`/api/v1/families/${profile.family_id}/people`),
       api<LegacyPlan | null>(`/api/v1/families/${profile.family_id}/legacy-plan`),
       api<GenerativeMediaCapability[]>("/api/v1/generative-media/capabilities"),
       api<GenerativeMediaRequest[]>(`/api/v1/elder-profiles/${profile.id}/generative-media-requests`),
+      api<MemorySession[]>(`/api/v1/elder-profiles/${profile.id}/memory-sessions?limit=100`),
     ]);
     setTimeline(timelineResult);
     setPeople(peopleResult);
     setLegacyPlan(planResult);
     setCapabilities(capabilityResult);
     setGenerationRequests(requestResult);
+    setRecentSessions(sessionResult);
     setActiveStoryId((current) => timelineResult.some((item) => item.story.id === current) ? current : timelineResult[0]?.story.id ?? "");
   }, []);
 
@@ -140,12 +164,13 @@ export default function MemoryHubApp() {
     window.localStorage.setItem("niannian.profileId", profileId);
     async function syncProfile() {
       try {
-        const [timelineResult, peopleResult, planResult, capabilityResult, requestResult] = await Promise.all([
+        const [timelineResult, peopleResult, planResult, capabilityResult, requestResult, sessionResult] = await Promise.all([
           api<TimelineItem[]>(`/api/v1/elder-profiles/${profileId}/timeline`),
           api<FamilyPerson[]>(`/api/v1/families/${familyId}/people`),
           api<LegacyPlan | null>(`/api/v1/families/${familyId}/legacy-plan`),
           api<GenerativeMediaCapability[]>("/api/v1/generative-media/capabilities"),
           api<GenerativeMediaRequest[]>(`/api/v1/elder-profiles/${profileId}/generative-media-requests`),
+          api<MemorySession[]>(`/api/v1/elder-profiles/${profileId}/memory-sessions?limit=100`),
         ]);
         if (cancelled) return;
         setTimeline(timelineResult);
@@ -153,6 +178,7 @@ export default function MemoryHubApp() {
         setLegacyPlan(planResult);
         setCapabilities(capabilityResult);
         setGenerationRequests(requestResult);
+        setRecentSessions(sessionResult);
         setActiveStoryId((current) => timelineResult.some((item) => item.story.id === current) ? current : timelineResult[0]?.story.id ?? "");
       } catch (value) {
         if (!cancelled) showError(value);
@@ -259,6 +285,24 @@ export default function MemoryHubApp() {
     }
   }
 
+  async function reviewContribution(contributionId: string, status: "confirmed" | "disputed" | "resolved") {
+    if (!selectedProfile) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/v1/story-contributions/${contributionId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status, actor_label: "家庭管理员" }),
+      });
+      await loadProfileData(selectedProfile);
+      setNotice(status === "disputed" ? "这条补充已标记为不同记忆，原故事没有被改写。" : "家人核对状态已经保存。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function addPhotoPersonTag(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!activeStory?.image_asset_id || !selectedProfile) return;
@@ -330,6 +374,34 @@ export default function MemoryHubApp() {
     }
   }
 
+  async function downloadProductionPackage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedProfile) return;
+    const form = new FormData(event.currentTarget);
+    setBusy(true);
+    setError("");
+    try {
+      const result = await apiDownload(`/api/v1/elder-profiles/${selectedProfile.id}/production-package`, {
+        method: "POST",
+        body: JSON.stringify({
+          story_id: form.get("storyId"),
+          generation_type: form.get("generationType"),
+          actor_label: form.get("actorLabel") || "家庭管理员",
+          subject_consent: form.get("subjectConsent") === "on",
+          rights_confirmed: form.get("rightsConfirmed") === "on",
+          no_impersonation: form.get("noImpersonation") === "on",
+        }),
+        timeoutMs: 10 * 60 * 1000,
+      });
+      saveBlob(result.blob, result.filename);
+      setNotice("本机制作包已经下载：包含原始素材、故事原文、授权清单和待人工复核分镜；没有上传或产生费用。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <AppShell>
       <main className="workspace-main memory-hub-main">
@@ -374,13 +446,14 @@ export default function MemoryHubApp() {
                 </div>
                 <button className="button primary" disabled={busy || !question.trim()}>从家庭档案里找答案</button>
               </form>
+              {interviewQuestions.length > 0 && <div className="interview-backlog"><div><strong>待采访问题</strong><span>{interviewQuestions.length} 个</span></div>{interviewQuestions.slice(0, 5).map((item) => <Link key={item.id} href={`/record?elder=${selectedProfile.id}&session=${item.id}`}><span>{item.question_text}</span><small>继续记录</small></Link>)}</div>}
             </div>
             <aside className="card memory-answer-card" aria-live="polite">
               {!answer ? <div className="memory-answer-empty"><MessageCircleQuestion size={34} aria-hidden="true" /><h2>答案要有出处</h2><p>找到故事时会同时显示原文和原声；没有记录时，会把问题留给下一次采访。</p></div> : <>
                 <div className="memory-answer-status"><ShieldCheck size={17} aria-hidden="true" /><span>{answer.status === "grounded" ? "来自已确认档案" : "暂时没有可靠记录"}</span></div>
                 <p className="memory-answer-text">{answer.answer}</p>
-                {answer.citations.map((citation) => <article className="memory-citation" key={citation.story_id}>
-                  <div><span>{citation.life_stage}</span><h3>{citation.title}</h3></div><p>{citation.excerpt}</p>
+                {answer.citations.map((citation) => <article className="memory-citation" key={citation.source_id}>
+                  <div><span>{citation.source_kind === "family_contribution" ? `家人补充 · ${citation.source_label ?? "家人"}` : `${citation.life_stage} · 本人原话`}</span><h3>{citation.title}</h3></div><p>{citation.excerpt}</p>
                   {citation.audio_url && <audio controls preload="metadata" src={mediaUrl(citation.audio_url) ?? undefined} />}
                 </article>)}
                 {answer.follow_up_question && <div className="memory-gap"><strong>把空白变成下一次采访</strong><p>{answer.follow_up_question}</p><button className="button secondary" disabled={busy} onClick={createFollowUp}>带着这个问题去记录</button></div>}
@@ -413,6 +486,7 @@ export default function MemoryHubApp() {
                 <div className="life-route-story"><div className="story-route-meta"><span>{item.life_stage}</span>{item.detail?.place_name && <span><MapPin size={14} aria-hidden="true" />{item.detail.place_name}</span>}</div><h3>{item.story.title}</h3><p>{item.detail?.summary || item.story.body}</p><div className="tags">{item.detail?.theme_tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div>
               </article>)}
             </div>}
+            {themeAlbums.length > 0 && <div className="theme-albums"><div className="subsection-heading"><span>主题相册</span><p>同一主题下的照片和故事会自动聚在一起，分组只使用家人确认过的标签。</p></div><div className="theme-album-grid">{themeAlbums.map((album) => <article key={album.name}><div className="theme-album-images">{album.stories.slice(0, 3).map((item) => <Image key={item.story.id} unoptimized width={300} height={220} src={mediaUrl(item.image_url) ?? ""} alt={item.image_annotation || item.story.title} />)}</div><strong>{album.name}</strong><span>{album.stories.length} 段故事</span></article>)}</div></div>}
           </section>
         )}
 
@@ -425,7 +499,7 @@ export default function MemoryHubApp() {
             {activeStory && <div className="memory-family-editor">
               <section className="card"><span className="card-kicker">原故事</span><h2>{activeStory.story.title}</h2><p className="story-body">{activeStory.story.body}</p>{activeStory.audio_url && <audio controls preload="metadata" src={mediaUrl(activeStory.audio_url) ?? undefined} />}</section>
               <section className="card"><h3>补充时间、地点和主题</h3><form className="memory-detail-form" key={activeStory.detail?.updated_at ?? activeStory.story.id} onSubmit={updateStoryDetail}><label className="field"><span>年份（可选）</span><input name="eventYear" type="number" min="1800" max="2100" defaultValue={activeStory.detail?.event_year ?? ""} /></label><label className="field"><span>地点（家人确认）</span><input name="placeName" maxLength={160} defaultValue={activeStory.detail?.place_name ?? ""} /></label><label className="field full"><span>主题标签，用逗号分隔</span><input name="themeTags" defaultValue={activeStory.detail?.theme_tags.join("，") ?? ""} placeholder="工作，迁居，老物件" /></label><label className="field full"><span>一句话说明</span><textarea name="summary" rows={2} defaultValue={activeStory.detail?.summary ?? ""} /></label><label className="field"><span>确认人</span><input name="updatedBy" required defaultValue="家庭成员" /></label><button className="button secondary" disabled={busy}>保存故事资料</button></form></section>
-              <section className="card"><h3>家人补充与不同记忆</h3>{activeStory.contributions.length > 0 && <div className="contribution-list">{activeStory.contributions.map((item) => <article key={item.id}><span>{CONTRIBUTION_LABELS[item.contribution_type]}</span><strong>{item.contributor_label}</strong><p>{item.body}</p></article>)}</div>}<form className="contribution-form" onSubmit={addContribution}><label className="field"><span>家庭成员（可选）</span><select name="personId"><option value="">不绑定成员</option>{people.map((person) => <option key={person.id} value={person.id}>{person.display_name}</option>)}</select></label><label className="field"><span>显示称呼</span><input name="contributorLabel" required maxLength={80} defaultValue="家庭成员" /></label><label className="field"><span>补充类型</span><select name="contributionType">{Object.entries(CONTRIBUTION_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label className="field full"><span>补充内容</span><textarea name="body" required rows={4} /></label><button className="button primary" disabled={busy}>保存家人补充</button></form></section>
+              <section className="card"><h3>家人补充与不同记忆</h3>{activeStory.contributions.length > 0 && <div className="contribution-list">{activeStory.contributions.map((item) => <article key={item.id}><div className="contribution-meta"><span>{CONTRIBUTION_LABELS[item.contribution_type]}</span><small>{CONTRIBUTION_STATUS_LABELS[item.status] ?? item.status}</small></div><strong>{item.contributor_label}</strong><p>{item.body}</p><div className="contribution-actions">{item.status === "open" && <><button type="button" disabled={busy} onClick={() => reviewContribution(item.id, "confirmed")}>确认这条补充</button><button type="button" disabled={busy} onClick={() => reviewContribution(item.id, "disputed")}>保留为不同记忆</button></>}{item.status === "disputed" && <button type="button" disabled={busy} onClick={() => reviewContribution(item.id, "resolved")}>完成家庭核对</button>}</div></article>)}</div>}<form className="contribution-form" onSubmit={addContribution}><label className="field"><span>家庭成员（可选）</span><select name="personId"><option value="">不绑定成员</option>{people.map((person) => <option key={person.id} value={person.id}>{person.display_name}</option>)}</select></label><label className="field"><span>显示称呼</span><input name="contributorLabel" required maxLength={80} defaultValue="家庭成员" /></label><label className="field"><span>补充类型</span><select name="contributionType">{Object.entries(CONTRIBUTION_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label className="field full"><span>补充内容</span><textarea name="body" required rows={4} /></label><button className="button primary" disabled={busy}>保存家人补充</button></form></section>
               {activeStory.image_url && activeStory.image_asset_id && <section className="card photo-people-card"><h3>这张照片里有谁？</h3><div className="photo-people-grid"><Image unoptimized width={720} height={520} src={mediaUrl(activeStory.image_url) ?? ""} alt={activeStory.image_annotation || activeStory.story.title} /><div>{activeStory.person_tags.length > 0 && <div className="tags">{activeStory.person_tags.map((tag) => <span key={tag.id}>{tag.person_name}</span>)}</div>}<form onSubmit={addPhotoPersonTag}><label className="field"><span>家人确认的人物</span><select name="personId" required><option value="">请选择</option>{people.map((person) => <option key={person.id} value={person.id}>{person.display_name}</option>)}</select></label><label className="field"><span>标注人</span><input name="taggedBy" required defaultValue="家庭成员" /></label><label className="field"><span>说明（可选）</span><input name="note" maxLength={500} /></label><button className="button secondary" disabled={busy}>添加人物标注</button></form></div></div></section>}
             </div>}
           </section>
@@ -441,6 +515,7 @@ export default function MemoryHubApp() {
         {!loading && selectedProfile && tab === "studio" && (
           <section className="card generation-studio">
             <div className="section-heading"><span>06</span><div><h2>影像与声音实验室</h2><p>生成式能力独立于家庭档案；未选择服务、预算和真人授权前，不会上传任何素材。</p></div></div>
+            <form className="production-package-form" onSubmit={downloadProductionPackage}><div><span className="card-kicker">零费用 · 本机预制作</span><h3>先把修复或生成需要的材料整理好</h3><p>下载包内含原始素材、故事原文、素材校验值，以及待人工复核的修复计划或逐句分镜，不会直接调用生成服务。</p></div><label className="field"><span>制作方向</span><select name="generationType" value={productionType} onChange={(event) => setProductionType(event.target.value as typeof productionType)}><option value="photo_restore">老照片修复制作包</option><option value="portrait_video">人物讲述视频制作包</option><option value="scene_video">故事情景视频制作包</option></select></label><label className="field"><span>选择故事</span><select name="storyId" required>{timeline.map((item) => <option key={item.story.id} value={item.story.id}>{item.story.title}{item.image_url ? " · 有照片" : " · 无照片"}</option>)}</select></label><label className="field"><span>确认人</span><input name="actorLabel" required defaultValue="家庭管理员" /></label><fieldset><legend>本次本机整理确认</legend>{productionType === "photo_restore" ? <label><input type="checkbox" name="subjectConsent" />如照片人物仍健在，已经取得其修复和家庭展示同意</label> : <label><input type="checkbox" name="subjectConsent" required />讲述者本人同意将这段故事用于家庭影像演绎</label>}<label><input type="checkbox" name="rightsConfirmed" required />我确认有权使用所选原声与照片</label><label><input type="checkbox" name="noImpersonation" required />不会用于冒充本人或误导公众</label></fieldset><button className="button primary" disabled={busy || timeline.length === 0}><Download size={17} aria-hidden="true" />下载本机制作包</button><small>这里只整理文件，不代表已经允许上传第三方。修复永远保留原图，人物讲述必须使用本人授权照片。</small></form>
             <div className="generation-capabilities">{capabilities.map((item) => <article key={item.generation_type}><div><span className="generation-status">{item.available ? "可使用" : "尚未启用"}</span><h3>{item.label}</h3></div><p>{item.unavailable_reason}</p><dl><div><dt>真人授权</dt><dd>{item.requires_subject_consent ? "必须" : "按素材判断"}</dd></div><div><dt>外部上传</dt><dd>{item.requires_external_upload ? "启用前逐次确认" : "不需要"}</dd></div><div><dt>预计费用</dt><dd>{item.estimated_cost_cents === null ? "选择供应商后显示" : `¥${(item.estimated_cost_cents / 100).toFixed(2)}`}</dd></div></dl><button className="button secondary" disabled>等待配置与预算确认</button></article>)}</div>
             <div className="generation-current"><NotebookTabs size={23} aria-hidden="true" /><div><strong>现在仍可使用零费用的快速影像导出</strong><p>它只把原始录音、照片和文字合成 MP4，不是人物视频，已经从主导航降级为辅助工具。</p></div><Link className="button quiet button-link" href={`/keepsake?elder=${selectedProfile.id}`}>打开快速影像导出</Link></div>
             {generationRequests.length > 0 && <details><summary>查看已登记的生成准备记录（{generationRequests.length}）</summary>{generationRequests.map((request) => <p key={request.id}>{request.generation_type} · {request.status} · 未产生费用</p>)}</details>}

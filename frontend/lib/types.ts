@@ -292,7 +292,10 @@ export type MediaPersonTag = {
 };
 
 export type ArchiveCitation = {
+  source_id: string;
   story_id: string;
+  source_kind: "elder_story" | "family_contribution";
+  source_label: string | null;
   title: string;
   life_stage: string;
   excerpt: string;

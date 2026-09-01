@@ -4,9 +4,10 @@ import io
 import zipfile
 
 from PIL import Image
+from sqlalchemy import select
 
 from app.main import app
-from app.models import GenerativeMediaRequest, LegacyPlan, MediaPersonTag, StoryContribution, StoryDetail
+from app.models import ConsentEvent, GenerativeMediaRequest, LegacyPlan, MediaPersonTag, StoryContribution, StoryDetail
 from app.services.security import InMemorySecretStore, get_secret_store
 from test_api_flow import create_profile, upload_test_audio
 
@@ -124,6 +125,24 @@ def test_family_can_enrich_story_photo_and_legacy_plan(client):
         },
     )
     assert contribution.status_code == 201
+    reviewed = client.patch(
+        f"/api/v1/story-contributions/{contribution.json()['id']}/status",
+        json={"status": "confirmed", "actor_label": "测试管理员"},
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["status"] == "confirmed"
+    family_answer = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/archive-questions",
+        json={"question": "家里还保存着什么工作纪念？"},
+    )
+    assert family_answer.status_code == 200
+    family_source = next(
+        item
+        for item in family_answer.json()["citations"]
+        if item["source_kind"] == "family_contribution"
+    )
+    assert family_source["source_label"] == "测试女儿"
+    assert "工作证" in family_source["excerpt"]
 
     tag = client.post(
         f"/api/v1/media-assets/{image_asset_id}/person-tags",
@@ -223,6 +242,68 @@ def test_paid_media_requests_are_recorded_but_never_executed(client):
     assert recorded.json()["estimated_cost_cents"] == 0
 
 
+def test_local_generation_production_package_has_sources_and_reviewable_storyboard(client):
+    profile = create_profile(client)
+    story, _ = create_confirmed_story(client, profile, with_photo=True)
+    package = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/production-package",
+        json={
+            "story_id": story["id"],
+            "generation_type": "portrait_video",
+            "actor_label": "测试家人",
+            "subject_consent": True,
+            "rights_confirmed": True,
+            "no_impersonation": True,
+        },
+    )
+    assert package.status_code == 200, package.text
+    with zipfile.ZipFile(io.BytesIO(package.content)) as archive:
+        names = set(archive.namelist())
+        assert "README.md" in names
+        assert "manifest.json" in names
+        assert "production/storyboard.json" in names
+        assert any(name.startswith("sources/original-audio") for name in names)
+        assert any(name.startswith("sources/authorized-image") for name in names)
+        manifest = archive.read("manifest.json").decode("utf-8")
+        assert '"status": "local_preproduction_only"' in manifest
+        assert '"external_upload_authorized": false' in manifest
+        storyboard = archive.read("production/storyboard.json").decode("utf-8")
+        assert "人工确认故事原文" in storyboard
+        assert "review_required" in storyboard
+
+    denied = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/production-package",
+        json={
+            "story_id": story["id"],
+            "generation_type": "portrait_video",
+            "actor_label": "测试家人",
+            "subject_consent": False,
+            "rights_confirmed": True,
+            "no_impersonation": True,
+        },
+    )
+    assert denied.status_code == 409
+    assert denied.json()["error"]["code"] == "SUBJECT_CONSENT_REQUIRED"
+
+    restoration = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/production-package",
+        json={
+            "story_id": story["id"],
+            "generation_type": "photo_restore",
+            "actor_label": "测试家人",
+            "subject_consent": False,
+            "rights_confirmed": True,
+            "no_impersonation": True,
+        },
+    )
+    assert restoration.status_code == 200, restoration.text
+    with zipfile.ZipFile(io.BytesIO(restoration.content)) as archive:
+        assert "production/restoration-plan.json" in archive.namelist()
+        plan = archive.read("production/restoration-plan.json").decode("utf-8")
+        assert "绝不覆盖原图" in plan
+        assert "不凭空增加人物" in plan
+
+
 def test_memory_experience_fields_stay_encrypted_for_real_family(client, db):
     profile = create_profile(client)
     story, image_asset_id = create_confirmed_story(client, profile, with_photo=True)
@@ -231,6 +312,19 @@ def test_memory_experience_fields_stay_encrypted_for_real_family(client, db):
         f"/api/v1/families/{family_id}/people",
         json={"display_name": "虚构接管人", "role": "family_member"},
     ).json()
+    preexisting_contribution = client.post(
+        f"/api/v1/stories/{story['id']}/contributions",
+        json={
+            "contributor_person_id": person["id"],
+            "contributor_label": "虚构接管人",
+            "contribution_type": "context",
+            "body": "启用加密以前保存的虚构家庭补充。",
+        },
+    ).json()
+    assert client.patch(
+        f"/api/v1/story-contributions/{preexisting_contribution['id']}/status",
+        json={"status": "confirmed", "actor_label": "启用前虚构管理员"},
+    ).status_code == 200
     store = InMemorySecretStore()
     app.dependency_overrides[get_secret_store] = lambda: store
     passphrase = "虚构恢复口令-家族记忆-长度足够"
@@ -323,9 +417,17 @@ def test_memory_experience_fields_stay_encrypted_for_real_family(client, db):
 
         db.expire_all()
         assert db.get(StoryDetail, detail.json()["id"]).place_name == "[niannian:encrypted:v1]"
+        assert db.get(StoryContribution, preexisting_contribution["id"]).body == "[niannian:encrypted:v1]"
         assert db.get(StoryContribution, contribution.json()["id"]).body == "[niannian:encrypted:v1]"
         assert db.get(MediaPersonTag, tag.json()["id"]).note == "[niannian:encrypted:v1]"
         assert db.get(LegacyPlan, legacy.json()["id"]).note == "[niannian:encrypted:v1]"
         assert db.get(GenerativeMediaRequest, generation.json()["id"]).actor_label == "[niannian:encrypted:v1]"
+        review_event = db.scalar(
+            select(ConsentEvent).where(
+                ConsentEvent.object_id == preexisting_contribution["id"],
+                ConsentEvent.action == "review_story_contribution:confirmed",
+            )
+        )
+        assert review_event.actor_label == "[niannian:encrypted:v1]"
     finally:
         app.dependency_overrides.pop(get_secret_store, None)
