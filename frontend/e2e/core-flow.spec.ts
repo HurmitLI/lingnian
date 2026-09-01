@@ -27,12 +27,18 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
   const correctedStory = `${preferredName}小时候常跟家里人去河边。这是第三阶段隔离验收内容。`;
 
   await page.goto("/family");
+  await expect(page.getByRole("heading", { name: "讲述者档案" })).toBeVisible();
   const addNarrator = page.getByText("添加一位讲述者", { exact: true });
-  if (await addNarrator.isVisible()) {
+  if ((await addNarrator.count()) > 0) {
     await addNarrator.click();
   }
+  await expect(
+    page.getByRole("button", { name: /(建立讲述者档案|添加并切换到此人)/ }),
+  ).toBeVisible();
   const familyNameInput = page.getByLabel("家庭档案名称");
-  if (await familyNameInput.isVisible()) await familyNameInput.fill(`隔离家庭${suffix}`);
+  if ((await familyNameInput.count()) > 0) {
+    await familyNameInput.fill(`隔离家庭${suffix}`);
+  }
   await page.getByLabel("新讲述者的显示名称").fill(`${preferredName}（虚构）`);
   await page.getByLabel("家人怎么称呼这位讲述者").fill(preferredName);
   await page.getByRole("button", { name: /(建立讲述者档案|添加并切换到此人)/ }).click();
@@ -75,7 +81,7 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
   await expect(page.getByRole("paragraph").filter({ hasText: correctedStory })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
 
-  await page.getByRole("link", { name: "制作原声视频" }).click();
+  await page.getByRole("link", { name: "快速影像导出" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "把亲口讲过的故事，留成一段视频" })).toBeVisible();
   const createButton = page.getByRole("button", { name: "确认授权并开始本机制作" });
   await expect(createButton).toBeDisabled();

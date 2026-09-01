@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,8 +28,10 @@ from app.models import (
     FamilyArchive,
     Keepsake,
     KeepsakeAuthorization,
+    LegacyPlan,
     MediaAsset,
     MediaLink,
+    MediaPersonTag,
     MemoryBook,
     MemoryFact,
     MemorySession,
@@ -36,7 +40,10 @@ from app.models import (
     PersonRelationship,
     QuestionPrompt,
     Reminder,
+    GenerativeMediaRequest,
     Story,
+    StoryContribution,
+    StoryDetail,
     StoryDraft,
     TimelineEvent,
     Transcript,
@@ -45,6 +52,10 @@ from app.models import (
 )
 from app.models.entities import now_utc
 from app.schemas.api import (
+    ArchiveAnswer,
+    ArchiveAskRequest,
+    ArchiveCitation,
+    ArchiveGapCreate,
     ConfirmDraftRequest,
     BackupCreate,
     BackupRead,
@@ -55,6 +66,10 @@ from app.schemas.api import (
     FamilyCreate,
     FamilyRead,
     HealthRead,
+    HeritageExportCreate,
+    GenerativeMediaCapability,
+    GenerativeMediaRequestCreate,
+    GenerativeMediaRequestRead,
     ElderMemoryContext,
     MediaAssetRead,
     MediaLinkRead,
@@ -71,6 +86,10 @@ from app.schemas.api import (
     KeepsakeCatalogItem,
     KeepsakeCreate,
     KeepsakeRead,
+    LegacyPlanRead,
+    LegacyPlanUpsert,
+    MediaPersonTagCreate,
+    MediaPersonTagRead,
     PersonCreate,
     PersonRead,
     PersonUpdate,
@@ -84,6 +103,10 @@ from app.schemas.api import (
     SecurityInitializeRequest,
     SessionDetail,
     StoryDraftRead,
+    StoryContributionCreate,
+    StoryContributionRead,
+    StoryDetailRead,
+    StoryDetailUpsert,
     StoryRead,
     TaskRead,
     TaskRetryRequest,
@@ -103,13 +126,20 @@ from app.services.archive.assets import (
     verify_asset_integrity,
 )
 from app.services.memory import (
+    HeritageMedia,
+    HeritageStory,
+    SearchDocument,
+    build_heritage_package,
+    compose_grounded_answer,
     ensure_question_bank,
     markdown_sha256,
     render_memory_book,
     render_memory_book_pdf,
+    rank_archive,
     select_question,
     SelectedQuestion,
 )
+from app.services.generative_media import capability_catalog, estimate_request
 from app.services.keepsake import (
     build_keepsake_manifest,
     manifest_sha256 as keepsake_manifest_sha256,
@@ -497,6 +527,103 @@ def story_read(db: Session, story: Story, store: SecretStore) -> StoryRead:
             db, family, story, "confirmed_by", store, master_key=key
         ),
         confirmed_at=story.confirmed_at,
+    )
+
+
+def story_detail_read(
+    db: Session, detail: StoryDetail, store: SecretStore
+) -> StoryDetailRead:
+    family = detail.story.elder.person.family
+    key = family_master_key(family, store)
+    return StoryDetailRead(
+        id=detail.id,
+        story_id=detail.story_id,
+        place_name=secure_value(db, family, detail, "place_name", store, master_key=key),
+        event_year=secure_value(db, family, detail, "event_year", store, master_key=key),
+        theme_tags=secure_value(db, family, detail, "theme_tags", store, master_key=key),
+        summary=secure_value(db, family, detail, "summary", store, master_key=key),
+        updated_by=secure_value(db, family, detail, "updated_by", store, master_key=key),
+        updated_at=detail.updated_at,
+    )
+
+
+def story_contribution_read(
+    db: Session, contribution: StoryContribution, store: SecretStore
+) -> StoryContributionRead:
+    family = contribution.story.elder.person.family
+    key = family_master_key(family, store)
+    return StoryContributionRead(
+        id=contribution.id,
+        story_id=contribution.story_id,
+        contributor_person_id=contribution.contributor_person_id,
+        contributor_label=secure_value(
+            db, family, contribution, "contributor_label", store, master_key=key
+        ),
+        contribution_type=contribution.contribution_type,
+        body=secure_value(db, family, contribution, "body", store, master_key=key),
+        status=contribution.status,
+        created_at=contribution.created_at,
+    )
+
+
+def legacy_plan_read(
+    db: Session, plan: LegacyPlan, family: FamilyArchive, store: SecretStore
+) -> LegacyPlanRead:
+    key = family_master_key(family, store)
+    return LegacyPlanRead(
+        id=plan.id,
+        family_id=plan.family_id,
+        successor_person_ids=secure_value(
+            db, family, plan, "successor_person_ids", store, master_key=key
+        ),
+        access_policy=plan.access_policy,
+        steward_label=secure_value(
+            db, family, plan, "steward_label", store, master_key=key
+        ),
+        note=secure_value(db, family, plan, "note", store, master_key=key),
+        confirmed_at=plan.confirmed_at,
+        updated_at=plan.updated_at,
+    )
+
+
+def media_person_tag_read(
+    db: Session, tag: MediaPersonTag, store: SecretStore
+) -> MediaPersonTagRead:
+    family = require(db, FamilyArchive, tag.family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    person = require(db, Person, tag.person_id, "PERSON_NOT_FOUND", "没有找到这位家庭成员。")
+    key = family_master_key(family, store)
+    return MediaPersonTagRead(
+        id=tag.id,
+        family_id=tag.family_id,
+        media_asset_id=tag.media_asset_id,
+        person_id=tag.person_id,
+        person_name=secure_value(db, family, person, "display_name", store, master_key=key),
+        tagged_by=secure_value(db, family, tag, "tagged_by", store, master_key=key),
+        note=secure_value(db, family, tag, "note", store, master_key=key),
+        created_at=tag.created_at,
+    )
+
+
+def generative_request_read(
+    db: Session, request: GenerativeMediaRequest, store: SecretStore
+) -> GenerativeMediaRequestRead:
+    family = request.elder.person.family
+    return GenerativeMediaRequestRead(
+        id=request.id,
+        elder_id=request.elder_id,
+        story_id=request.story_id,
+        generation_type=request.generation_type,
+        provider_key=request.provider_key,
+        status=request.status,
+        actor_label=secure_value(db, family, request, "actor_label", store),
+        subject_consent=request.subject_consent,
+        rights_confirmed=request.rights_confirmed,
+        no_impersonation=request.no_impersonation,
+        allow_external_upload=request.allow_external_upload,
+        estimated_cost_cents=request.estimated_cost_cents,
+        max_cost_cents=request.max_cost_cents,
+        error_code=request.error_code,
+        created_at=request.created_at,
     )
 
 
@@ -3018,14 +3145,649 @@ def get_timeline(
                     if trigger_image
                     else None
                 ),
+                image_asset_id=trigger_image.id if trigger_image else None,
                 image_annotation=(
                     media_link_read(db, trigger_link, secret_store).user_annotation
                     if trigger_link
                     else None
                 ),
+                detail=(
+                    story_detail_read(db, story.detail, secret_store)
+                    if story.detail
+                    else None
+                ),
+                contributions=[
+                    story_contribution_read(db, item, secret_store)
+                    for item in sorted(story.contributions, key=lambda value: value.created_at)
+                ],
+                person_tags=(
+                    [
+                        media_person_tag_read(db, tag, secret_store)
+                        for tag in db.scalars(
+                            select(MediaPersonTag)
+                            .where(MediaPersonTag.media_asset_id == trigger_image.id)
+                            .order_by(MediaPersonTag.created_at)
+                        ).all()
+                    ]
+                    if trigger_image
+                    else []
+                ),
             )
         )
     return items
+
+
+@router.post(
+    "/elder-profiles/{profile_id}/archive-questions",
+    response_model=ArchiveAnswer,
+)
+def ask_family_archive(
+    profile_id: str,
+    payload: ArchiveAskRequest,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> ArchiveAnswer:
+    profile = require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    family = profile.person.family
+    key = family_master_key(family, secret_store)
+    stories = db.scalars(
+        select(Story).where(Story.elder_id == profile.id).order_by(Story.confirmed_at.desc())
+    ).all()
+    documents: list[SearchDocument] = []
+    for story in stories:
+        session = story.source_draft.session
+        audio = db.scalar(
+            select(MediaAsset)
+            .where(
+                MediaAsset.session_id == session.id,
+                MediaAsset.kind == "audio_original",
+                MediaAsset.is_original.is_(True),
+            )
+            .order_by(MediaAsset.created_at.desc())
+        )
+        image = db.scalar(
+            select(MediaAsset)
+            .where(
+                MediaAsset.session_id == session.id,
+                MediaAsset.kind.in_(["photo_original", "old_object_original"]),
+                MediaAsset.is_original.is_(True),
+            )
+            .order_by(MediaAsset.created_at.desc())
+        )
+        documents.append(
+            SearchDocument(
+                story_id=story.id,
+                title=secure_value(db, family, story, "title", secret_store, master_key=key),
+                body=secure_value(db, family, story, "body", secret_store, master_key=key),
+                life_stage=session.life_stage,
+                audio_url=f"/api/v1/media-assets/{audio.id}/content" if audio else None,
+                image_url=f"/api/v1/media-assets/{image.id}/content" if image else None,
+            )
+        )
+    ranked = [item for item in rank_archive(payload.question, documents) if item.score >= 0.2]
+    selected = ranked[: payload.max_citations]
+    answer, follow_up = compose_grounded_answer(payload.question, selected)
+    return ArchiveAnswer(
+        question=payload.question.strip(),
+        status="grounded" if selected else "not_found",
+        answer=answer,
+        citations=[
+            ArchiveCitation(
+                story_id=item.document.story_id,
+                title=item.document.title,
+                life_stage=item.document.life_stage,
+                excerpt=item.excerpt,
+                audio_url=item.document.audio_url,
+                image_url=item.document.image_url,
+                score=item.score,
+            )
+            for item in selected
+        ],
+        follow_up_question=follow_up,
+    )
+
+
+@router.post(
+    "/elder-profiles/{profile_id}/archive-gaps",
+    response_model=MemorySessionRead,
+    status_code=201,
+)
+def create_archive_gap_session(
+    profile_id: str,
+    payload: ArchiveGapCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> MemorySessionRead:
+    profile = require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    family = profile.person.family
+    question = payload.question.strip()
+    digest = hashlib.sha256(question.encode("utf-8")).hexdigest()
+    session = MemorySession(
+        elder_id=profile.id,
+        life_stage=payload.life_stage.strip(),
+        prompt_id=f"family-question:{digest[:20]}:{uuid4().hex[:8]}",
+        question_text=question,
+        status="PROMPT_READY",
+    )
+    db.add(session)
+    db.flush()
+    protect_values(db, family, session, {"question_text": question}, secret_store)
+    event = ConsentEvent(
+        action="create_family_question",
+        actor_label=payload.actor_label.strip(),
+        object_type="memory_session",
+        object_id=session.id,
+    )
+    db.add(event)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        event,
+        {"actor_label": payload.actor_label.strip()},
+        secret_store,
+    )
+    db.commit()
+    db.refresh(session)
+    return memory_session_read(db, session, secret_store)
+
+
+@router.put("/stories/{story_id}/detail", response_model=StoryDetailRead)
+def upsert_story_detail(
+    story_id: str,
+    payload: StoryDetailUpsert,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> StoryDetailRead:
+    story = require(db, Story, story_id, "STORY_NOT_FOUND", "没有找到这篇故事。")
+    family = story.elder.person.family
+    detail = db.scalar(select(StoryDetail).where(StoryDetail.story_id == story.id))
+    values = {
+        "place_name": payload.place_name.strip() if payload.place_name else None,
+        "event_year": payload.event_year,
+        "theme_tags": payload.theme_tags,
+        "summary": payload.summary.strip() if payload.summary else None,
+        "updated_by": payload.updated_by.strip(),
+    }
+    if detail is None:
+        detail = StoryDetail(story_id=story.id, **values)
+        db.add(detail)
+        db.flush()
+    else:
+        for field_name, value in values.items():
+            setattr(detail, field_name, value)
+    protect_values(db, family, detail, values, secret_store)
+    db.commit()
+    db.refresh(detail)
+    return story_detail_read(db, detail, secret_store)
+
+
+@router.post(
+    "/stories/{story_id}/contributions",
+    response_model=StoryContributionRead,
+    status_code=201,
+)
+def create_story_contribution(
+    story_id: str,
+    payload: StoryContributionCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> StoryContributionRead:
+    story = require(db, Story, story_id, "STORY_NOT_FOUND", "没有找到这篇故事。")
+    family = story.elder.person.family
+    if payload.contributor_person_id:
+        person = require(db, Person, payload.contributor_person_id, "PERSON_NOT_FOUND", "没有找到这位家庭成员。")
+        if person.family_id != family.id:
+            raise DomainError("CROSS_FAMILY_PERSON", "不能使用其他家庭的成员身份。", 409)
+    contribution = StoryContribution(
+        story_id=story.id,
+        contributor_person_id=payload.contributor_person_id,
+        contributor_label=payload.contributor_label.strip(),
+        contribution_type=payload.contribution_type,
+        body=payload.body.strip(),
+        status="open",
+    )
+    db.add(contribution)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        contribution,
+        {
+            "contributor_label": payload.contributor_label.strip(),
+            "body": payload.body.strip(),
+        },
+        secret_store,
+    )
+    db.commit()
+    db.refresh(contribution)
+    return story_contribution_read(db, contribution, secret_store)
+
+
+@router.get(
+    "/stories/{story_id}/contributions",
+    response_model=list[StoryContributionRead],
+)
+def list_story_contributions(
+    story_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[StoryContributionRead]:
+    require(db, Story, story_id, "STORY_NOT_FOUND", "没有找到这篇故事。")
+    contributions = db.scalars(
+        select(StoryContribution)
+        .where(StoryContribution.story_id == story_id)
+        .order_by(StoryContribution.created_at)
+    ).all()
+    return [story_contribution_read(db, item, secret_store) for item in contributions]
+
+
+@router.post(
+    "/media-assets/{asset_id}/person-tags",
+    response_model=MediaPersonTagRead,
+    status_code=201,
+)
+def create_media_person_tag(
+    asset_id: str,
+    payload: MediaPersonTagCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> MediaPersonTagRead:
+    asset = require(db, MediaAsset, asset_id, "ASSET_NOT_FOUND", "没有找到这张照片。")
+    if asset.kind not in {"photo_original", "old_object_original"}:
+        raise DomainError("IMAGE_REQUIRED", "只有照片或老物件图片可以标注人物。", 409)
+    family = asset.session.elder.person.family
+    person = require(db, Person, payload.person_id, "PERSON_NOT_FOUND", "没有找到这位家庭成员。")
+    if person.family_id != family.id:
+        raise DomainError("CROSS_FAMILY_PERSON", "不能把其他家庭成员标注到这张照片。", 409)
+    existing = db.scalar(
+        select(MediaPersonTag).where(
+            MediaPersonTag.media_asset_id == asset.id,
+            MediaPersonTag.person_id == person.id,
+        )
+    )
+    if existing:
+        return media_person_tag_read(db, existing, secret_store)
+    tag = MediaPersonTag(
+        family_id=family.id,
+        media_asset_id=asset.id,
+        person_id=person.id,
+        tagged_by=payload.tagged_by.strip(),
+        note=payload.note.strip() if payload.note else None,
+    )
+    db.add(tag)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        tag,
+        {
+            "tagged_by": payload.tagged_by.strip(),
+            "note": payload.note.strip() if payload.note else None,
+        },
+        secret_store,
+    )
+    db.commit()
+    db.refresh(tag)
+    return media_person_tag_read(db, tag, secret_store)
+
+
+@router.get(
+    "/media-assets/{asset_id}/person-tags",
+    response_model=list[MediaPersonTagRead],
+)
+def list_media_person_tags(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[MediaPersonTagRead]:
+    require(db, MediaAsset, asset_id, "ASSET_NOT_FOUND", "没有找到这张照片。")
+    tags = db.scalars(
+        select(MediaPersonTag)
+        .where(MediaPersonTag.media_asset_id == asset_id)
+        .order_by(MediaPersonTag.created_at)
+    ).all()
+    return [media_person_tag_read(db, item, secret_store) for item in tags]
+
+
+@router.get("/families/{family_id}/legacy-plan", response_model=LegacyPlanRead | None)
+def get_legacy_plan(
+    family_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> LegacyPlanRead | None:
+    family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    plan = db.scalar(select(LegacyPlan).where(LegacyPlan.family_id == family.id))
+    return legacy_plan_read(db, plan, family, secret_store) if plan else None
+
+
+@router.put("/families/{family_id}/legacy-plan", response_model=LegacyPlanRead)
+def upsert_legacy_plan(
+    family_id: str,
+    payload: LegacyPlanUpsert,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> LegacyPlanRead:
+    family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
+    people = db.scalars(
+        select(Person).where(Person.id.in_(payload.successor_person_ids))
+    ).all()
+    if len({person.id for person in people}) != len(set(payload.successor_person_ids)) or any(
+        person.family_id != family.id for person in people
+    ):
+        raise DomainError("INVALID_SUCCESSOR", "指定接管人必须全部属于当前家庭。", 409)
+    plan = db.scalar(select(LegacyPlan).where(LegacyPlan.family_id == family.id))
+    values = {
+        "successor_person_ids": list(dict.fromkeys(payload.successor_person_ids)),
+        "steward_label": payload.steward_label.strip(),
+        "note": payload.note.strip() if payload.note else None,
+    }
+    if plan is None:
+        plan = LegacyPlan(
+            family_id=family.id,
+            access_policy=payload.access_policy,
+            confirmed_at=now_utc(),
+            **values,
+        )
+        db.add(plan)
+        db.flush()
+    else:
+        plan.access_policy = payload.access_policy
+        plan.confirmed_at = now_utc()
+        for field_name, value in values.items():
+            setattr(plan, field_name, value)
+    protect_values(db, family, plan, values, secret_store)
+    db.commit()
+    db.refresh(plan)
+    return legacy_plan_read(db, plan, family, secret_store)
+
+
+@router.post("/elder-profiles/{profile_id}/heritage-package")
+def download_heritage_package(
+    profile_id: str,
+    payload: HeritageExportCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> FileResponse:
+    profile = require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    family = profile.person.family
+    key = family_master_key(family, secret_store)
+    family_view = family_read(db, family, secret_store)
+    profile_view = elder_read(db, profile, secret_store)
+    people = db.scalars(
+        select(Person).where(Person.family_id == family.id).order_by(Person.created_at)
+    ).all()
+    relationships = db.scalars(
+        select(PersonRelationship)
+        .where(PersonRelationship.family_id == family.id)
+        .order_by(PersonRelationship.created_at)
+    ).all()
+    stories = db.scalars(
+        select(Story).where(Story.elder_id == profile.id).order_by(Story.confirmed_at)
+    ).all()
+    temp_root = Path(tempfile.mkdtemp(prefix="lingnian-heritage-"))
+    try:
+        media_root = temp_root / "materialized"
+        media_root.mkdir(mode=0o700)
+
+        def materialize(asset: MediaAsset, target_name: str) -> Path:
+            source_path = resolve_controlled_path(
+                get_settings().resolved_asset_root, asset.relative_path
+            )
+            if not verify_asset_integrity(
+                source_path,
+                expected_size=asset.size_bytes,
+                expected_sha256=asset.sha256,
+            ):
+                raise DomainError(
+                    "ASSET_INTEGRITY_FAILED",
+                    "传承包中的媒体校验失败，请先从备份恢复。",
+                    409,
+                )
+            target = media_root / target_name
+            if asset.encryption_version == 0:
+                shutil.copyfile(source_path, target)
+            elif asset.encryption_version == 1 and key is not None:
+                decrypt_media_file(
+                    source_path,
+                    target,
+                    key,
+                    associated_data=media_context(family.id, asset.id),
+                )
+            else:
+                raise DomainError("ASSET_ENCRYPTION_UNSUPPORTED", "无法导出这份加密媒体。", 409)
+            target.chmod(0o600)
+            return target
+
+        heritage_stories: list[HeritageStory] = []
+        type_labels = {
+            "context": "补充背景",
+            "correction": "更正线索",
+            "question": "继续追问",
+            "alternate_memory": "另一种记忆",
+        }
+        for story in stories:
+            story_view = story_read(db, story, secret_store)
+            session = story.source_draft.session
+            audio = db.scalar(
+                select(MediaAsset)
+                .where(
+                    MediaAsset.session_id == session.id,
+                    MediaAsset.kind == "audio_original",
+                    MediaAsset.is_original.is_(True),
+                )
+                .order_by(MediaAsset.created_at.desc())
+            )
+            image = db.scalar(
+                select(MediaAsset)
+                .where(
+                    MediaAsset.session_id == session.id,
+                    MediaAsset.kind.in_(["photo_original", "old_object_original"]),
+                    MediaAsset.is_original.is_(True),
+                )
+                .order_by(MediaAsset.created_at.desc())
+            )
+            audio_media = None
+            if audio:
+                audio_extension = {
+                    "audio/wav": ".wav",
+                    "audio/mpeg": ".mp3",
+                    "audio/mp4": ".m4a",
+                    "audio/webm": ".webm",
+                    "audio/ogg": ".ogg",
+                }.get(audio.mime_type, ".audio")
+                audio_archive_path = f"media/audio/{story.id}{audio_extension}"
+                audio_media = HeritageMedia(
+                    source_path=materialize(audio, f"{story.id}-audio{audio_extension}"),
+                    archive_path=audio_archive_path,
+                    mime_type=audio.mime_type,
+                )
+            image_media = None
+            if image:
+                image_extension = {
+                    "image/jpeg": ".jpg",
+                    "image/png": ".png",
+                    "image/webp": ".webp",
+                }.get(image.mime_type, ".image")
+                image_archive_path = f"media/images/{story.id}{image_extension}"
+                image_media = HeritageMedia(
+                    source_path=materialize(image, f"{story.id}-image{image_extension}"),
+                    archive_path=image_archive_path,
+                    mime_type=image.mime_type,
+                )
+            detail = story_detail_read(db, story.detail, secret_store) if story.detail else None
+            contributions = [
+                story_contribution_read(db, item, secret_store)
+                for item in sorted(story.contributions, key=lambda value: value.created_at)
+            ]
+            heritage_stories.append(
+                HeritageStory(
+                    story_id=story.id,
+                    title=story_view.title,
+                    body=story_view.body,
+                    life_stage=session.life_stage,
+                    confirmed_at=story_view.confirmed_at.isoformat(),
+                    place_name=detail.place_name if detail else None,
+                    event_year=detail.event_year if detail else None,
+                    theme_tags=detail.theme_tags if detail else [],
+                    contributions=[
+                        {
+                            "contributor_label": item.contributor_label,
+                            "contribution_type": item.contribution_type,
+                            "type_label": type_labels.get(item.contribution_type, "家人补充"),
+                            "body": item.body,
+                            "status": item.status,
+                            "created_at": item.created_at.isoformat(),
+                        }
+                        for item in contributions
+                    ],
+                    audio=audio_media,
+                    image=image_media,
+                )
+            )
+        output = temp_root / f"lingnian-heritage-{profile.id}.zip"
+        build_heritage_package(
+            output_path=output,
+            family_name=family_view.display_name,
+            storyteller_name=profile_view.preferred_name,
+            profile={
+                "id": profile_view.id,
+                "display_name": profile_view.display_name,
+                "preferred_name": profile_view.preferred_name,
+                "birth_year": profile_view.birth_year,
+                "birth_era": profile_view.birth_era,
+                "native_place": profile_view.native_place,
+                "occupation_summary": profile_view.occupation_summary,
+            },
+            people=[person_read(db, person, secret_store).model_dump(mode="json") for person in people],
+            relationships=[
+                relationship_read(db, item, secret_store).model_dump(mode="json")
+                for item in relationships
+            ],
+            stories=heritage_stories,
+        )
+        event = ConsentEvent(
+            action="export_heritage_package",
+            actor_label=payload.actor_label.strip(),
+            object_type="elder_profile",
+            object_id=profile.id,
+        )
+        db.add(event)
+        db.flush()
+        protect_values(
+            db,
+            family,
+            event,
+            {"actor_label": payload.actor_label.strip()},
+            secret_store,
+        )
+        db.commit()
+    except Exception:
+        shutil.rmtree(temp_root, ignore_errors=True)
+        raise
+    filename = f"lingnian-heritage-{profile.id}.zip"
+    return FileResponse(
+        output,
+        media_type="application/zip",
+        filename=filename,
+        background=BackgroundTask(shutil.rmtree, temp_root, ignore_errors=True),
+    )
+
+
+@router.get(
+    "/generative-media/capabilities",
+    response_model=list[GenerativeMediaCapability],
+)
+def get_generative_media_capabilities() -> list[GenerativeMediaCapability]:
+    return [GenerativeMediaCapability(**item.__dict__) for item in capability_catalog()]
+
+
+@router.get(
+    "/elder-profiles/{profile_id}/generative-media-requests",
+    response_model=list[GenerativeMediaRequestRead],
+)
+def list_generative_media_requests(
+    profile_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> list[GenerativeMediaRequestRead]:
+    require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    requests = db.scalars(
+        select(GenerativeMediaRequest)
+        .where(GenerativeMediaRequest.elder_id == profile_id)
+        .order_by(GenerativeMediaRequest.created_at.desc())
+    ).all()
+    return [generative_request_read(db, item, secret_store) for item in requests]
+
+
+@router.post(
+    "/elder-profiles/{profile_id}/generative-media-requests",
+    response_model=GenerativeMediaRequestRead,
+    status_code=201,
+)
+def create_generative_media_request(
+    profile_id: str,
+    payload: GenerativeMediaRequestCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> GenerativeMediaRequestRead:
+    profile = require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    family = profile.person.family
+    if payload.story_id:
+        story = require(db, Story, payload.story_id, "STORY_NOT_FOUND", "没有找到这篇故事。")
+        if story.elder_id != profile.id:
+            raise DomainError("CROSS_ELDER_STORY", "不能使用其他讲述者的故事。", 409)
+    if not payload.rights_confirmed or not payload.no_impersonation:
+        raise DomainError("MEDIA_RIGHTS_REQUIRED", "请先确认素材使用权和不用于冒充本人。", 409)
+    capability = next(
+        (item for item in capability_catalog() if item.generation_type == payload.generation_type),
+        None,
+    )
+    if capability is None:
+        raise DomainError("UNSUPPORTED_GENERATION_TYPE", "暂不支持这种生成类型。", 422)
+    if capability.requires_subject_consent and not payload.subject_consent:
+        raise DomainError("SUBJECT_CONSENT_REQUIRED", "人物影像或声音生成必须有讲述者本人明确授权。", 409)
+    provider_key, estimated_cost, status = estimate_request(payload.generation_type)
+    canonical = json.dumps(
+        {
+            "elder_id": profile.id,
+            "story_id": payload.story_id,
+            "generation_type": payload.generation_type,
+            "allow_external_upload": payload.allow_external_upload,
+            "max_cost_cents": payload.max_cost_cents,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    request = GenerativeMediaRequest(
+        elder_id=profile.id,
+        story_id=payload.story_id,
+        generation_type=payload.generation_type,
+        provider_key=provider_key,
+        status=status,
+        actor_label=payload.actor_label.strip(),
+        subject_consent=payload.subject_consent,
+        rights_confirmed=payload.rights_confirmed,
+        no_impersonation=payload.no_impersonation,
+        allow_external_upload=payload.allow_external_upload,
+        estimated_cost_cents=estimated_cost,
+        max_cost_cents=payload.max_cost_cents,
+        request_sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        error_code="PROVIDER_NOT_CONFIGURED",
+    )
+    db.add(request)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        request,
+        {"actor_label": payload.actor_label.strip()},
+        secret_store,
+    )
+    db.commit()
+    db.refresh(request)
+    return generative_request_read(db, request, secret_store)
 
 
 @router.get("/media-assets/{asset_id}/content")

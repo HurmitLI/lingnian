@@ -208,6 +208,12 @@ class Story(TimestampMixin, Base):
     timeline_events: Mapped[list[TimelineEvent]] = relationship(
         back_populates="story", cascade="all, delete-orphan"
     )
+    detail: Mapped[StoryDetail | None] = relationship(
+        back_populates="story", uselist=False, cascade="all, delete-orphan"
+    )
+    contributions: Mapped[list[StoryContribution]] = relationship(
+        back_populates="story", cascade="all, delete-orphan"
+    )
 
 
 class TimelineEvent(TimestampMixin, Base):
@@ -220,6 +226,40 @@ class TimelineEvent(TimestampMixin, Base):
     confidence: Mapped[str] = mapped_column(String(24), default="uncertain")
 
     story: Mapped[Story] = relationship(back_populates="timeline_events")
+
+
+class StoryDetail(TimestampMixin, Base):
+    __tablename__ = "story_details"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    story_id: Mapped[str] = mapped_column(
+        ForeignKey("stories.id", ondelete="CASCADE"), unique=True
+    )
+    place_name: Mapped[str | None] = mapped_column(String(160))
+    event_year: Mapped[int | None] = mapped_column(Integer)
+    theme_tags: Mapped[list] = mapped_column(JSON, default=list)
+    summary: Mapped[str | None] = mapped_column(Text)
+    updated_by: Mapped[str] = mapped_column(String(80))
+
+    story: Mapped[Story] = relationship(back_populates="detail")
+
+
+class StoryContribution(TimestampMixin, Base):
+    __tablename__ = "story_contributions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    story_id: Mapped[str] = mapped_column(
+        ForeignKey("stories.id", ondelete="CASCADE")
+    )
+    contributor_person_id: Mapped[str | None] = mapped_column(
+        ForeignKey("people.id", ondelete="SET NULL")
+    )
+    contributor_label: Mapped[str] = mapped_column(String(80))
+    contribution_type: Mapped[str] = mapped_column(String(32))
+    body: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(24), default="open")
+
+    story: Mapped[Story] = relationship(back_populates="contributions")
 
 
 class WorkflowTask(TimestampMixin, Base):
@@ -544,3 +584,62 @@ class Keepsake(TimestampMixin, Base):
     authorization: Mapped[KeepsakeAuthorization] = relationship(
         back_populates="keepsake"
     )
+
+
+class LegacyPlan(TimestampMixin, Base):
+    __tablename__ = "legacy_plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(
+        ForeignKey("family_archives.id", ondelete="CASCADE"), unique=True
+    )
+    successor_person_ids: Mapped[list] = mapped_column(JSON, default=list)
+    access_policy: Mapped[str] = mapped_column(String(40), default="manual_handoff")
+    steward_label: Mapped[str] = mapped_column(String(80))
+    note: Mapped[str | None] = mapped_column(Text)
+    confirmed_at: Mapped[datetime] = mapped_column(default=now_utc)
+
+
+class MediaPersonTag(TimestampMixin, Base):
+    __tablename__ = "media_person_tags"
+    __table_args__ = (
+        UniqueConstraint("media_asset_id", "person_id", name="uq_media_person_tag"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(
+        ForeignKey("family_archives.id", ondelete="CASCADE")
+    )
+    media_asset_id: Mapped[str] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="CASCADE")
+    )
+    person_id: Mapped[str] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"))
+    tagged_by: Mapped[str] = mapped_column(String(80))
+    note: Mapped[str | None] = mapped_column(Text)
+
+
+class GenerativeMediaRequest(TimestampMixin, Base):
+    __tablename__ = "generative_media_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    elder_id: Mapped[str] = mapped_column(
+        ForeignKey("elder_profiles.id", ondelete="CASCADE")
+    )
+    story_id: Mapped[str | None] = mapped_column(
+        ForeignKey("stories.id", ondelete="SET NULL")
+    )
+    generation_type: Mapped[str] = mapped_column(String(40))
+    provider_key: Mapped[str] = mapped_column(String(80), default="not_configured")
+    status: Mapped[str] = mapped_column(String(32), default="awaiting_provider")
+    actor_label: Mapped[str] = mapped_column(String(80))
+    subject_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    rights_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    no_impersonation: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_external_upload: Mapped[bool] = mapped_column(Boolean, default=False)
+    estimated_cost_cents: Mapped[int] = mapped_column(Integer, default=0)
+    max_cost_cents: Mapped[int] = mapped_column(Integer, default=0)
+    request_sha256: Mapped[str] = mapped_column(String(64))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+
+    elder: Mapped[ElderProfile] = relationship()
+    story: Mapped[Story | None] = relationship()

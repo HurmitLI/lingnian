@@ -311,6 +311,10 @@ class MemoryBookRead(ORMModel):
     created_at: datetime
 
 
+class HeritageExportCreate(BaseModel):
+    actor_label: str = Field(min_length=1, max_length=80)
+
+
 class KeepsakeCatalogItem(BaseModel):
     story_id: str
     title: str
@@ -435,6 +439,169 @@ class StoryRead(ORMModel):
     confirmed_at: datetime
 
 
+class StoryDetailUpsert(BaseModel):
+    place_name: str | None = Field(default=None, max_length=160)
+    event_year: int | None = Field(default=None, ge=1800, le=2100)
+    theme_tags: list[str] = Field(default_factory=list, max_length=12)
+    summary: str | None = Field(default=None, max_length=1000)
+    updated_by: str = Field(min_length=1, max_length=80)
+
+    @field_validator("theme_tags")
+    @classmethod
+    def validate_theme_tags(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            item = value.strip()
+            if not item:
+                continue
+            if len(item) > 24:
+                raise ValueError("每个主题标签不能超过 24 个字。")
+            if item not in cleaned:
+                cleaned.append(item)
+        return cleaned
+
+
+class StoryDetailRead(ORMModel):
+    id: str
+    story_id: str
+    place_name: str | None
+    event_year: int | None
+    theme_tags: list[str]
+    summary: str | None
+    updated_by: str
+    updated_at: datetime
+
+
+class StoryContributionCreate(BaseModel):
+    contributor_person_id: str | None = None
+    contributor_label: str = Field(min_length=1, max_length=80)
+    contribution_type: str = Field(
+        pattern="^(context|correction|question|alternate_memory)$"
+    )
+    body: str = Field(min_length=1, max_length=5000)
+
+
+class StoryContributionRead(ORMModel):
+    id: str
+    story_id: str
+    contributor_person_id: str | None
+    contributor_label: str
+    contribution_type: str
+    body: str
+    status: str
+    created_at: datetime
+
+
+class ArchiveAskRequest(BaseModel):
+    question: str = Field(min_length=2, max_length=300)
+    max_citations: int = Field(default=3, ge=1, le=5)
+
+
+class ArchiveCitation(BaseModel):
+    story_id: str
+    title: str
+    life_stage: str
+    excerpt: str
+    audio_url: str | None = None
+    image_url: str | None = None
+    score: float
+
+
+class ArchiveAnswer(BaseModel):
+    question: str
+    status: str
+    answer: str
+    citations: list[ArchiveCitation]
+    follow_up_question: str | None = None
+    answer_mode: str = "local_extract_with_sources"
+
+
+class ArchiveGapCreate(BaseModel):
+    question: str = Field(min_length=2, max_length=300)
+    actor_label: str = Field(min_length=1, max_length=80)
+    life_stage: str = Field(default="家人提问", min_length=1, max_length=40)
+
+
+class LegacyPlanUpsert(BaseModel):
+    successor_person_ids: list[str] = Field(min_length=1, max_length=20)
+    access_policy: str = Field(
+        default="manual_handoff",
+        pattern="^(manual_handoff|joint_family_review|designated_steward)$",
+    )
+    steward_label: str = Field(min_length=1, max_length=80)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class LegacyPlanRead(ORMModel):
+    id: str
+    family_id: str
+    successor_person_ids: list[str]
+    access_policy: str
+    steward_label: str
+    note: str | None
+    confirmed_at: datetime
+    updated_at: datetime
+
+
+class MediaPersonTagCreate(BaseModel):
+    person_id: str
+    tagged_by: str = Field(min_length=1, max_length=80)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class MediaPersonTagRead(ORMModel):
+    id: str
+    family_id: str
+    media_asset_id: str
+    person_id: str
+    person_name: str
+    tagged_by: str
+    note: str | None
+    created_at: datetime
+
+
+class GenerativeMediaCapability(BaseModel):
+    generation_type: str
+    label: str
+    available: bool
+    provider_key: str | None
+    requires_external_upload: bool
+    requires_subject_consent: bool
+    estimated_cost_cents: int | None
+    unavailable_reason: str | None
+
+
+class GenerativeMediaRequestCreate(BaseModel):
+    story_id: str | None = None
+    generation_type: str = Field(
+        pattern="^(photo_restore|portrait_video|scene_video|voice_replica)$"
+    )
+    actor_label: str = Field(min_length=1, max_length=80)
+    subject_consent: bool
+    rights_confirmed: bool
+    no_impersonation: bool
+    allow_external_upload: bool
+    max_cost_cents: int = Field(default=0, ge=0, le=100_000)
+
+
+class GenerativeMediaRequestRead(ORMModel):
+    id: str
+    elder_id: str
+    story_id: str | None
+    generation_type: str
+    provider_key: str
+    status: str
+    actor_label: str
+    subject_consent: bool
+    rights_confirmed: bool
+    no_impersonation: bool
+    allow_external_upload: bool
+    estimated_cost_cents: int
+    max_cost_cents: int
+    error_code: str | None
+    created_at: datetime
+
+
 class TimelineEventRead(ORMModel):
     id: str
     story_id: str
@@ -449,7 +616,11 @@ class TimelineItem(BaseModel):
     events: list[TimelineEventRead]
     audio_url: str | None = None
     image_url: str | None = None
+    image_asset_id: str | None = None
     image_annotation: str | None = None
+    detail: StoryDetailRead | None = None
+    contributions: list[StoryContributionRead] = Field(default_factory=list)
+    person_tags: list[MediaPersonTagRead] = Field(default_factory=list)
 
 
 class SessionDetail(BaseModel):

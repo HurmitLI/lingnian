@@ -36,7 +36,20 @@ const timelineItem = {
   events: [],
   audio_url: null,
   image_url: null,
+  image_asset_id: null,
   image_annotation: null,
+  detail: {
+    id: "detail-test",
+    story_id: "story-test",
+    place_name: "测试河边",
+    event_year: 1960,
+    theme_tags: ["童年", "夏天"],
+    summary: "一段发生在河边的虚构童年故事。",
+    updated_by: "测试家人",
+    updated_at: "2026-08-29T09:00:00Z",
+  },
+  contributions: [],
+  person_tags: [],
 };
 
 const unexpectedBrowserErrors = new WeakMap<Page, string[]>();
@@ -59,6 +72,23 @@ async function mockLocalApi(page: Page) {
       body = [];
     } else if (path.endsWith("/memory-sessions")) {
       body = [session];
+    } else if (path.endsWith("/people")) {
+      body = [{ id: "person-test", family_id: profile.family_id, role: "family_member", display_name: "测试女儿", created_at: "2026-08-29T08:00:00Z" }];
+    } else if (path.endsWith("/legacy-plan")) {
+      body = null;
+    } else if (path === "/api/v1/generative-media/capabilities") {
+      body = [{ generation_type: "portrait_video", label: "人物讲述视频", available: false, provider_key: null, requires_external_upload: true, requires_subject_consent: true, estimated_cost_cents: null, unavailable_reason: "尚未配置付费服务。" }];
+    } else if (path.endsWith("/generative-media-requests")) {
+      body = [];
+    } else if (path.endsWith("/archive-questions")) {
+      body = {
+        question: "小时候常去哪里？",
+        status: "grounded",
+        answer: "在已确认的家庭档案里，最相关的是《河边的夏天》。",
+        citations: [{ story_id: timelineItem.story.id, title: timelineItem.story.title, life_stage: "童年", excerpt: timelineItem.story.body, audio_url: null, image_url: null, score: 0.9 }],
+        follow_up_question: null,
+        answer_mode: "local_extract_with_sources",
+      };
     } else if (path === `/api/v1/memory-sessions/${session.id}`) {
       body = { session, media_assets: [], transcript: null, story_draft: null, tasks: [] };
     }
@@ -123,6 +153,21 @@ test("回忆档案可以搜索并清除筛选", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "没有找到符合条件的故事" })).toBeVisible();
   await page.getByRole("button", { name: "清除筛选" }).click();
   await expect(page.getByRole("heading", { name: timelineItem.story.title })).toBeVisible();
+});
+
+test("家族记忆可以溯源回答并浏览人生轨迹", async ({ page }) => {
+  await page.goto("/memory");
+  await expect(page.getByRole("heading", { level: 1, name: "让后来的人，不只看到一份文件" })).toBeVisible();
+  await page.getByLabel("你想知道什么？").fill("小时候常去哪里？");
+  await page.getByRole("button", { name: "从家庭档案里找答案" }).click();
+  await expect(page.getByText("来自已确认档案")).toBeVisible();
+  await expect(page.getByRole("heading", { name: timelineItem.story.title })).toBeVisible();
+  await page.getByRole("button", { name: "人生轨迹" }).click();
+  await expect(page.getByText("测试河边")).toBeVisible();
+  const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(hasOverflow).toBe(false);
+  const accessibility = await new AxeBuilder({ page }).analyze();
+  expect(accessibility.violations, accessibility.violations.map((item) => `${item.id}: ${item.help}`).join("\n")).toEqual([]);
 });
 
 test("平板和宽屏断点保持可用", async ({ page, isMobile }) => {

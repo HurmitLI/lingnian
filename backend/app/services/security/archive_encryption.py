@@ -14,8 +14,11 @@ from app.models import (
     ConsentEvent,
     ElderProfile,
     FamilyArchive,
+    GenerativeMediaRequest,
+    LegacyPlan,
     MediaAsset,
     MediaLink,
+    MediaPersonTag,
     MemoryBook,
     MemoryFact,
     MemorySession,
@@ -23,6 +26,8 @@ from app.models import (
     Person,
     PersonRelationship,
     Story,
+    StoryContribution,
+    StoryDetail,
     StoryDraft,
     TimelineEvent,
     TopicPreference,
@@ -237,6 +242,45 @@ def activate_archive_encryption(
                 },
                 master_key=master_key,
             )
+        details = (
+            list(db.scalars(select(StoryDetail).where(StoryDetail.story_id.in_(story_ids))).all())
+            if story_ids
+            else []
+        )
+        for detail in details:
+            field_count += _protect_object(
+                db,
+                family=family,
+                obj=detail,
+                fields={
+                    "place_name": TEXT_PLACEHOLDER,
+                    "event_year": None,
+                    "theme_tags": [],
+                    "summary": TEXT_PLACEHOLDER,
+                    "updated_by": TEXT_PLACEHOLDER,
+                },
+                master_key=master_key,
+            )
+        contributions = (
+            list(
+                db.scalars(
+                    select(StoryContribution).where(StoryContribution.story_id.in_(story_ids))
+                ).all()
+            )
+            if story_ids
+            else []
+        )
+        for contribution in contributions:
+            field_count += _protect_object(
+                db,
+                family=family,
+                obj=contribution,
+                fields={
+                    "contributor_label": TEXT_PLACEHOLDER,
+                    "body": TEXT_PLACEHOLDER,
+                },
+                master_key=master_key,
+            )
         events = (
             list(
                 db.scalars(
@@ -291,6 +335,48 @@ def activate_archive_encryption(
                 db,
                 family=family,
                 obj=consent,
+                fields={"actor_label": TEXT_PLACEHOLDER},
+                master_key=master_key,
+            )
+        legacy_plan = db.scalar(select(LegacyPlan).where(LegacyPlan.family_id == family.id))
+        if legacy_plan:
+            field_count += _protect_object(
+                db,
+                family=family,
+                obj=legacy_plan,
+                fields={
+                    "successor_person_ids": [],
+                    "steward_label": TEXT_PLACEHOLDER,
+                    "note": TEXT_PLACEHOLDER,
+                },
+                master_key=master_key,
+            )
+        for tag in db.scalars(
+            select(MediaPersonTag).where(MediaPersonTag.family_id == family.id)
+        ).all():
+            field_count += _protect_object(
+                db,
+                family=family,
+                obj=tag,
+                fields={"tagged_by": TEXT_PLACEHOLDER, "note": TEXT_PLACEHOLDER},
+                master_key=master_key,
+            )
+        requests = (
+            list(
+                db.scalars(
+                    select(GenerativeMediaRequest).where(
+                        GenerativeMediaRequest.elder_id.in_(profile_ids)
+                    )
+                ).all()
+            )
+            if profile_ids
+            else []
+        )
+        for request in requests:
+            field_count += _protect_object(
+                db,
+                family=family,
+                obj=request,
                 fields={"actor_label": TEXT_PLACEHOLDER},
                 master_key=master_key,
             )

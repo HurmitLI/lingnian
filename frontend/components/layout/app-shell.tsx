@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { BookHeart, Film, Home, Mic2, ShieldCheck, Users } from "lucide-react";
+import { BookHeart, Home, LibraryBig, Mic2, ShieldCheck, Users } from "lucide-react";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
@@ -17,7 +17,7 @@ const DESKTOP_NAV_ITEMS = [
   NAV_ITEMS[0],
   NAV_ITEMS[1],
   NAV_ITEMS[2],
-  { href: "/keepsake", label: "原声视频", icon: Film },
+  { href: "/memory", label: "家族记忆", icon: LibraryBig },
   NAV_ITEMS[3],
 ] as const;
 
@@ -50,7 +50,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
       <nav className="mobile-nav" aria-label="手机主导航">
         {NAV_ITEMS.map((item) => {
-          const active = pathname === item.href || (pathname === "/keepsake" && item.href === "/archive");
+          const active = pathname === item.href || (["/keepsake", "/memory"].includes(pathname) && item.href === "/archive");
           const Icon = item.icon;
           return (
             <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined}>

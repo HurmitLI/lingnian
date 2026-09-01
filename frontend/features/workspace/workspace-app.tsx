@@ -1439,8 +1439,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           )}
           {timeline.length > 0 && (
             <div className="archive-keepsake-entry">
-              <div><span className="card-kicker">下一步 · 原声念想</span><strong>把亲口讲过的故事，留成一段视频</strong><p>使用原始录音在这台 Mac 上合成，不克隆声音，也不上传第三方。</p></div>
-              <Link className="button primary button-link" href={`/keepsake?elder=${selectedProfile.id}`}>制作原声视频</Link>
+              <div><span className="card-kicker">下一步 · 家族记忆</span><strong>让家人听、问、补充，也能完整带走</strong><p>进入声音故事馆、人生轨迹、档案问答和传承保存；快速影像导出继续作为辅助工具保留。</p></div>
+              <div className="button-row"><Link className="button primary button-link" href="/memory">进入家族记忆</Link><Link className="button quiet button-link" href={`/keepsake?elder=${selectedProfile.id}`}>快速影像导出</Link></div>
             </div>
           )}
         </section>

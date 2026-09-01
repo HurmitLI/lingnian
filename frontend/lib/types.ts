@@ -251,7 +251,103 @@ export type TimelineItem = {
   }>;
   audio_url: string | null;
   image_url: string | null;
+  image_asset_id: string | null;
   image_annotation: string | null;
+  detail: StoryDetail | null;
+  contributions: StoryContribution[];
+  person_tags: MediaPersonTag[];
+};
+
+export type StoryDetail = {
+  id: string;
+  story_id: string;
+  place_name: string | null;
+  event_year: number | null;
+  theme_tags: string[];
+  summary: string | null;
+  updated_by: string;
+  updated_at: string;
+};
+
+export type StoryContribution = {
+  id: string;
+  story_id: string;
+  contributor_person_id: string | null;
+  contributor_label: string;
+  contribution_type: "context" | "correction" | "question" | "alternate_memory";
+  body: string;
+  status: string;
+  created_at: string;
+};
+
+export type MediaPersonTag = {
+  id: string;
+  family_id: string;
+  media_asset_id: string;
+  person_id: string;
+  person_name: string;
+  tagged_by: string;
+  note: string | null;
+  created_at: string;
+};
+
+export type ArchiveCitation = {
+  story_id: string;
+  title: string;
+  life_stage: string;
+  excerpt: string;
+  audio_url: string | null;
+  image_url: string | null;
+  score: number;
+};
+
+export type ArchiveAnswer = {
+  question: string;
+  status: "grounded" | "not_found";
+  answer: string;
+  citations: ArchiveCitation[];
+  follow_up_question: string | null;
+  answer_mode: "local_extract_with_sources";
+};
+
+export type LegacyPlan = {
+  id: string;
+  family_id: string;
+  successor_person_ids: string[];
+  access_policy: "manual_handoff" | "joint_family_review" | "designated_steward";
+  steward_label: string;
+  note: string | null;
+  confirmed_at: string;
+  updated_at: string;
+};
+
+export type GenerativeMediaCapability = {
+  generation_type: "photo_restore" | "portrait_video" | "scene_video" | "voice_replica";
+  label: string;
+  available: boolean;
+  provider_key: string | null;
+  requires_external_upload: boolean;
+  requires_subject_consent: boolean;
+  estimated_cost_cents: number | null;
+  unavailable_reason: string | null;
+};
+
+export type GenerativeMediaRequest = {
+  id: string;
+  elder_id: string;
+  story_id: string | null;
+  generation_type: string;
+  provider_key: string;
+  status: string;
+  actor_label: string;
+  subject_consent: boolean;
+  rights_confirmed: boolean;
+  no_impersonation: boolean;
+  allow_external_upload: boolean;
+  estimated_cost_cents: number;
+  max_cost_cents: number;
+  error_code: string | null;
+  created_at: string;
 };
 
 export type Health = {
