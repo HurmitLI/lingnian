@@ -105,16 +105,16 @@ export default async function ShowcasePage() {
                     controls
                     playsInline
                     preload="metadata"
-                    poster="/showcase/shen-suqin-home.png"
+                    poster="/showcase/fictional-grandmother-source.png"
                     aria-label="播放家庭影像：包里还装着那天没说完的话"
                   >
-                    <source src="/showcase/shen-suqin-story.mp4?v=5" type="video/mp4" />
+                    <source src="/showcase/shen-suqin-portrait-story.mp4?v=2" type="video/mp4" />
                     当前浏览器不支持视频播放。
                   </video>
                 </div>
 
                 <div className="demo-memory-meta">
-                  <span><Film size={15} aria-hidden="true" />原声影像 · 01:29</span>
+                  <span><Film size={15} aria-hidden="true" />人物讲述 · 00:08</span>
                   <span>离家 · 母亲 · 1982 年</span>
                 </div>
               </section>
@@ -161,7 +161,7 @@ export default async function ShowcasePage() {
             <aside className="demo-app-aside" aria-label="档案概览">
               <section className="demo-profile-card">
                 <div className="demo-profile-cover">
-                  <Image src="/showcase/shen-suqin-home.png" fill unoptimized sizes="320px" alt="沈素琴坐在家中，怀里抱着旧蓝布包" />
+                  <Image src="/showcase/fictional-grandmother-source.png" fill unoptimized sizes="320px" alt="沈素琴坐在家中准备讲述往事" />
                 </div>
                 <div className="demo-profile-copy">
                   <span className="demo-profile-avatar">沈</span>
