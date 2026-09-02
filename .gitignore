@@ -8,6 +8,7 @@ data/db/*
 data/assets/original/*
 data/assets/derived/*
 data/assets/keepsakes/*
+data/assets/generated/*
 data/quarantine/*
 data/backups/*
 data/exports/*

@@ -49,7 +49,8 @@ export default function GenerationReviewWorkbench({
 
   async function registerTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     setBusyRequestId("new");
     try {
       const maxCostYuan = Number(form.get("maxCostYuan") || 0);
@@ -67,7 +68,7 @@ export default function GenerationReviewWorkbench({
         }),
       });
       await refresh();
-      event.currentTarget.reset();
+      formElement.reset();
       onNotice("制作任务已经登记。导入成片后仍必须逐项人工验收，不会自动进入正式展示。");
     } catch (error) {
       onError(error);
