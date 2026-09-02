@@ -8,7 +8,7 @@ test("未登录时页面和媒体均被隔离，邀请码登录后可只读浏�
   await expect(page).toHaveURL(/\/demo-login$/);
   await expect(page.getByRole("heading", { name: "打开沈家的回忆" })).toBeVisible();
 
-  const blockedMedia = await page.request.get("/showcase/shen-suqin-portrait-story.mp4");
+  const blockedMedia = await page.request.get("/showcase/shen-suqin-story.mp4");
   expect(blockedMedia.status()).toBe(401);
   expect(blockedMedia.headers()["cache-control"]).toContain("no-store");
 
@@ -30,7 +30,7 @@ test("未登录时页面和媒体均被隔离，邀请码登录后可只读浏�
   const allowedMedia = await page.request.get("/showcase/fictional-grandmother-source.png");
   expect(allowedMedia.status()).toBe(200);
   expect(allowedMedia.headers()["x-robots-tag"]).toBe("noindex, nofollow");
-  const allowedVideo = await page.request.get("/showcase/shen-suqin-portrait-story.mp4?v=2", {
+  const allowedVideo = await page.request.get("/showcase/shen-suqin-story.mp4?v=6", {
     headers: { range: "bytes=0-1023" },
   });
   expect(allowedVideo.status()).toBe(206);

@@ -42,10 +42,10 @@ const STORY_PARAGRAPHS = [
 ];
 
 const MEMORY_STEPS = [
-  { icon: Mic2, label: "原声讲述", detail: "保留语气和停顿" },
+  { icon: Mic2, label: "故事旁白", detail: "已配完整叙述声音" },
   { icon: Type, label: "家人校对", detail: "确认每一句原话" },
   { icon: BookOpenText, label: "整理故事", detail: "不补写未知事实" },
-  { icon: Film, label: "家庭影像", detail: "照片、原声和字幕" },
+  { icon: Film, label: "家庭影像", detail: "照片、旁白和字幕" },
 ] as const;
 
 export default async function ShowcasePage() {
@@ -105,16 +105,16 @@ export default async function ShowcasePage() {
                     controls
                     playsInline
                     preload="metadata"
-                    poster="/showcase/fictional-grandmother-source.png"
+                    poster="/showcase/shen-suqin-station-1982.png"
                     aria-label="播放家庭影像：包里还装着那天没说完的话"
                   >
-                    <source src="/showcase/shen-suqin-portrait-story.mp4?v=2" type="video/mp4" />
+                    <source src="/showcase/shen-suqin-story.mp4?v=6" type="video/mp4" />
                     当前浏览器不支持视频播放。
                   </video>
                 </div>
 
                 <div className="demo-memory-meta">
-                  <span><Film size={15} aria-hidden="true" />人物讲述 · 00:08</span>
+                  <span><Film size={15} aria-hidden="true" />故事影像 · 01:29</span>
                   <span>离家 · 母亲 · 1982 年</span>
                 </div>
               </section>
