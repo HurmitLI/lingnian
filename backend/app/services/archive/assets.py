@@ -29,6 +29,10 @@ IMAGE_MIME_EXTENSIONS = {
     "image/webp": ".webp",
 }
 
+VIDEO_MIME_EXTENSIONS = {
+    "video/mp4": ".mp4",
+}
+
 
 def normalized_mime(content_type: str | None) -> str:
     return (content_type or "").split(";", 1)[0].strip().lower()
@@ -189,6 +193,74 @@ async def store_image_upload(
             "sha256": digest.hexdigest(),
             "width": width,
             "height": height,
+        }
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        await upload.close()
+
+
+async def store_video_upload(
+    upload: UploadFile, session_id: str, settings: Settings
+) -> dict:
+    """Store a generated MP4 for local human review.
+
+    Generated video is deliberately kept separate from original family media and
+    is never considered accepted merely because the file can be parsed.
+    """
+
+    mime = normalized_mime(upload.content_type)
+    extension = VIDEO_MIME_EXTENSIONS.get(mime)
+    if not extension:
+        raise DomainError("VIDEO_TYPE_NOT_ALLOWED", "当前只支持 MP4 成片。", 415)
+
+    asset_root = settings.resolved_asset_root
+    quarantine = asset_root / "quarantine"
+    generated = asset_root / "assets/generated"
+    quarantine.mkdir(parents=True, exist_ok=True)
+    generated.mkdir(parents=True, exist_ok=True)
+
+    generated_name = f"{uuid4()}{extension}"
+    temp_path = quarantine / f"{generated_name}.uploading"
+    digest = hashlib.sha256()
+    size = 0
+    header = b""
+    marker_window = b""
+    has_moov = False
+    has_mdat = False
+
+    try:
+        with temp_path.open("wb") as destination:
+            while chunk := await upload.read(1024 * 1024):
+                if not header:
+                    header = chunk[:32]
+                size += len(chunk)
+                if size > settings.max_video_bytes:
+                    raise DomainError("VIDEO_TOO_LARGE", "这个视频超过当前 500 MB 限制。", 413)
+                digest.update(chunk)
+                destination.write(chunk)
+                searchable = marker_window + chunk
+                has_moov = has_moov or b"moov" in searchable
+                has_mdat = has_mdat or b"mdat" in searchable
+                marker_window = searchable[-3:]
+
+        if size == 0:
+            raise DomainError("VIDEO_EMPTY", "没有读取到视频内容。", 400)
+        if len(header) < 12 or header[4:8] != b"ftyp" or not has_moov or not has_mdat:
+            raise DomainError("VIDEO_CONTENT_MISMATCH", "文件内容不是完整的 MP4 视频。", 415)
+
+        relative_path = f"assets/generated/{session_id}/{generated_name}"
+        final_path = resolve_controlled_path(asset_root, relative_path)
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(temp_path, final_path)
+        final_path.chmod(0o600)
+        return {
+            "relative_path": relative_path,
+            "original_filename": Path(upload.filename or "generated-video.mp4").name[:240],
+            "mime_type": mime,
+            "size_bytes": size,
+            "sha256": digest.hexdigest(),
         }
     except Exception:
         temp_path.unlink(missing_ok=True)

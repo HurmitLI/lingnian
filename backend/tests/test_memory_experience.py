@@ -7,7 +7,15 @@ from PIL import Image
 from sqlalchemy import select
 
 from app.main import app
-from app.models import ConsentEvent, GenerativeMediaRequest, LegacyPlan, MediaPersonTag, StoryContribution, StoryDetail
+from app.models import (
+    ConsentEvent,
+    GenerativeMediaRequest,
+    LegacyPlan,
+    MediaAsset,
+    MediaPersonTag,
+    StoryContribution,
+    StoryDetail,
+)
 from app.services.security import InMemorySecretStore, get_secret_store
 from test_api_flow import create_profile, upload_test_audio
 
@@ -241,6 +249,101 @@ def test_paid_media_requests_are_recorded_but_never_executed(client):
     assert recorded.json()["error_code"] == "PROVIDER_NOT_CONFIGURED"
     assert recorded.json()["estimated_cost_cents"] == 0
 
+    imported = client.post(
+        f"/api/v1/generative-media-requests/{recorded.json()['id']}/result",
+        data={"provider_key": "musetalk_manual", "actual_cost_cents": "33"},
+        files={
+            "video": (
+                "short-review.mp4",
+                b"\x00\x00\x00\x18ftypisom" + b"moov" + b"generated" + b"mdat" + b"frames",
+                "video/mp4",
+            )
+        },
+    )
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["status"] == "pending_human_review"
+    assert imported.json()["result_content_url"].endswith("/content")
+    assert imported.json()["actual_cost_cents"] == 33
+
+    incomplete_review = client.patch(
+        f"/api/v1/generative-media-requests/{recorded.json()['id']}/review",
+        json={
+            "decision": "accepted",
+            "reviewed_by": "测试验收人",
+            "audio_present": True,
+            "lip_sync_verified": False,
+            "pauses_natural": True,
+            "expression_natural": True,
+            "narrative_consistent": True,
+            "duration_appropriate": True,
+        },
+    )
+    assert incomplete_review.status_code == 409
+    assert incomplete_review.json()["error"]["code"] == "GENERATION_REVIEW_INCOMPLETE"
+
+    accepted = client.patch(
+        f"/api/v1/generative-media-requests/{recorded.json()['id']}/review",
+        json={
+            "decision": "accepted",
+            "reviewed_by": "测试验收人",
+            "review_notes": "声音、嘴型和故事画面逐项检查通过。",
+            "audio_present": True,
+            "lip_sync_verified": True,
+            "pauses_natural": True,
+            "expression_natural": True,
+            "narrative_consistent": True,
+            "duration_appropriate": True,
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["status"] == "accepted"
+    assert accepted.json()["reviewed_by"] == "测试验收人"
+    assert all(accepted.json()["review_checks"].values())
+
+    accepted_video = client.get(accepted.json()["result_content_url"])
+    assert accepted_video.status_code == 200
+    assert accepted_video.headers["content-type"] == "video/mp4"
+
+    scene_request = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/generative-media-requests",
+        json={
+            "story_id": story["id"],
+            "generation_type": "scene_video",
+            "actor_label": "测试家人",
+            "subject_consent": True,
+            "rights_confirmed": True,
+            "no_impersonation": True,
+            "allow_external_upload": False,
+            "max_cost_cents": 100,
+        },
+    ).json()
+    assert client.post(
+        f"/api/v1/generative-media-requests/{scene_request['id']}/result",
+        data={"provider_key": "scene_manual", "actual_cost_cents": "0"},
+        files={
+            "video": (
+                "scene.mp4",
+                b"\x00\x00\x00\x18ftypisom" + b"moov" + b"scene" + b"mdat" + b"frames",
+                "video/mp4",
+            )
+        },
+    ).status_code == 200
+    scene_review = client.patch(
+        f"/api/v1/generative-media-requests/{scene_request['id']}/review",
+        json={
+            "decision": "accepted",
+            "reviewed_by": "测试验收人",
+            "audio_present": True,
+            "lip_sync_verified": False,
+            "pauses_natural": False,
+            "expression_natural": True,
+            "narrative_consistent": True,
+            "duration_appropriate": True,
+        },
+    )
+    assert scene_review.status_code == 200, scene_review.text
+    assert scene_review.json()["status"] == "accepted"
+
 
 def test_local_generation_production_package_has_sources_and_reviewable_storyboard(client):
     profile = create_profile(client)
@@ -407,6 +510,37 @@ def test_memory_experience_fields_stay_encrypted_for_real_family(client, db):
         assert detail.json()["place_name"] == "虚构加密地点"
         assert contribution.json()["body"] == "虚构的加密家庭补充。"
 
+        generated_result = client.post(
+            f"/api/v1/generative-media-requests/{generation.json()['id']}/result",
+            data={"provider_key": "musetalk_manual", "actual_cost_cents": "0"},
+            files={
+                "video": (
+                    "encrypted-result.mp4",
+                    b"\x00\x00\x00\x18ftypisom" + b"moov" + b"secure" + b"mdat" + b"frames",
+                    "video/mp4",
+                )
+            },
+        )
+        assert generated_result.status_code == 200, generated_result.text
+        review = client.patch(
+            f"/api/v1/generative-media-requests/{generation.json()['id']}/review",
+            json={
+                "decision": "accepted",
+                "reviewed_by": "虚构验收人",
+                "review_notes": "虚构人物视频六项检查通过。",
+                "audio_present": True,
+                "lip_sync_verified": True,
+                "pauses_natural": True,
+                "expression_natural": True,
+                "narrative_consistent": True,
+                "duration_appropriate": True,
+            },
+        )
+        assert review.status_code == 200, review.text
+        encrypted_video = client.get(review.json()["result_content_url"])
+        assert encrypted_video.status_code == 200
+        assert b"ftyp" in encrypted_video.content[:16]
+
         heritage = client.post(
             f"/api/v1/elder-profiles/{profile['id']}/heritage-package",
             json={"actor_label": "虚构管理员"},
@@ -421,7 +555,11 @@ def test_memory_experience_fields_stay_encrypted_for_real_family(client, db):
         assert db.get(StoryContribution, contribution.json()["id"]).body == "[niannian:encrypted:v1]"
         assert db.get(MediaPersonTag, tag.json()["id"]).note == "[niannian:encrypted:v1]"
         assert db.get(LegacyPlan, legacy.json()["id"]).note == "[niannian:encrypted:v1]"
-        assert db.get(GenerativeMediaRequest, generation.json()["id"]).actor_label == "[niannian:encrypted:v1]"
+        generation_row = db.get(GenerativeMediaRequest, generation.json()["id"])
+        assert generation_row.actor_label == "[niannian:encrypted:v1]"
+        assert generation_row.reviewed_by == "[niannian:encrypted:v1]"
+        assert generation_row.review_notes == "[niannian:encrypted:v1]"
+        assert db.get(MediaAsset, generation_row.result_asset_id).encryption_version == 1
         review_event = db.scalar(
             select(ConsentEvent).where(
                 ConsentEvent.object_id == preexisting_contribution["id"],

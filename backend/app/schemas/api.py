@@ -601,10 +601,24 @@ class GenerativeMediaRequestCreate(BaseModel):
     max_cost_cents: int = Field(default=0, ge=0, le=100_000)
 
 
+class GenerativeMediaReviewCreate(BaseModel):
+    decision: str = Field(pattern="^(accepted|rejected)$")
+    reviewed_by: str = Field(min_length=1, max_length=80)
+    review_notes: str | None = Field(default=None, max_length=2000)
+    audio_present: bool = False
+    lip_sync_verified: bool = False
+    pauses_natural: bool = False
+    expression_natural: bool = False
+    narrative_consistent: bool = False
+    duration_appropriate: bool = False
+
+
 class GenerativeMediaRequestRead(ORMModel):
     id: str
     elder_id: str
     story_id: str | None
+    result_asset_id: str | None
+    result_content_url: str | None
     generation_type: str
     provider_key: str
     status: str
@@ -614,8 +628,13 @@ class GenerativeMediaRequestRead(ORMModel):
     no_impersonation: bool
     allow_external_upload: bool
     estimated_cost_cents: int
+    actual_cost_cents: int
     max_cost_cents: int
     error_code: str | None
+    review_checks: dict
+    reviewed_by: str | None
+    review_notes: str | None
+    reviewed_at: datetime | None
     created_at: datetime
 
 

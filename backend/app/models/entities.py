@@ -628,6 +628,9 @@ class GenerativeMediaRequest(TimestampMixin, Base):
     story_id: Mapped[str | None] = mapped_column(
         ForeignKey("stories.id", ondelete="SET NULL")
     )
+    result_asset_id: Mapped[str | None] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="SET NULL")
+    )
     generation_type: Mapped[str] = mapped_column(String(40))
     provider_key: Mapped[str] = mapped_column(String(80), default="not_configured")
     status: Mapped[str] = mapped_column(String(32), default="awaiting_provider")
@@ -637,9 +640,15 @@ class GenerativeMediaRequest(TimestampMixin, Base):
     no_impersonation: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_external_upload: Mapped[bool] = mapped_column(Boolean, default=False)
     estimated_cost_cents: Mapped[int] = mapped_column(Integer, default=0)
+    actual_cost_cents: Mapped[int] = mapped_column(Integer, default=0)
     max_cost_cents: Mapped[int] = mapped_column(Integer, default=0)
     request_sha256: Mapped[str] = mapped_column(String(64))
     error_code: Mapped[str | None] = mapped_column(String(80))
+    review_checks: Mapped[dict] = mapped_column(JSON, default=dict)
+    reviewed_by: Mapped[str | None] = mapped_column(String(80))
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[datetime | None] = mapped_column()
 
     elder: Mapped[ElderProfile] = relationship()
     story: Mapped[Story | None] = relationship()
+    result_asset: Mapped[MediaAsset | None] = relationship()

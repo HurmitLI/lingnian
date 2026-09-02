@@ -380,7 +380,11 @@ def activate_archive_encryption(
                 db,
                 family=family,
                 obj=request,
-                fields={"actor_label": TEXT_PLACEHOLDER},
+                fields={
+                    "actor_label": TEXT_PLACEHOLDER,
+                    "reviewed_by": TEXT_PLACEHOLDER,
+                    "review_notes": TEXT_PLACEHOLDER,
+                },
                 master_key=master_key,
             )
         family_object_ids = {

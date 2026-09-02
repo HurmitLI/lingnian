@@ -189,6 +189,9 @@ test("家族记忆可以溯源回答并浏览人生轨迹", async ({ page }) => 
   await page.getByRole("button", { name: "影像实验室" }).click();
   await expect(page.getByRole("heading", { name: "先把修复或生成需要的材料整理好" })).toBeVisible();
   await expect(page.getByRole("button", { name: "下载本机制作包" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "先登记、再导入、最后逐项验收" })).toBeVisible();
+  await expect(page.getByText("未验收不发布")).toBeVisible();
+  await expect(page.getByRole("button", { name: "登记成片验收任务" })).toBeVisible();
   const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(hasOverflow).toBe(false);
   const accessibility = await new AxeBuilder({ page }).analyze();

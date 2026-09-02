@@ -339,6 +339,8 @@ export type GenerativeMediaRequest = {
   id: string;
   elder_id: string;
   story_id: string | null;
+  result_asset_id: string | null;
+  result_content_url: string | null;
   generation_type: string;
   provider_key: string;
   status: string;
@@ -348,8 +350,13 @@ export type GenerativeMediaRequest = {
   no_impersonation: boolean;
   allow_external_upload: boolean;
   estimated_cost_cents: number;
+  actual_cost_cents: number;
   max_cost_cents: number;
   error_code: string | null;
+  review_checks: Record<string, boolean>;
+  reviewed_by: string | null;
+  review_notes: string | null;
+  reviewed_at: string | null;
   created_at: string;
 };
 

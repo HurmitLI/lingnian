@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     asset_root: Path = Path("./data")
     max_audio_bytes: int = Field(default=200 * 1024 * 1024, ge=1024)
     max_image_bytes: int = Field(default=25 * 1024 * 1024, ge=1024)
+    max_video_bytes: int = Field(default=500 * 1024 * 1024, ge=1024)
 
     asr_provider: str = "mock"
     asr_model_id: str = "paraformer-zh"

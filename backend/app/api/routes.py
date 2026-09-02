@@ -71,6 +71,7 @@ from app.schemas.api import (
     GenerativeMediaCapability,
     GenerativeMediaRequestCreate,
     GenerativeMediaRequestRead,
+    GenerativeMediaReviewCreate,
     ElderMemoryContext,
     MediaAssetRead,
     MediaLinkRead,
@@ -125,6 +126,7 @@ from app.services.archive.assets import (
     resolve_controlled_path,
     store_audio_upload,
     store_image_upload,
+    store_video_upload,
     verify_asset_integrity,
 )
 from app.services.memory import (
@@ -617,6 +619,12 @@ def generative_request_read(
         id=request.id,
         elder_id=request.elder_id,
         story_id=request.story_id,
+        result_asset_id=request.result_asset_id,
+        result_content_url=(
+            f"/api/v1/media-assets/{request.result_asset_id}/content"
+            if request.result_asset_id
+            else None
+        ),
         generation_type=request.generation_type,
         provider_key=request.provider_key,
         status=request.status,
@@ -626,8 +634,13 @@ def generative_request_read(
         no_impersonation=request.no_impersonation,
         allow_external_upload=request.allow_external_upload,
         estimated_cost_cents=request.estimated_cost_cents,
+        actual_cost_cents=request.actual_cost_cents,
         max_cost_cents=request.max_cost_cents,
         error_code=request.error_code,
+        review_checks=request.review_checks or {},
+        reviewed_by=secure_value(db, family, request, "reviewed_by", store),
+        review_notes=secure_value(db, family, request, "review_notes", store),
+        reviewed_at=request.reviewed_at,
         created_at=request.created_at,
     )
 
@@ -4009,6 +4022,158 @@ def create_generative_media_request(
         family,
         request,
         {"actor_label": payload.actor_label.strip()},
+        secret_store,
+    )
+    db.commit()
+    db.refresh(request)
+    return generative_request_read(db, request, secret_store)
+
+
+@router.post(
+    "/generative-media-requests/{request_id}/result",
+    response_model=GenerativeMediaRequestRead,
+)
+async def import_generative_media_result(
+    request_id: str,
+    video: UploadFile = File(...),
+    provider_key: str = Form(default="manual_pipeline"),
+    actual_cost_cents: int = Form(default=0),
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> GenerativeMediaRequestRead:
+    request = require(
+        db,
+        GenerativeMediaRequest,
+        request_id,
+        "GENERATION_REQUEST_NOT_FOUND",
+        "没有找到这项影像制作任务。",
+    )
+    if request.generation_type not in {"portrait_video", "scene_video"}:
+        raise DomainError("VIDEO_RESULT_NOT_APPLICABLE", "这项任务不接收视频成片。", 409)
+    if request.status != "awaiting_provider" or request.result_asset_id:
+        raise DomainError("GENERATION_RESULT_ALREADY_IMPORTED", "这项任务已经导入过成片，请新建任务后重试。", 409)
+    if request.story is None:
+        raise DomainError("GENERATION_STORY_REQUIRED", "视频成片必须对应一篇已确认故事。", 409)
+    normalized_provider = provider_key.strip()
+    if not normalized_provider or len(normalized_provider) > 80 or not all(
+        character.isalnum() or character in {"-", "_", "."}
+        for character in normalized_provider
+    ):
+        raise DomainError("GENERATION_PROVIDER_INVALID", "生成方式标识无效。", 422)
+    if actual_cost_cents < 0:
+        raise DomainError("GENERATION_COST_INVALID", "实际费用不能小于零。", 422)
+    if actual_cost_cents > request.max_cost_cents:
+        raise DomainError("GENERATION_COST_LIMIT_EXCEEDED", "实际费用超过了这项任务的单次预算。", 409)
+
+    session_id = request.story.source_draft.session_id
+    stored = await store_video_upload(video, session_id, get_settings())
+    asset = MediaAsset(
+        session_id=session_id,
+        kind=f"generated_{request.generation_type}",
+        status="pending_human_review",
+        is_original=False,
+        **stored,
+    )
+    db.add(asset)
+    db.flush()
+    family = request.elder.person.family
+    protect_values(
+        db,
+        family,
+        asset,
+        {"original_filename": asset.original_filename},
+        secret_store,
+    )
+    encrypt_asset_if_needed(db, asset, family, secret_store)
+    request.result_asset_id = asset.id
+    request.provider_key = normalized_provider
+    request.actual_cost_cents = actual_cost_cents
+    request.status = "pending_human_review"
+    request.error_code = None
+    request.review_checks = {}
+    db.commit()
+    db.refresh(request)
+    return generative_request_read(db, request, secret_store)
+
+
+@router.patch(
+    "/generative-media-requests/{request_id}/review",
+    response_model=GenerativeMediaRequestRead,
+)
+def review_generative_media_result(
+    request_id: str,
+    payload: GenerativeMediaReviewCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> GenerativeMediaRequestRead:
+    request = require(
+        db,
+        GenerativeMediaRequest,
+        request_id,
+        "GENERATION_REQUEST_NOT_FOUND",
+        "没有找到这项影像制作任务。",
+    )
+    if request.status != "pending_human_review" or not request.result_asset_id:
+        raise DomainError("GENERATION_RESULT_NOT_REVIEWABLE", "当前没有等待验收的成片。", 409)
+    checks = {
+        "audio_present": payload.audio_present,
+        "lip_sync_verified": payload.lip_sync_verified,
+        "pauses_natural": payload.pauses_natural,
+        "expression_natural": payload.expression_natural,
+        "narrative_consistent": payload.narrative_consistent,
+        "duration_appropriate": payload.duration_appropriate,
+    }
+    required_checks = (
+        tuple(checks)
+        if request.generation_type == "portrait_video"
+        else (
+            "audio_present",
+            "expression_natural",
+            "narrative_consistent",
+            "duration_appropriate",
+        )
+    )
+    if payload.decision == "accepted" and not all(
+        checks[name] for name in required_checks
+    ):
+        raise DomainError(
+            "GENERATION_REVIEW_INCOMPLETE",
+            (
+                "人物视频六项验收必须全部通过，才能标记为可用成片。"
+                if request.generation_type == "portrait_video"
+                else "故事情景视频四项验收必须全部通过，才能标记为可用成片。"
+            ),
+            409,
+        )
+    notes = payload.review_notes.strip() if payload.review_notes else None
+    if payload.decision == "rejected" and not notes:
+        raise DomainError("GENERATION_REJECTION_REASON_REQUIRED", "驳回成片时请写明具体问题。", 409)
+
+    family = request.elder.person.family
+    request.status = payload.decision
+    request.error_code = (
+        None if payload.decision == "accepted" else "HUMAN_REVIEW_REJECTED"
+    )
+    request.review_checks = checks
+    request.reviewed_by = payload.reviewed_by.strip()
+    request.review_notes = notes
+    request.reviewed_at = now_utc()
+    result_asset = require(
+        db,
+        MediaAsset,
+        request.result_asset_id,
+        "GENERATION_RESULT_MISSING",
+        "成片文件已经不存在。",
+    )
+    result_asset.status = "ready" if payload.decision == "accepted" else "rejected"
+    protect_values(
+        db,
+        family,
+        request,
+        {
+            "reviewed_by": payload.reviewed_by.strip(),
+            "review_notes": notes,
+        },
         secret_store,
     )
     db.commit()
