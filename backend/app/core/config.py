@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     formal_invite_code: SecretStr | None = None
     formal_family_id: str | None = None
     formal_archive_master_key: SecretStr | None = None
+    formal_persistent_storage_mount: Path | None = None
     auth_cookie_name: str = "lingnian_session"
     auth_session_days: int = Field(default=30, ge=1, le=180)
     auth_cookie_secure: bool = False
@@ -102,6 +103,19 @@ class Settings(BaseSettings):
             raise RuntimeError("FORMAL_ARCHIVE_MASTER_KEY must be valid base64") from exc
         if len(decoded_key) != 32:
             raise RuntimeError("FORMAL_ARCHIVE_MASTER_KEY must encode exactly 32 bytes")
+        if self.app_env.lower() in {"prod", "production"}:
+            if not self.auth_cookie_secure:
+                raise RuntimeError("AUTH_COOKIE_SECURE must be true in production")
+            mount = self.formal_persistent_storage_mount
+            if mount is None or not mount.is_absolute():
+                raise RuntimeError("FORMAL_PERSISTENT_STORAGE_MOUNT must be an absolute path")
+            resolved_mount = mount.resolve()
+            if not self.resolved_asset_root.is_relative_to(resolved_mount):
+                raise RuntimeError("ASSET_ROOT must be inside the persistent storage mount")
+            if self.resolved_database_url.startswith("sqlite:///"):
+                database_path = Path(self.resolved_database_url.removeprefix("sqlite:///"))
+                if not database_path.resolve().is_relative_to(resolved_mount):
+                    raise RuntimeError("SQLite DATABASE_URL must be inside the persistent storage mount")
 
 
 @lru_cache

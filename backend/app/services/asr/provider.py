@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+from http import HTTPStatus
 import os
 from pathlib import Path
 import re
@@ -63,6 +64,61 @@ class FunASRProvider:
         )
 
 
+def extract_dashscope_sentences(value: object) -> str:
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list):
+        return ""
+    parts = []
+    for sentence in value:
+        if isinstance(sentence, dict) and sentence.get("text"):
+            parts.append(str(sentence["text"]).strip())
+    return normalize_chinese_spacing("".join(parts).strip())
+
+
+class DashScopeASRProvider:
+    def __init__(self, model_id: str) -> None:
+        settings = get_settings()
+        if not settings.llm_api_key:
+            raise RuntimeError("未配置千问 API Key，不能使用云端语音识别。")
+        self.api_key = settings.llm_api_key
+        self.model_id = model_id
+
+    def transcribe(self, audio_path: Path) -> ASRResult:
+        import dashscope
+        from dashscope.audio.asr import Recognition
+
+        dashscope.api_key = self.api_key
+        recognition = Recognition(
+            model=self.model_id,
+            format="wav",
+            sample_rate=16_000,
+            semantic_punctuation_enabled=True,
+            language_hints=["zh", "en"],
+        )
+        result = recognition.call(str(audio_path))
+        if result.status_code != HTTPStatus.OK:
+            raise RuntimeError("云端语音识别暂时没有成功，请稍后重试。")
+        sentences = result.get_sentence()
+        text = extract_dashscope_sentences(sentences)
+        if not text:
+            raise RuntimeError("云端语音识别没有返回可用文字。")
+        request_id = (
+            recognition.get_last_request_id()
+            if hasattr(recognition, "get_last_request_id")
+            else None
+        )
+        return ASRResult(
+            text=text,
+            provider="dashscope",
+            model=self.model_id,
+            metadata={
+                "sentence_count": len(sentences) if isinstance(sentences, list) else 1,
+                "request_id": request_id,
+            },
+        )
+
+
 def normalize_chinese_spacing(text: str) -> str:
     """移除 ASR 偶尔插入的逐字中文空格，保留中英文之间的正常间隔。"""
     return re.sub(r"(?<=[\u3400-\u9fff])\s+(?=[\u3400-\u9fff])", "", text)
@@ -75,4 +131,6 @@ def get_asr_provider() -> ASRProvider:
         return MockASRProvider()
     if settings.asr_provider == "funasr":
         return FunASRProvider(settings.asr_model_id)
+    if settings.asr_provider == "dashscope":
+        return DashScopeASRProvider(settings.asr_model_id)
     raise RuntimeError(f"不支持的 ASR_PROVIDER：{settings.asr_provider}")
