@@ -9,7 +9,7 @@ from typing import Protocol
 from openai import OpenAI
 from pydantic import ValidationError
 
-from app.core.config import PROJECT_ROOT, get_settings
+from app.core.config import get_settings
 from app.schemas.api import (
     InterviewCleanupOutput,
     InterviewFollowupOutput,
@@ -27,6 +27,8 @@ QUESTION_BANK = {
     "价值观": "这些年里，您最想留给晚辈的一句话是什么？",
     "老物件": "家里有没有一件旧物，背后藏着一段您愿意讲的故事？",
 }
+
+PROMPT_ROOT = Path(__file__).resolve().parents[2] / "prompts"
 
 FOLLOWUP_BANK = {
     "童年": [
@@ -318,11 +320,10 @@ class QwenLLMProvider:
             timeout=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
         )
-        prompt_root = PROJECT_ROOT / "backend/app/prompts"
-        self.question_prompt = (prompt_root / "memory_question_v1.md").read_text("utf-8")
-        self.interview_prompt = (prompt_root / "interview_followup_v1.md").read_text("utf-8")
-        self.cleanup_prompt = (prompt_root / "interview_cleanup_v1.md").read_text("utf-8")
-        self.story_prompt = (prompt_root / "story_organizer_v1.md").read_text("utf-8")
+        self.question_prompt = (PROMPT_ROOT / "memory_question_v1.md").read_text("utf-8")
+        self.interview_prompt = (PROMPT_ROOT / "interview_followup_v1.md").read_text("utf-8")
+        self.cleanup_prompt = (PROMPT_ROOT / "interview_cleanup_v1.md").read_text("utf-8")
+        self.story_prompt = (PROMPT_ROOT / "story_organizer_v1.md").read_text("utf-8")
 
     def _complete(self, system_prompt: str, user_content: str) -> str:
         response = self.client.chat.completions.create(

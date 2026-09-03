@@ -6,6 +6,7 @@ from app.core.errors import DomainError
 from app.schemas.api import StoryOrganizationOutput, TimelineMention
 from app.services.asr.provider import normalize_chinese_spacing
 from app.services.llm.provider import (
+    PROMPT_ROOT,
     QwenLLMProvider,
     normalize_story_payload,
     parse_json_object,
@@ -35,6 +36,17 @@ def test_json_parser_accepts_fenced_json():
     assert parse_json_object('```json\n{"question": "慢慢讲"}\n```') == {
         "question": "慢慢讲"
     }
+
+
+def test_llm_prompts_are_resolved_from_the_deployed_application_package():
+    assert PROMPT_ROOT.name == "prompts"
+    assert PROMPT_ROOT.parent.name == "app"
+    assert {
+        "memory_question_v1.md",
+        "interview_followup_v1.md",
+        "interview_cleanup_v1.md",
+        "story_organizer_v1.md",
+    }.issubset(path.name for path in PROMPT_ROOT.iterdir())
 
 
 def test_qwen_story_organizer_rejects_empty_story_body(monkeypatch):
