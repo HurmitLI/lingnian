@@ -31,7 +31,7 @@ from app.services.database_snapshot import (
 )
 
 
-logger = logging.getLogger("lingnian.requests")
+logger = logging.getLogger("uvicorn.error")
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{8,80}$")
 
 
