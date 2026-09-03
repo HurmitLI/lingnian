@@ -3878,6 +3878,8 @@ def confirm_story_draft(
     key = family_master_key(family, secret_store)
     draft_title = secure_value(db, family, draft, "title", secret_store, master_key=key)
     draft_body = secure_value(db, family, draft, "body", secret_store, master_key=key)
+    confirmed_title = payload.title if payload.title is not None else draft_title
+    confirmed_body = payload.body if payload.body is not None else draft_body
     timeline_mentions = secure_value(
         db, family, draft, "timeline_mentions", secret_store, master_key=key
     )
@@ -3888,8 +3890,8 @@ def confirm_story_draft(
     story = Story(
         elder_id=session.elder_id,
         source_draft_id=draft.id,
-        title=draft_title,
-        body=draft_body,
+        title=confirmed_title,
+        body=confirmed_body,
         confirmed_by=payload.confirmed_by.strip(),
     )
     db.add(story)
@@ -3899,8 +3901,8 @@ def confirm_story_draft(
         family,
         story,
         {
-            "title": draft_title,
-            "body": draft_body,
+            "title": confirmed_title,
+            "body": confirmed_body,
             "confirmed_by": payload.confirmed_by.strip(),
         },
         secret_store,
@@ -3910,8 +3912,8 @@ def confirm_story_draft(
         story_id=story.id,
         fact_type="confirmed_story",
         subject_label=preferred_name,
-        value_text=draft_body,
-        content_sha256=hashlib.sha256(draft_body.encode("utf-8")).hexdigest(),
+        value_text=confirmed_body,
+        content_sha256=hashlib.sha256(confirmed_body.encode("utf-8")).hexdigest(),
         confidence="confirmed",
         status="active",
     )
@@ -3921,7 +3923,7 @@ def confirm_story_draft(
         db,
         family,
         fact,
-        {"subject_label": preferred_name, "value_text": draft_body},
+        {"subject_label": preferred_name, "value_text": confirmed_body},
         secret_store,
     )
     for mention in timeline_mentions:

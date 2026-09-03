@@ -280,6 +280,8 @@ blockquote { margin: 9px 0 0; padding: 2px 0 2px 19px; border-left: 3px solid va
 .cloud-consent input { width: 18px; height: 18px; margin-top: 3px; accent-color: var(--red); }
 .cloud-consent .button { justify-self: start; }
 .draft-title { font-size: 24px; margin: 18px 0 10px; }
+.draft-review-form { display: grid; gap: 14px; margin-top: 18px; }
+.draft-review-form > p { margin: -2px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
 .review-warning { border-left: 3px solid var(--gold); background: #fff4d6; padding: 12px 15px; margin-top: 14px; border-radius: 0 10px 10px 0; }
 .review-warning p { margin: 6px 0 0; color: #6b5526; }
 

@@ -7,7 +7,7 @@ from PIL import Image
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.models import ConsentEvent, MediaAsset, Story, WorkflowTask
+from app.models import ConsentEvent, MediaAsset, MemoryFact, Story, StoryDraft, WorkflowTask
 
 
 def wav_bytes(seconds: float = 0.15) -> bytes:
@@ -120,12 +120,23 @@ def test_complete_vertical_slice(client, db):
     assert second_organization.status_code == 202
     detail = client.get(f"/api/v1/memory-sessions/{session['id']}").json()
     draft_id = detail["story_draft"]["id"]
+    confirmed_title = "家人核对后的标题"
+    confirmed_body = f"{corrected} 家人补充确认：河边的风很凉。"
     confirm = client.post(
         f"/api/v1/story-drafts/{draft_id}/confirm",
-        json={"confirmed_by": "测试子女"},
+        json={
+            "confirmed_by": "测试子女",
+            "title": confirmed_title,
+            "body": confirmed_body,
+        },
     )
     assert confirm.status_code == 200
-    assert confirm.json()["body"] == corrected
+    assert confirm.json()["title"] == confirmed_title
+    assert confirm.json()["body"] == confirmed_body
+    assert db.get(StoryDraft, draft_id).body == corrected
+    assert db.scalar(
+        select(MemoryFact).where(MemoryFact.story_id == confirm.json()["id"])
+    ).value_text == confirmed_body
 
     repeated = client.post(
         f"/api/v1/story-drafts/{draft_id}/confirm",

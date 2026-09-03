@@ -70,19 +70,21 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
   await correctedInput.fill(correctedStory);
   await page.getByRole("button", { name: "保存校对稿" }).click();
   await page.getByRole("button", { name: "按原话整理故事" }).click();
-  await expect(page.getByRole("heading", { name: "一段愿意留给家人的回忆" })).toBeVisible();
-  await expect(page.locator("p.story-body")).toHaveText(correctedStory);
-  await page.getByRole("button", { name: "人工确认并归档" }).click();
+  const confirmedTitle = `河边的回忆 · ${suffix}`;
+  const confirmedStory = `${correctedStory} 家人确认：那天的风很凉。`;
+  await page.getByRole("textbox", { name: "确认后的故事标题" }).fill(confirmedTitle);
+  await page.getByRole("textbox", { name: "确认后的故事正文" }).fill(confirmedStory);
+  await page.getByRole("button", { name: "确认这个版本并归档" }).click();
   await expect(page).toHaveURL(/\/archive\?elder=[0-9a-f-]+$/);
-  await expect(page.getByRole("heading", { name: "一段愿意留给家人的回忆" })).toBeVisible();
-  await expect(page.getByRole("paragraph").filter({ hasText: correctedStory })).toBeVisible();
+  await expect(page.getByRole("heading", { name: confirmedTitle })).toBeVisible();
+  await expect(page.getByRole("paragraph").filter({ hasText: confirmedStory })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
 
   await page.getByRole("link", { name: "快速影像导出" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "把亲口讲过的故事，留成一段视频" })).toBeVisible();
   const createButton = page.getByRole("button", { name: "确认授权并开始本机制作" });
   await expect(createButton).toBeDisabled();
-  await page.getByLabel(/一段愿意留给家人的回忆/).check();
+  await page.getByLabel(new RegExp(confirmedTitle)).check();
   await page.getByLabel("我确认有权使用这次所选的原始录音。").check();
   await page.getByLabel("这份视频只用于家庭记忆保存。").check();
   await page.getByLabel("不会把视频用于仿冒、误导或冒充本人。").check();

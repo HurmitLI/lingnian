@@ -83,6 +83,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const [triggerPreview, setTriggerPreview] = useState<string | null>(null);
   const [correctedText, setCorrectedText] = useState("");
   const [savedCorrectedText, setSavedCorrectedText] = useState("");
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftBody, setDraftBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -209,6 +211,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       setCorrectedText(result.transcript.corrected_text);
       setSavedCorrectedText(result.transcript.corrected_text);
     }
+    setDraftTitle(result.story_draft?.title ?? "");
+    setDraftBody(result.story_draft?.body ?? "");
     const pendingTurn = [...result.interview_turns].reverse().find(
       (turn) => turn.status === "answer_review",
     );
@@ -273,6 +277,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 setCorrectedText(sessionResult.transcript.corrected_text);
                 setSavedCorrectedText(sessionResult.transcript.corrected_text);
               }
+              setDraftTitle(sessionResult.story_draft?.title ?? "");
+              setDraftBody(sessionResult.story_draft?.body ?? "");
             }
           } catch {
             window.localStorage.removeItem("niannian.sessionId");
@@ -497,6 +503,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     setAudioPreview(null);
     setCorrectedText("");
     setSavedCorrectedText("");
+    setDraftTitle("");
+    setDraftBody("");
     setInterviewAnswerText("");
     setInterviewCloudConsentChecked(false);
     setInterviewShouldEnd(false);
@@ -1094,6 +1102,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     setDetail(result);
     setCorrectedText(result.transcript?.corrected_text ?? "");
     setSavedCorrectedText(result.transcript?.corrected_text ?? "");
+    setDraftTitle(result.story_draft?.title ?? "");
+    setDraftBody(result.story_draft?.body ?? "");
     setInterviewAnswerText("");
     setInterviewCloudConsentChecked(false);
     setNotice("采访已结束，提问和回答已经合并，AI 整理稿也已生成。需要时再修改，然后整理成故事。");
@@ -1467,7 +1477,11 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     try {
       await api(`/api/v1/story-drafts/${detail.story_draft.id}/confirm`, {
         method: "POST",
-        body: JSON.stringify({ confirmed_by: "本机家庭管理员" }),
+        body: JSON.stringify({
+          confirmed_by: "本机家庭管理员",
+          title: draftTitle,
+          body: draftBody,
+        }),
       });
       await loadTimeline(selectedProfile.id);
       await loadMemoryContext(selectedProfile.id);
@@ -2225,11 +2239,18 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           {detail.story_draft && ["DRAFT_REVIEW", "ARCHIVED"].includes(detail.session.status) && (
             <div className="workflow-block" data-state={currentWorkflowStep === 3 ? "current" : "upcoming"}>
               <div className="block-title"><h3>故事草稿</h3><span>{detail.story_draft.provider} / {detail.story_draft.model}</span></div>
-              <h4 className="draft-title">{detail.story_draft.title}</h4>
-              <p className="story-body">{detail.story_draft.body}</p>
+              {detail.session.status === "DRAFT_REVIEW" ? (
+                <div className="draft-review-form">
+                  <label className="field"><span>故事标题</span><input aria-label="确认后的故事标题" maxLength={200} value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} /></label>
+                  <label className="field"><span>故事正文</span><textarea aria-label="确认后的故事正文" maxLength={50000} rows={10} value={draftBody} onChange={(event) => setDraftBody(event.target.value)} /></label>
+                  <p>可以直接修正错字、语气和表达。确认后采用这里的版本，AI 原始草稿仍会保留，不会被覆盖。</p>
+                </div>
+              ) : (
+                <><h4 className="draft-title">{detail.story_draft.title}</h4><p className="story-body">{detail.story_draft.body}</p></>
+              )}
               {detail.story_draft.added_facts.length > 0 && <div className="review-warning"><strong>发现需要人工核对的新增信息</strong>{detail.story_draft.added_facts.map((item) => <p key={item}>{item}</p>)}</div>}
               {detail.story_draft.uncertainties.length > 0 && <div className="review-warning"><strong>待核实</strong>{detail.story_draft.uncertainties.map((item) => <p key={item}>{item}</p>)}</div>}
-              {detail.session.status === "DRAFT_REVIEW" && <div className="button-row"><button className="button secondary" disabled={busy} onClick={rejectDraft}>退回修改</button><button className="button primary" disabled={busy} onClick={confirmDraft}>人工确认并归档</button></div>}
+              {detail.session.status === "DRAFT_REVIEW" && <div className="button-row"><button className="button secondary" disabled={busy} onClick={rejectDraft}>回到采访整理稿</button><button className="button primary" disabled={busy || !draftTitle.trim() || !draftBody.trim()} onClick={confirmDraft}>确认这个版本并归档</button></div>}
             </div>
           )}
         </section>

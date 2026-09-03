@@ -480,6 +480,18 @@ class StoryDraftRead(ORMModel):
 
 class ConfirmDraftRequest(BaseModel):
     confirmed_by: str = Field(min_length=1, max_length=80)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    body: str | None = Field(default=None, min_length=1, max_length=50_000)
+
+    @field_validator("title", "body")
+    @classmethod
+    def normalize_confirmed_story_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("确认后的故事内容不能为空。")
+        return cleaned
 
 
 class StoryRead(ORMModel):
