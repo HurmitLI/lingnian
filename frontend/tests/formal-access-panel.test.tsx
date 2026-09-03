@@ -14,7 +14,7 @@ describe("正式家庭访问管理", () => {
   beforeEach(() => {
     apiMock.mockImplementation((path: string, options?: RequestInit) => {
       if (path === "/api/v1/auth/me") {
-        return Promise.resolve({ display_name: "管理员", family_name: "我的家庭", role: "owner" });
+        return Promise.resolve({ display_name: "管理员", family_name: "我的家庭", role: "owner", platform_role: "user" });
       }
       if (path === "/api/v1/auth/invitations" && options?.method === "POST") {
         const request = JSON.parse(String(options.body));
@@ -39,6 +39,9 @@ describe("正式家庭访问管理", () => {
       if (path === "/api/v1/auth/members/member-membership" && options?.method === "DELETE") {
         return Promise.resolve(undefined);
       }
+      if (path === "/api/v1/auth/members/member-membership/make-owner" && options?.method === "PATCH") {
+        return Promise.resolve(undefined);
+      }
       if (path === "/api/v1/auth/password" && options?.method === "POST") {
         return Promise.resolve(undefined);
       }
@@ -61,6 +64,20 @@ describe("正式家庭访问管理", () => {
       expect(apiMock).toHaveBeenCalledWith(
         "/api/v1/auth/members/member-membership",
         { method: "DELETE" },
+      );
+    });
+  });
+
+  it("管理员可以把家庭管理权交给另一位家人", async () => {
+    render(<FormalAccessPanel />);
+
+    expect(await screen.findByText("受邀家人")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "设为管理员" }));
+
+    await waitFor(() => {
+      expect(apiMock).toHaveBeenCalledWith(
+        "/api/v1/auth/members/member-membership/make-owner",
+        { method: "PATCH" },
       );
     });
   });

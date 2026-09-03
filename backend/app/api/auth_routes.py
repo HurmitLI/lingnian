@@ -122,6 +122,11 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=10, max_length=200)
 
 
+class AccountDelete(BaseModel):
+    password: str = Field(min_length=1, max_length=200)
+    confirmation: str = Field(min_length=1, max_length=40)
+
+
 class PlatformInvitationCreate(BaseModel):
     expires_in_days: int = Field(default=7, ge=1, le=30)
 
@@ -689,6 +694,39 @@ def revoke_member(
     return response
 
 
+@router.patch("/members/{membership_id}/make-owner", status_code=204)
+def transfer_family_ownership(
+    membership_id: str,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> Response:
+    require_formal_mode()
+    owner_user_id, family_id = current_owner()
+    target = db.get(FamilyMembership, membership_id)
+    if (
+        target is None
+        or target.family_id != family_id
+        or target.status != "active"
+    ):
+        raise DomainError("MEMBER_NOT_FOUND", "没有找到这位可接管的家庭成员。", 404)
+    if target.user_id == owner_user_id or target.role == "owner":
+        raise DomainError("OWNER_UNCHANGED", "这位家人已经是家庭管理员。", 409)
+    owner_membership = db.scalar(
+        select(FamilyMembership).where(
+            FamilyMembership.user_id == owner_user_id,
+            FamilyMembership.family_id == family_id,
+            FamilyMembership.status == "active",
+        )
+    )
+    if owner_membership is None:
+        raise DomainError("OWNER_MEMBERSHIP_MISSING", "当前管理权状态异常。", 409)
+    owner_membership.role = "member"
+    target.role = "owner"
+    db.commit()
+    response.status_code = 204
+    return response
+
+
 @router.post("/login", response_model=AuthRead)
 def login(
     payload: LoginRequest,
@@ -787,5 +825,73 @@ def change_password(
         if auth_session.token_hash != current_token_hash:
             auth_session.revoked_at = now
     db.commit()
+    response.status_code = 204
+    return response
+
+
+@router.delete("/account", status_code=204)
+def delete_account(
+    payload: AccountDelete,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> Response:
+    require_formal_mode()
+    context = current_auth.get()
+    if context is None:
+        raise DomainError("AUTH_REQUIRED", "请先登录。", 401)
+    user = db.get(UserAccount, context.user_id)
+    membership = db.scalar(
+        select(FamilyMembership).where(
+            FamilyMembership.user_id == context.user_id,
+            FamilyMembership.family_id == context.family_id,
+            FamilyMembership.status == "active",
+        )
+    )
+    if user is None or membership is None:
+        raise DomainError("AUTH_REQUIRED", "登录状态已经失效。", 401)
+    if not verify_password(payload.password, user.password_salt, user.password_hash):
+        raise DomainError("CURRENT_PASSWORD_INVALID", "当前密码不正确。", 403)
+    if payload.confirmation.strip() != "注销我的账号":
+        raise DomainError("ACCOUNT_DELETE_CONFIRMATION_INVALID", "请完整输入“注销我的账号”。", 422)
+    if user.platform_role == "admin":
+        raise DomainError(
+            "PLATFORM_ADMIN_TRANSFER_REQUIRED",
+            "平台管理员账号需先完成管理权交接，不能直接注销。",
+            409,
+        )
+    if membership.role == "owner":
+        other_active_members = db.scalar(
+            select(func.count())
+            .select_from(FamilyMembership)
+            .where(
+                FamilyMembership.family_id == membership.family_id,
+                FamilyMembership.status == "active",
+                FamilyMembership.user_id != user.id,
+            )
+        ) or 0
+        if other_active_members:
+            raise DomainError(
+                "FAMILY_OWNER_TRANSFER_REQUIRED",
+                "请先把家庭管理权交给另一位家人，再注销账号。",
+                409,
+            )
+        family_people = db.scalar(
+            select(func.count())
+            .select_from(Person)
+            .where(Person.family_id == membership.family_id)
+        ) or 0
+        if family_people:
+            raise DomainError(
+                "FAMILY_ARCHIVE_EXPORT_REQUIRED",
+                "这个家庭已有档案。请先导出传承包，并邀请一位家人接管后再注销。",
+                409,
+            )
+        family = db.get(FamilyArchive, membership.family_id)
+        if family is not None:
+            db.delete(family)
+            db.flush()
+    db.delete(user)
+    db.commit()
+    response.delete_cookie(get_settings().auth_cookie_name, path="/")
     response.status_code = 204
     return response

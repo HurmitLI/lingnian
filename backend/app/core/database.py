@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, event, update
+from sqlalchemy import create_engine, event, inspect, text, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
@@ -42,6 +42,7 @@ def initialize_database() -> None:
     settings.resolved_asset_root.mkdir(parents=True, exist_ok=True)
     for relative in ("db", "assets/original", "assets/derived", "quarantine"):
         (settings.resolved_asset_root / relative).mkdir(parents=True, exist_ok=True)
+    _upgrade_compatible_runtime_schema()
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         db.execute(
@@ -51,3 +52,33 @@ def initialize_database() -> None:
         )
         db.commit()
 
+
+def _upgrade_compatible_runtime_schema() -> None:
+    """Apply additive compatibility upgrades after a cloud snapshot is restored.
+
+    The formal serverless runtime restores SQLite inside the application lifespan,
+    so a shell-level Alembic command would run before the real database exists.
+    Keep this hook additive and idempotent; destructive migrations still belong in
+    Alembic and must not be performed automatically at startup.
+    """
+    if not settings.resolved_database_url.startswith("sqlite:///"):
+        return
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "user_accounts" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("user_accounts")}
+        if "platform_role" not in columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE user_accounts ADD COLUMN platform_role "
+                    "VARCHAR(24) NOT NULL DEFAULT 'user'"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE user_accounts SET platform_role = 'admin' "
+                    "WHERE id = (SELECT id FROM user_accounts "
+                    "ORDER BY created_at ASC LIMIT 1)"
+                )
+            )

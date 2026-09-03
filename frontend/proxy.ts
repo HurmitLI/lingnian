@@ -44,7 +44,13 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     const path = request.nextUrl.pathname;
     const cookieName = process.env.AUTH_COOKIE_NAME || "lingnian_session";
     const hasSession = Boolean(request.cookies.get(cookieName)?.value);
-    const publicPaths = new Set(["/login", "/api/v1/auth/login", "/api/v1/auth/register"]);
+    const publicPaths = new Set([
+      "/login",
+      "/privacy",
+      "/terms",
+      "/api/v1/auth/login",
+      "/api/v1/auth/register",
+    ]);
     const formalSecurity = { allowMicrophone: true };
     if (publicPaths.has(path)) return secureResponse(NextResponse.next(), formalSecurity);
     if (hasSession) return secureResponse(NextResponse.next(), formalSecurity);

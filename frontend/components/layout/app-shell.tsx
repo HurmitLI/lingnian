@@ -50,6 +50,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
         <div className="sidebar-note"><ShieldCheck size={20} strokeWidth={1.8} aria-hidden="true" /><span><strong>家庭私密空间</strong><small>{formalCloudMode ? "加密连接 · 受邀家人可见" : "资料保存在这台 Mac"}</small></span></div>
+        {formalCloudMode && <div className="sidebar-legal"><Link href="/privacy">隐私</Link><Link href="/terms">使用约定</Link></div>}
         {formalCloudMode && <button className="sidebar-logout" type="button" onClick={logout}><LogOut size={17} aria-hidden="true" />退出登录</button>}
       </aside>
 

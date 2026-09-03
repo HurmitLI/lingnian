@@ -309,6 +309,117 @@ def test_owner_creates_one_time_invitation_for_a_member(client, monkeypatch):
     assert revoked_member.status_code == 403
 
 
+def test_owner_can_transfer_management_and_member_can_delete_account(
+    client, db, monkeypatch
+):
+    enable_formal_auth(monkeypatch)
+    owner = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": "family-invite-2026",
+            "username": "transfer.owner",
+            "display_name": "原管理员",
+            "password": "owner-secure-password",
+            "family_name": "我们的家",
+        },
+    )
+    assert owner.status_code == 201
+    invitation = client.post("/api/v1/auth/invitations", json={}).json()
+
+    assert client.post("/api/v1/auth/logout").status_code == 204
+    member = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": invitation["invitation_code"],
+            "username": "transfer.member",
+            "display_name": "新管理员",
+            "password": "member-secure-password",
+        },
+    )
+    assert member.status_code == 201
+    member_user_id = member.json()["user_id"]
+
+    assert client.post("/api/v1/auth/logout").status_code == 204
+    assert client.post(
+        "/api/v1/auth/login",
+        json={"username": "transfer.owner", "password": "owner-secure-password"},
+    ).status_code == 200
+    member_record = next(
+        item
+        for item in client.get("/api/v1/auth/members").json()
+        if item["user_id"] == member_user_id
+    )
+    transferred = client.patch(
+        f"/api/v1/auth/members/{member_record['membership_id']}/make-owner"
+    )
+    assert transferred.status_code == 204, transferred.text
+    assert client.get("/api/v1/auth/me").json()["role"] == "member"
+
+    deleted = client.request(
+        "DELETE",
+        "/api/v1/auth/account",
+        json={
+            "password": "owner-secure-password",
+            "confirmation": "注销我的账号",
+        },
+    )
+    assert deleted.status_code == 409
+    assert deleted.json()["error"]["code"] == "PLATFORM_ADMIN_TRANSFER_REQUIRED"
+
+    assert client.post("/api/v1/auth/logout").status_code == 204
+    assert client.post(
+        "/api/v1/auth/login",
+        json={"username": "transfer.member", "password": "member-secure-password"},
+    ).status_code == 200
+    assert client.get("/api/v1/auth/me").json()["role"] == "owner"
+
+
+def test_ordinary_family_member_can_delete_own_account(client, db, monkeypatch):
+    enable_formal_auth(monkeypatch)
+    assert client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": "family-invite-2026",
+            "username": "delete.owner",
+            "display_name": "管理员",
+            "password": "owner-secure-password",
+            "family_name": "我们的家",
+        },
+    ).status_code == 201
+    invitation = client.post("/api/v1/auth/invitations", json={}).json()
+    client.post("/api/v1/auth/logout")
+    member = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": invitation["invitation_code"],
+            "username": "delete.member",
+            "display_name": "家庭成员",
+            "password": "member-secure-password",
+        },
+    )
+    assert member.status_code == 201
+    user_id = member.json()["user_id"]
+
+    wrong_confirmation = client.request(
+        "DELETE",
+        "/api/v1/auth/account",
+        json={"password": "member-secure-password", "confirmation": "注销"},
+    )
+    assert wrong_confirmation.status_code == 422
+    deleted = client.request(
+        "DELETE",
+        "/api/v1/auth/account",
+        json={
+            "password": "member-secure-password",
+            "confirmation": "注销我的账号",
+        },
+    )
+    assert deleted.status_code == 204, deleted.text
+    db.expire_all()
+    assert db.get(UserAccount, user_id) is None
+    assert client.get("/api/v1/auth/me").status_code == 401
+
+
 def test_interview_invitation_starts_assigned_family_interview(client, db, monkeypatch):
     enable_formal_auth(monkeypatch)
     owner = client.post(

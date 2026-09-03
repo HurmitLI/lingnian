@@ -275,6 +275,20 @@ export default function FormalAccessPanel({
     }
   }
 
+  async function transferOwnership(member: FamilyMember) {
+    setBusy(true);
+    setMessage("");
+    try {
+      await api(`/api/v1/auth/members/${member.membership_id}/make-owner`, { method: "PATCH" });
+      setMessage(`已把家庭管理权交给${member.display_name}。`);
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "管理权交接失败，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -294,6 +308,26 @@ export default function FormalAccessPanel({
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : "密码更新失败，请重试。");
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    setBusy(true);
+    setMessage("");
+    try {
+      await api("/api/v1/auth/account", {
+        method: "DELETE",
+        body: JSON.stringify({
+          password: data.get("password"),
+          confirmation: data.get("confirmation"),
+        }),
+      });
+      window.location.replace("/login");
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "账号注销没有完成，请重试。");
       setBusy(false);
     }
   }
@@ -374,7 +408,10 @@ export default function FormalAccessPanel({
                     <small>{member.username}{member.status === "revoked" ? " · 已移除" : ""}</small>
                   </span>
                   {member.role === "member" && member.status === "active" && (
-                    <button type="button" disabled={busy} onClick={() => void revokeMember(member)}>移除访问</button>
+                    <span className="formal-member-actions">
+                      <button type="button" disabled={busy} onClick={() => void transferOwnership(member)}>设为管理员</button>
+                      <button type="button" disabled={busy} onClick={() => void revokeMember(member)}>移除访问</button>
+                    </span>
                   )}
                 </div>
               ))}
@@ -390,6 +427,17 @@ export default function FormalAccessPanel({
             <label className="field"><span>当前密码</span><input name="currentPassword" type="password" autoComplete="current-password" required /></label>
             <label className="field"><span>新密码</span><input name="newPassword" type="password" autoComplete="new-password" minLength={10} required /></label>
             <button className="button secondary" disabled={busy}>更新密码</button>
+          </form>
+        </details>
+      )}
+      {user && (
+        <details className="formal-password-panel formal-account-delete">
+          <summary>注销我的账号</summary>
+          <form onSubmit={deleteAccount}>
+            <p className="hint">家庭管理员需先导出档案并交接管理权；普通家庭成员可直接注销自己的账号。</p>
+            <label className="field"><span>注销确认密码</span><input name="password" type="password" autoComplete="current-password" required /></label>
+            <label className="field"><span>输入“注销我的账号”</span><input name="confirmation" required /></label>
+            <button className="button secondary" disabled={busy}>确认注销</button>
           </form>
         </details>
       )}

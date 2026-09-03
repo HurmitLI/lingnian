@@ -33,4 +33,15 @@ describe("入口安全策略", () => {
       "camera=(), microphone=(), geolocation=()",
     );
   });
+
+  it("正式空间的隐私说明无需登录即可查看", async () => {
+    vi.stubEnv("FORMAL_AUTH_REQUIRED", "true");
+    vi.stubEnv("DEMO_PUBLIC_MODE", "0");
+    const request = new NextRequest("https://formal.example.com/privacy");
+
+    const response = await proxy(request);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+  });
 });
