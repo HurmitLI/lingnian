@@ -1590,6 +1590,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   }
 
   const latestFailedTask = detail?.tasks.find((task) => task.status === "failed_retryable");
+  const latestOrganizationFailure = detail?.tasks.find(
+    (task) => task.task_type === "organization" && ["failed_retryable", "failed_final"].includes(task.status),
+  );
   const processingTask = detail?.tasks.find((task) => ["queued", "running"].includes(task.status));
   const existingAudio = detail?.media_assets.find((asset) => asset.kind === "audio_original");
   const existingTrigger = detail?.media_assets.find((asset) => ["photo_original", "old_object_original"].includes(asset.kind));
@@ -2074,10 +2077,10 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
 
       {!initialLoading && view === "record" && detail && !(detail.session.interview_mode === "guided_voice" && detail.session.status === "INTERVIEWING") && (
         <section className="card memory-card">
-          <div className="session-toolbar"><span>{detail.session.interview_mode === "guided_voice" ? "采访已结束，正在整理" : "当前只完成这一段"}</span><button type="button" className="button quiet" disabled={busy || isRecording} onClick={leaveSessionForLater}>稍后继续，返回选题</button></div>
+          <div className="session-toolbar"><span>{detail.session.interview_mode === "guided_voice" ? (processingTask?.task_type === "organization" ? "采访已保存，正在生成故事" : "采访与整理稿已保存") : "当前只完成这一段"}</span><button type="button" className="button quiet" disabled={busy || isRecording} onClick={leaveSessionForLater}>稍后继续，返回选题</button></div>
           <div className="session-meta"><span>{detail.session.life_stage}</span><strong>{sessionStatusLabel(detail.session.status)}</strong></div>
           <MemoryWorkflowStepper currentStep={currentWorkflowStep} />
-          {detail.session.interview_mode === "single" ? <div className="memory-question"><span>今天只聊这一题</span><blockquote>{detail.session.question_text}</blockquote></div> : <div className="interview-finished-summary"><strong>{detail.interview_turns.length} 轮采访已合并</strong><span>来源：{sessionNarrator?.display_name ?? "家人"}讲述，故事归入{selectedProfile?.preferred_name ?? "当前家人"}档案</span></div>}
+          {detail.session.interview_mode === "single" ? <div className="memory-question"><span>今天只聊这一题</span><blockquote>{detail.session.question_text}</blockquote></div> : <div className="interview-finished-summary"><strong>{detail.interview_turns.length} 轮采访、录音和文字均已保存</strong><span>来源：{sessionNarrator?.display_name ?? "家人"}讲述，故事归入{selectedProfile?.preferred_name ?? "当前家人"}档案</span></div>}
           {existingTrigger && (
             <div className="saved-trigger">
               <Image unoptimized width={560} height={420} className="trigger-preview" src={mediaUrl(existingTrigger.content_url) ?? ""} alt="本次回忆的触发图片" />
@@ -2120,12 +2123,12 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 <div className="cloud-consent">
                   <strong>本次发送授权</strong>
                   <p>原始录音不会发送。只有当前已保存的人工校对稿会发送给千问，用于生成这一版故事草稿；修改文字或再次整理都要重新授权。</p>
-                  {organizationError && <p className="organization-error" role="alert">{organizationError}</p>}
+                  {(organizationError || latestOrganizationFailure) && <p className="organization-error" role="alert">{organizationError || taskErrorMessage(latestOrganizationFailure?.error_code ?? null)}</p>}
                   <label>
                     <input type="checkbox" checked={cloudConsentChecked} onChange={(event) => setCloudConsentChecked(event.target.checked)} />
                     我确认并授权本次发送当前人工校对稿
                   </label>
-                  <button className="button primary" disabled={busy || unsaved || !cloudConsentChecked} onClick={() => runTask("organization")}>授权本次发送并整理故事</button>
+                  <button className="button primary" disabled={busy || unsaved || !cloudConsentChecked} onClick={() => runTask("organization")}>{latestOrganizationFailure ? "重新授权并生成故事" : "授权本次发送并整理故事"}</button>
                 </div>
               )}
             </div>

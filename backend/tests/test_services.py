@@ -5,7 +5,11 @@ import pytest
 from app.core.errors import DomainError
 from app.schemas.api import StoryOrganizationOutput, TimelineMention
 from app.services.asr.provider import normalize_chinese_spacing
-from app.services.llm.provider import QwenLLMProvider, parse_json_object
+from app.services.llm.provider import (
+    QwenLLMProvider,
+    normalize_story_payload,
+    parse_json_object,
+)
 from app.services.workflow.fact_guard import detect_added_facts
 from app.services.workflow.state import transition
 
@@ -44,6 +48,39 @@ def test_qwen_story_organizer_rejects_empty_story_body(monkeypatch):
 
     with pytest.raises(RuntimeError, match="INSUFFICIENT_STORY_CONTENT"):
         provider.organize_story("啊啊啊，没了", "小时候住在哪里？")
+
+
+def test_qwen_story_organizer_keeps_reviewed_text_when_json_is_malformed(monkeypatch):
+    provider = QwenLLMProvider.__new__(QwenLLMProvider)
+    provider.story_prompt = "test"
+    monkeypatch.setattr(provider, "_complete", lambda *_: "这不是 JSON")
+
+    output = provider.organize_story("小时候我住在河边，最记得院子里的槐树。", "小时候住在哪里？")
+
+    assert output.body == "小时候我住在河边，最记得院子里的槐树。"
+    assert output.source_coverage == 1
+
+
+def test_story_payload_normalizes_common_model_shape_drift():
+    payload = normalize_story_payload(
+        {
+            "title": " 河边的童年 ",
+            "body": "小时候我住在河边。",
+            "timeline_mentions": [
+                {"time": "小时候", "normalized": 1980, "confidence": "high"}
+            ],
+            "people_mentions": [{"name": "母亲"}],
+            "uncertainties": None,
+            "source_coverage": "100%",
+        },
+        "小时候我住在河边。",
+    )
+
+    output = StoryOrganizationOutput.model_validate(payload)
+    assert output.timeline_mentions[0].expression == "小时候"
+    assert output.timeline_mentions[0].confidence == "uncertain"
+    assert output.people_mentions == ["母亲"]
+    assert output.source_coverage == 1
 
 
 def test_state_machine_rejects_direct_archive():

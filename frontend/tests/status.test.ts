@@ -27,6 +27,11 @@ describe("工作流状态文案", () => {
     expect(hasMeaningfulStoryContent("小时候我住在河边，最记得院子里的槐树。 ")).toBe(true);
   });
 
+  it("明确区分采访保存成功和故事生成失败", () => {
+    expect(taskErrorMessage("LLM_PROCESSING_FAILED")).toContain("录音和整场采访稿已经保存");
+    expect(taskErrorMessage("LLM_PROCESSING_FAILED")).toContain("不需要重新采访");
+  });
+
   it("只把归档和主动跳过视为会话终态", () => {
     expect(isSessionTerminal("ARCHIVED")).toBe(true);
     expect(isSessionTerminal("SKIPPED")).toBe(true);

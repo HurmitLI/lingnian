@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from openai import OpenAI
+from pydantic import ValidationError
 
 from app.core.config import PROJECT_ROOT, get_settings
 from app.schemas.api import (
@@ -205,6 +206,97 @@ def parse_json_object(raw: str) -> dict:
     return json.loads(text[start : end + 1])
 
 
+def _has_meaningful_story_content(value: str) -> bool:
+    compact = re.sub(r"[\s，。！？、,.!?…~～—-]", "", value.strip())
+    without_fillers = re.sub(r"[啊阿呀哦噢喔嗯呃额诶哎唉哈呵哼嘛呢吧啦喽]", "", compact)
+    without_fillers = re.sub(
+        r"^(?:没了|没有了|不知道|不记得|想不起来|不想说)*$",
+        "",
+        without_fillers,
+    )
+    return len(without_fillers) >= 4
+
+
+def _string_list(value: object, *, limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            text = str(
+                item.get("name")
+                or item.get("value")
+                or item.get("expression")
+                or ""
+            ).strip()
+        else:
+            text = str(item).strip()
+        if text:
+            items.append(text[:300])
+    return items[:limit]
+
+
+def normalize_story_payload(payload: dict, corrected_text: str) -> dict:
+    """Tolerate common JSON-shape drift without inventing story facts."""
+    title = str(payload.get("title") or "一段愿意留给家人的回忆").strip()[:200]
+    body = str(payload.get("body") or "").strip()
+    if not body:
+        if not _has_meaningful_story_content(corrected_text):
+            raise RuntimeError("INSUFFICIENT_STORY_CONTENT")
+        body = corrected_text.strip()
+
+    timeline_mentions: list[dict[str, object]] = []
+    raw_timeline = payload.get("timeline_mentions")
+    if isinstance(raw_timeline, list):
+        for item in raw_timeline:
+            if isinstance(item, str):
+                expression = item.strip()
+                normalized = None
+                confidence = "uncertain"
+            elif isinstance(item, dict):
+                expression = str(item.get("expression") or item.get("time") or "").strip()
+                raw_normalized = item.get("normalized")
+                normalized = (
+                    None if raw_normalized in (None, "") else str(raw_normalized)[:40]
+                )
+                confidence = (
+                    item.get("confidence")
+                    if item.get("confidence") in {"confirmed", "uncertain"}
+                    else "uncertain"
+                )
+            else:
+                continue
+            if expression:
+                timeline_mentions.append(
+                    {
+                        "expression": expression[:160],
+                        "normalized": normalized,
+                        "confidence": confidence,
+                    }
+                )
+
+    raw_coverage = payload.get("source_coverage", 1.0)
+    try:
+        if isinstance(raw_coverage, str) and raw_coverage.strip().endswith("%"):
+            source_coverage = float(raw_coverage.strip().rstrip("%")) / 100
+        else:
+            source_coverage = float(raw_coverage)
+    except (TypeError, ValueError):
+        source_coverage = 1.0
+    source_coverage = min(1.0, max(0.0, source_coverage))
+
+    return {
+        "title": title or "一段愿意留给家人的回忆",
+        "body": body[:100_000],
+        "timeline_mentions": timeline_mentions,
+        "people_mentions": _string_list(payload.get("people_mentions"), limit=100),
+        "uncertainties": _string_list(payload.get("uncertainties"), limit=100),
+        "source_coverage": source_coverage,
+    }
+
+
 class QwenLLMProvider:
     provider_name = "qwen"
 
@@ -257,10 +349,25 @@ class QwenLLMProvider:
                 {"question": question, "corrected_transcript": corrected_text}, ensure_ascii=False
             ),
         )
-        payload = parse_json_object(raw)
-        if not str(payload.get("body", "")).strip():
-            raise RuntimeError("INSUFFICIENT_STORY_CONTENT")
-        return StoryOrganizationOutput.model_validate(payload)
+        try:
+            payload = normalize_story_payload(parse_json_object(raw), corrected_text)
+            return StoryOrganizationOutput.model_validate(payload)
+        except RuntimeError:
+            raise
+        except (json.JSONDecodeError, TypeError, ValueError, ValidationError):
+            if not _has_meaningful_story_content(corrected_text):
+                raise RuntimeError("INSUFFICIENT_STORY_CONTENT")
+            # The model call succeeded but its JSON shape drifted. Keeping the
+            # reviewed transcript verbatim is safer than losing the interview
+            # or trying to infer facts from a malformed response.
+            return StoryOrganizationOutput(
+                title="一段愿意留给家人的回忆",
+                body=corrected_text.strip(),
+                timeline_mentions=[],
+                people_mentions=[],
+                uncertainties=[],
+                source_coverage=1.0,
+            )
 
     def clean_interview_transcript(self, text: str) -> InterviewCleanupOutput:
         raw = self._complete(

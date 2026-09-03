@@ -25,7 +25,7 @@ const TASK_STATUS_LABELS: Record<string, string> = {
 const TASK_ERROR_MESSAGES: Record<string, string> = {
   INSUFFICIENT_STORY_CONTENT: "这段校对稿目前只有语气词或结束语，还不足以整理成真实故事。请先补充至少一句实际内容，例如“小时候我住在……，最记得……”，保存后再授权。系统不会为了进入下一步编造故事。",
   LLM_KEY_MISSING: "千问密钥尚未配置，暂时不能整理故事。",
-  LLM_PROCESSING_FAILED: "千问已经收到内容，但这次没有成功整理。请稍后再试；如果持续失败，请检查页面提示。",
+  LLM_PROCESSING_FAILED: "录音和整场采访稿已经保存，只有故事草稿生成失败。请重新勾选本次授权后再试，不需要重新采访。",
 };
 
 export function sessionStatusLabel(status: string): string {
