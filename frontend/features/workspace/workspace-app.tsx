@@ -89,7 +89,6 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const [selectedLifeStage, setSelectedLifeStage] = useState(LIFE_STAGES[0]);
   const [archiveQuery, setArchiveQuery] = useState("");
   const [archiveLifeStage, setArchiveLifeStage] = useState("all");
-  const [cloudConsentChecked, setCloudConsentChecked] = useState(false);
   const [selectedNarratorPersonId, setSelectedNarratorPersonId] = useState("");
   const [interviewAnswerText, setInterviewAnswerText] = useState("");
   const [interviewCloudConsentChecked, setInterviewCloudConsentChecked] = useState(false);
@@ -1335,7 +1334,6 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       const message = taskErrorMessage("INSUFFICIENT_STORY_CONTENT");
       setError("");
       setOrganizationError(message);
-      setCloudConsentChecked(false);
       return;
     }
     setBusy(true);
@@ -1345,9 +1343,6 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       const path = kind === "transcription" ? "transcription-tasks" : "organization-tasks";
       let body: Record<string, string> = {};
       if (kind === "organization" && requiresCloudConsent) {
-        if (!cloudConsentChecked) {
-          throw new Error("请先勾选本次授权，确认只把当前人工校对稿发送给千问整理。");
-        }
         const consent = await api<ModelConsent>(
           `/api/v1/memory-sessions/${detail.session.id}/model-consents`,
           {
@@ -1371,7 +1366,6 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       }
       showError(value);
     } finally {
-      if (kind === "organization") setCloudConsentChecked(false);
       setBusy(false);
     }
   }
@@ -1658,7 +1652,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           {profiles.length > 0 && (
             <label className="profile-switcher">
               <span className="profile-switcher-label"><i aria-hidden="true">{selectedProfile?.preferred_name.slice(0, 1) ?? "家"}</i><b>当前人物档案</b></span>
-              <select disabled={continuousInterviewActive || isRecording} value={selectedProfileId} onChange={(event) => { setSelectedProfileId(event.target.value); setCloudConsentChecked(false); }}>
+              <select disabled={continuousInterviewActive || isRecording} value={selectedProfileId} onChange={(event) => setSelectedProfileId(event.target.value)}>
                 {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.display_name}</option>)}
               </select>
             </label>
@@ -2112,7 +2106,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               <div className="block-title"><h3>{detail.session.interview_mode === "guided_voice" ? "AI 整理稿（可选修改）" : "人工校对"}</h3><span>版本 {detail.transcript.version}</span></div>
               <div className="evidence-grid">
                 <div><h4>ASR 原始转写</h4><p className="evidence-text">{detail.transcript.raw_text}</p></div>
-                <label><h4>{detail.session.interview_mode === "guided_voice" ? "整场采访整理稿" : "人工校对稿"}</h4><textarea aria-label="人工校对稿" value={correctedText} onChange={(event) => { setCorrectedText(event.target.value); setCloudConsentChecked(false); setOrganizationError(""); }} rows={8} /></label>
+                <label><h4>{detail.session.interview_mode === "guided_voice" ? "整场采访整理稿" : "人工校对稿"}</h4><textarea aria-label="人工校对稿" value={correctedText} onChange={(event) => { setCorrectedText(event.target.value); setOrganizationError(""); }} rows={8} /></label>
               </div>
               {unsaved && <p className="unsaved">有尚未保存的修改</p>}
               <div className="button-row">
@@ -2122,13 +2116,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               {detail.session.status === "TRANSCRIPT_REVIEW" && requiresCloudConsent && (
                 <div className="cloud-consent">
                   <strong>本次发送授权</strong>
-                  <p>原始录音不会发送。只有当前已保存的人工校对稿会发送给千问，用于生成这一版故事草稿；修改文字或再次整理都要重新授权。</p>
+                  <p>点击下面的按钮即代表授权本次发送。原始录音不会发送，只有当前已保存的整理稿会发送给千问，用于生成这一版故事草稿。</p>
                   {(organizationError || latestOrganizationFailure) && <p className="organization-error" role="alert">{organizationError || taskErrorMessage(latestOrganizationFailure?.error_code ?? null)}</p>}
-                  <label>
-                    <input type="checkbox" checked={cloudConsentChecked} onChange={(event) => setCloudConsentChecked(event.target.checked)} />
-                    我确认并授权本次发送当前人工校对稿
-                  </label>
-                  <button className="button primary" disabled={busy || unsaved || !cloudConsentChecked} onClick={() => runTask("organization")}>{latestOrganizationFailure ? "重新授权并生成故事" : "授权本次发送并整理故事"}</button>
+                  <button className="button primary" disabled={busy || unsaved} onClick={() => runTask("organization")}>{latestOrganizationFailure ? "同意重新发送文字并生成故事" : "同意发送这份文字并生成故事"}</button>
                 </div>
               )}
             </div>

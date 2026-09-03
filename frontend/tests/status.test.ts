@@ -30,6 +30,7 @@ describe("工作流状态文案", () => {
   it("明确区分采访保存成功和故事生成失败", () => {
     expect(taskErrorMessage("LLM_PROCESSING_FAILED")).toContain("录音和整场采访稿已经保存");
     expect(taskErrorMessage("LLM_PROCESSING_FAILED")).toContain("不需要重新采访");
+    expect(taskErrorMessage("LLM_PROCESSING_FAILED")).toContain("点击下方按钮");
   });
 
   it("只把归档和主动跳过视为会话终态", () => {
