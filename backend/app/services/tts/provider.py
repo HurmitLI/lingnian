@@ -23,6 +23,29 @@ class TTSProvider(Protocol):
     def synthesize(self, text: str) -> SpeechResult: ...
 
 
+def add_wav_lead_in(audio: bytes, duration_ms: int = 180) -> bytes:
+    """Give browsers and speakers a short quiet lead-in before the first syllable."""
+    try:
+        with wave.open(io.BytesIO(audio), "rb") as source:
+            if source.getcomptype() != "NONE":
+                return audio
+            channels = source.getnchannels()
+            sample_width = source.getsampwidth()
+            sample_rate = source.getframerate()
+            frames = source.readframes(source.getnframes())
+        silence_frames = round(sample_rate * max(0, duration_ms) / 1000)
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as output:
+            output.setnchannels(channels)
+            output.setsampwidth(sample_width)
+            output.setframerate(sample_rate)
+            output.writeframes(b"\x00" * silence_frames * channels * sample_width)
+            output.writeframes(frames)
+        return buffer.getvalue()
+    except (EOFError, OSError, ValueError, wave.Error):
+        return audio
+
+
 class MockTTSProvider:
     def synthesize(self, text: str) -> SpeechResult:
         buffer = io.BytesIO()
@@ -79,7 +102,7 @@ class DashScopeTTSProvider:
         if not (audio.startswith(b"RIFF") and audio[8:12] == b"WAVE"):
             raise RuntimeError("语音服务返回了无法识别的音频。")
         return SpeechResult(
-            audio=audio,
+            audio=add_wav_lead_in(audio),
             provider="dashscope",
             model=self.model,
             voice=self.voice,
