@@ -28,18 +28,30 @@ def render_memory_book(
 
     ordered_stages = [stage for stage in STAGE_ORDER if stage in grouped]
     ordered_stages.extend(sorted(set(grouped) - set(ordered_stages)))
-    lines = [f"# {title}", "", f"> 讲述者：{profile.preferred_name}", "> 本文件只收录经过家庭成员人工确认的故事。", ""]
+    lines = [
+        f"# {title}",
+        "",
+        f"> 记忆人物：{profile.preferred_name}",
+        "> 本文件只收录经过家庭成员人工确认的故事，并标明每段故事的实际讲述来源。",
+        "",
+    ]
     manifest: list[dict] = []
     for stage in ordered_stages:
         lines.extend([f"## {stage}", ""])
         for story in sorted(grouped[stage], key=lambda item: item.confirmed_at):
+            session = story.source_draft.session
+            narration_label = (
+                f"{session.narrator_label}亲口讲述"
+                if session.narration_kind == "first_person"
+                else f"{session.narrator_label}回忆讲述"
+            )
             lines.extend(
                 [
                     f"### {story.title}",
                     "",
                     story.body.strip(),
                     "",
-                    f"_来源故事：{story.id}；确认人：{story.confirmed_by}_",
+                    f"_讲述来源：{narration_label}；来源故事：{story.id}；确认人：{story.confirmed_by}_",
                     "",
                 ]
             )
@@ -48,6 +60,8 @@ def render_memory_book(
                     "story_id": story.id,
                     "life_stage": stage,
                     "source_draft_id": story.source_draft_id,
+                    "narrator_label": session.narrator_label,
+                    "narration_kind": session.narration_kind,
                     "confirmed_at": story.confirmed_at.isoformat(),
                 }
             )
@@ -166,7 +180,7 @@ def render_memory_book_pdf(
     flow = [
         Spacer(1, 42 * mm),
         Paragraph(html.escape(title), cover),
-        Paragraph(f"讲述者：{html.escape(profile.preferred_name)}", subtitle),
+        Paragraph(f"记忆人物：{html.escape(profile.preferred_name)}", subtitle),
         Spacer(1, 8 * mm),
         Paragraph("只收录经过家庭成员人工确认的故事", subtitle),
         PageBreak(),
@@ -174,13 +188,22 @@ def render_memory_book_pdf(
     for stage in ordered_stages:
         flow.append(Paragraph(html.escape(stage), stage_style))
         for story in sorted(grouped[stage], key=lambda item: item.confirmed_at):
+            session = story.source_draft.session
+            narration_label = (
+                f"{session.narrator_label}亲口讲述"
+                if session.narration_kind == "first_person"
+                else f"{session.narrator_label}回忆讲述"
+            )
             flow.append(Paragraph(html.escape(story.title), story_title_style))
             paragraphs = [part.strip() for part in story.body.splitlines() if part.strip()]
             for paragraph in paragraphs or [story.body.strip()]:
                 flow.append(Paragraph(html.escape(paragraph), body_style))
             flow.append(
                 Paragraph(
-                    f"来源故事：{story.id}　确认人：{html.escape(story.confirmed_by)}",
+                    (
+                        f"讲述来源：{html.escape(narration_label)}　"
+                        f"来源故事：{story.id}　确认人：{html.escape(story.confirmed_by)}"
+                    ),
                     source_style,
                 )
             )

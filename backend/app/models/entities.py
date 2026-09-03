@@ -106,12 +106,20 @@ class MemorySession(TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     elder_id: Mapped[str] = mapped_column(ForeignKey("elder_profiles.id", ondelete="CASCADE"))
+    narrator_person_id: Mapped[str | None] = mapped_column(
+        ForeignKey("people.id", ondelete="SET NULL")
+    )
+    interview_mode: Mapped[str] = mapped_column(String(32), default="single")
     life_stage: Mapped[str] = mapped_column(String(40))
     prompt_id: Mapped[str] = mapped_column(String(80))
     question_text: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(40), default="PROMPT_READY")
 
     elder: Mapped[ElderProfile] = relationship(back_populates="sessions")
+    narrator: Mapped[Person | None] = relationship(foreign_keys=[narrator_person_id])
+    interview_turns: Mapped[list[InterviewTurn]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", order_by="InterviewTurn.turn_index"
+    )
     media_assets: Mapped[list[MediaAsset]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
@@ -124,6 +132,34 @@ class MemorySession(TimestampMixin, Base):
     tasks: Mapped[list[WorkflowTask]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
+
+
+class InterviewTurn(TimestampMixin, Base):
+    __tablename__ = "interview_turns"
+    __table_args__ = (
+        UniqueConstraint("session_id", "turn_index", name="uq_interview_turn_index"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("memory_sessions.id", ondelete="CASCADE")
+    )
+    turn_index: Mapped[int] = mapped_column(Integer)
+    question_text: Mapped[str] = mapped_column(Text)
+    raw_answer_text: Mapped[str] = mapped_column(Text)
+    corrected_answer_text: Mapped[str] = mapped_column(Text)
+    answer_version: Mapped[int] = mapped_column(Integer, default=1)
+    audio_asset_id: Mapped[str | None] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="SET NULL"), unique=True
+    )
+    asr_provider: Mapped[str] = mapped_column(String(80))
+    asr_model: Mapped[str] = mapped_column(String(160))
+    asr_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    followup_mode: Mapped[str] = mapped_column(String(24), default="pending")
+    status: Mapped[str] = mapped_column(String(32), default="answer_review")
+
+    session: Mapped[MemorySession] = relationship(back_populates="interview_turns")
+    audio_asset: Mapped[MediaAsset | None] = relationship(foreign_keys=[audio_asset_id])
 
 
 class MediaAsset(TimestampMixin, Base):

@@ -454,7 +454,7 @@ export default function MemoryHubApp() {
                 <div className="memory-answer-status"><ShieldCheck size={17} aria-hidden="true" /><span>{answer.status === "grounded" ? "来自已确认档案" : "暂时没有可靠记录"}</span></div>
                 <p className="memory-answer-text">{answer.answer}</p>
                 {answer.citations.map((citation) => <article className="memory-citation" key={citation.source_id}>
-                  <div><span>{citation.source_kind === "family_contribution" ? `家人补充 · ${citation.source_label ?? "家人"}` : `${citation.life_stage} · 本人原话`}</span><h3>{citation.title}</h3></div><p>{citation.excerpt}</p>
+                  <div><span>{citation.source_kind === "family_contribution" ? `家人补充 · ${citation.source_label ?? "家人"}` : citation.source_kind === "family_recollection" ? `${citation.life_stage} · ${citation.source_label ?? "家人"}回忆讲述` : `${citation.life_stage} · ${citation.source_label ?? selectedProfile.preferred_name}亲口讲述`}</span><h3>{citation.title}</h3></div><p>{citation.excerpt}</p>
                   {citation.audio_url && <audio controls preload="metadata" src={mediaUrl(citation.audio_url) ?? undefined} />}
                 </article>)}
                 {answer.follow_up_question && <div className="memory-gap"><strong>把空白变成下一次采访</strong><p>{answer.follow_up_question}</p><button className="button secondary" disabled={busy} onClick={createFollowUp}>带着这个问题去记录</button></div>}

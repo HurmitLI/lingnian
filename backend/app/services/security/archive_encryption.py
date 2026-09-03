@@ -15,6 +15,7 @@ from app.models import (
     ElderProfile,
     FamilyArchive,
     GenerativeMediaRequest,
+    InterviewTurn,
     LegacyPlan,
     MediaAsset,
     MediaLink,
@@ -175,6 +176,28 @@ def activate_archive_encryption(
                 family=family,
                 obj=session,
                 fields={"question_text": TEXT_PLACEHOLDER},
+                master_key=master_key,
+            )
+        interview_turns = (
+            list(
+                db.scalars(
+                    select(InterviewTurn).where(InterviewTurn.session_id.in_(session_ids))
+                ).all()
+            )
+            if session_ids
+            else []
+        )
+        for turn in interview_turns:
+            field_count += _protect_object(
+                db,
+                family=family,
+                obj=turn,
+                fields={
+                    "question_text": TEXT_PLACEHOLDER,
+                    "raw_answer_text": TEXT_PLACEHOLDER,
+                    "corrected_answer_text": TEXT_PLACEHOLDER,
+                    "asr_metadata": {},
+                },
                 master_key=master_key,
             )
         transcripts = (

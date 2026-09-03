@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { CalendarClock, ImageIcon, Search } from "lucide-react";
+import { CalendarClock, CheckCircle2, ImageIcon, Mic, RotateCcw, Search, Volume2 } from "lucide-react";
 
 import SecurityPanel from "@/app/security-panel";
 import AppShell from "@/components/layout/app-shell";
@@ -30,6 +30,8 @@ import type {
   FamilyPerson,
   FamilyRelationship,
   Health,
+  InterviewContinueResult,
+  InterviewTurn,
   ModelConsent,
   MemoryBook,
   MemorySession,
@@ -80,6 +82,11 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const [archiveQuery, setArchiveQuery] = useState("");
   const [archiveLifeStage, setArchiveLifeStage] = useState("all");
   const [cloudConsentChecked, setCloudConsentChecked] = useState(false);
+  const [selectedNarratorPersonId, setSelectedNarratorPersonId] = useState("");
+  const [interviewAnswerText, setInterviewAnswerText] = useState("");
+  const [interviewCloudConsentChecked, setInterviewCloudConsentChecked] = useState(false);
+  const [interviewShouldEnd, setInterviewShouldEnd] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -87,6 +94,17 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const recordingTimerRef = useRef<number | null>(null);
 
   const selectedProfile = profiles.find((item) => item.id === selectedProfileId) ?? null;
+  const effectiveNarratorPersonId = familyPeople.some(
+    (person) => person.id === selectedNarratorPersonId,
+  )
+    ? selectedNarratorPersonId
+    : selectedProfile?.person_id ?? "";
+  const selectedNarrator = familyPeople.find(
+    (person) => person.id === effectiveNarratorPersonId,
+  ) ?? null;
+  const sessionNarrator = familyPeople.find(
+    (person) => person.id === detail?.session.narrator_person_id,
+  ) ?? null;
   const selectedProfileLabel = selectedProfile && selectedProfile.preferred_name.length <= 8
     ? selectedProfile.preferred_name
     : "家人";
@@ -96,6 +114,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       selectedProfile.data_classification !== "test" &&
       health?.llm_provider === "qwen",
   );
+  const activeInterviewTurn = detail?.session.interview_mode === "guided_voice"
+    ? [...detail.interview_turns].reverse().find((turn) => turn.status === "answer_review") ?? null
+    : null;
 
   const showError = useCallback((value: unknown) => {
     setNotice("");
@@ -161,6 +182,10 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       setCorrectedText(result.transcript.corrected_text);
       setSavedCorrectedText(result.transcript.corrected_text);
     }
+    const pendingTurn = [...result.interview_turns].reverse().find(
+      (turn) => turn.status === "answer_review",
+    );
+    setInterviewAnswerText(pendingTurn?.corrected_answer_text ?? "");
     return result;
   }, []);
 
@@ -288,6 +313,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       if (recordingTimerRef.current !== null) window.clearInterval(recordingTimerRef.current);
       if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      window.speechSynthesis?.cancel();
     };
   }, [audioPreview]);
 
@@ -322,7 +348,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       });
       await loadProfiles();
       setSelectedProfileId(profile.id);
-      setNotice(selectedProfile ? "新讲述者已添加，并切换为当前讲述者。" : "讲述者档案已建立。");
+      setNotice(selectedProfile ? "新人物已添加，并切换为当前档案。" : "人物档案已建立。");
       formElement.reset();
     } catch (value) {
       showError(value);
@@ -354,7 +380,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       if (selectedProfile?.family_id === profile.family_id) {
         await loadFamilyRecords(profile.family_id);
       }
-      setNotice("讲述者资料已更新。");
+      setNotice("人物资料已更新。");
     } catch (value) {
       showError(value);
     } finally {
@@ -402,6 +428,11 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     setAudioPreview(null);
     setCorrectedText("");
     setSavedCorrectedText("");
+    setInterviewAnswerText("");
+    setInterviewCloudConsentChecked(false);
+    setInterviewShouldEnd(false);
+    window.speechSynthesis?.cancel();
+    setIsSpeaking(false);
     const url = new URL("/record", window.location.origin);
     if (selectedProfileId) url.searchParams.set("elder", selectedProfileId);
     window.history.replaceState({}, "", `${url.pathname}${url.search}`);
@@ -495,10 +526,12 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     setBusy(true);
     setError("");
     try {
-      const session = await api<{ id: string }>("/api/v1/memory-sessions", {
+      const session = await api<MemorySession>("/api/v1/memory-sessions", {
         method: "POST",
         body: JSON.stringify({
           elder_id: selectedProfileId,
+          narrator_person_id: effectiveNarratorPersonId,
+          interview_mode: "guided_voice",
           life_stage: lifeStage,
           topic_confirmed: needsConfirmation,
         }),
@@ -508,7 +541,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       await loadMemoryContext(selectedProfileId);
       await loadRecentSessions(selectedProfileId);
       setAudioFile(null);
-      setNotice("回忆问题已准备好，一次只聊一个点。 ");
+      setNotice("采访已经准备好。聆年一次只问一个问题，随时可以结束。 ");
+      speakQuestion(session.question_text);
     } catch (value) {
       showError(value);
     } finally {
@@ -530,10 +564,12 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     setBusy(true);
     setError("");
     try {
-      const session = await api<{ id: string }>("/api/v1/memory-sessions", {
+      const session = await api<MemorySession>("/api/v1/memory-sessions", {
         method: "POST",
         body: JSON.stringify({
           elder_id: selectedProfileId,
+          narrator_person_id: effectiveNarratorPersonId,
+          interview_mode: "guided_voice",
           life_stage: lifeStage,
           trigger_kind: triggerKind,
           topic_confirmed: needsConfirmation,
@@ -554,6 +590,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       if (triggerPreview) URL.revokeObjectURL(triggerPreview);
       setTriggerPreview(null);
       setNotice("图片已保存在本机。问题只邀请讲述，不会猜测图片中的人物、地点或年代。");
+      speakQuestion(session.question_text);
     } catch (value) {
       showError(value);
     } finally {
@@ -590,6 +627,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       return;
     }
     try {
+      window.speechSynthesis?.cancel();
+      setIsSpeaking(false);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
       const mimeType = chooseRecordingMimeType((type) => MediaRecorder.isTypeSupported(type));
@@ -647,6 +686,29 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     setIsRecording(false);
   }
 
+  function speakQuestion(text: string) {
+    if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+      setNotice("当前浏览器不能朗读问题，您仍然可以看着文字继续采访。");
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "zh-CN";
+    utterance.rate = 0.9;
+    utterance.pitch = 1;
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find((voice) => voice.lang.toLowerCase() === "zh-cn")
+      ?? voices.find((voice) => voice.lang.toLowerCase().startsWith("zh"));
+    if (preferredVoice) utterance.voice = preferredVoice;
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => {
+      setIsSpeaking(false);
+      setNotice("这次没有成功朗读，问题文字仍然可以正常使用。");
+    };
+    window.speechSynthesis.speak(utterance);
+  }
+
   function discardAudio() {
     if (audioPreview) URL.revokeObjectURL(audioPreview);
     setAudioPreview(null);
@@ -662,16 +724,112 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     const form = new FormData();
     form.append("audio", audioFile);
     try {
-      await api(`/api/v1/memory-sessions/${detail.session.id}/audio`, {
-        method: "POST",
-        body: form,
-      });
+      if (detail.session.interview_mode === "guided_voice" && detail.session.status === "INTERVIEWING") {
+        const turn = await api<InterviewTurn>(
+          `/api/v1/memory-sessions/${detail.session.id}/interview-turns/audio`,
+          { method: "POST", body: form },
+        );
+        setInterviewAnswerText(turn.corrected_answer_text);
+      } else {
+        await api(`/api/v1/memory-sessions/${detail.session.id}/audio`, {
+          method: "POST",
+          body: form,
+        });
+      }
       await loadSession(detail.session.id);
       if (audioPreview) URL.revokeObjectURL(audioPreview);
       setAudioPreview(null);
       setAudioFile(null);
       setRecordingSeconds(0);
-      setNotice("原始音频已安全保留，可以开始转写。 ");
+      setNotice(
+        detail.session.interview_mode === "guided_voice"
+          ? "回答已经在本机转成文字，请先看一眼是否准确。"
+          : "原始音频已安全保留，可以开始转写。 ",
+      );
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function continueInterview() {
+    if (!detail || !activeInterviewTurn || !interviewAnswerText.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api<InterviewContinueResult>(
+        `/api/v1/memory-sessions/${detail.session.id}/interview-turns/${activeInterviewTurn.id}/continue`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            corrected_answer_text: interviewAnswerText.trim(),
+            allow_cloud_followup: interviewCloudConsentChecked,
+            actor_label: "本机家庭管理员",
+          }),
+        },
+      );
+      await loadSession(detail.session.id);
+      setInterviewAnswerText("");
+      setInterviewCloudConsentChecked(false);
+      setInterviewShouldEnd(result.should_end);
+      setAudioFile(null);
+      setAudioPreview(null);
+      setNotice(`${result.acknowledgement} 已准备好下一问。`);
+      speakQuestion(result.next_question);
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function replaceInterviewQuestion() {
+    if (!detail) return;
+    setBusy(true);
+    setError("");
+    try {
+      const session = await api<MemorySession>(
+        `/api/v1/memory-sessions/${detail.session.id}/interview-question/replace`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      await loadSession(detail.session.id);
+      setNotice("已经换成一个更容易回答的问题。");
+      speakQuestion(session.question_text);
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finalizeInterview() {
+    if (!detail) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (
+        activeInterviewTurn
+        && interviewAnswerText.trim()
+        && interviewAnswerText.trim() !== activeInterviewTurn.corrected_answer_text
+      ) {
+        await api<InterviewTurn>(`/api/v1/interview-turns/${activeInterviewTurn.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ corrected_answer_text: interviewAnswerText.trim() }),
+        });
+      }
+      window.speechSynthesis?.cancel();
+      setIsSpeaking(false);
+      const result = await api<SessionDetail>(
+        `/api/v1/memory-sessions/${detail.session.id}/interview-finalize`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      setDetail(result);
+      setCorrectedText(result.transcript?.corrected_text ?? "");
+      setSavedCorrectedText(result.transcript?.corrected_text ?? "");
+      setInterviewAnswerText("");
+      setInterviewCloudConsentChecked(false);
+      setNotice("采访已结束，所有回答和完整原声都已汇总。请最后校对，再整理成故事。");
     } catch (value) {
       showError(value);
     } finally {
@@ -1031,7 +1189,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         <div className="workspace-controls">
           {profiles.length > 0 && (
             <label className="profile-switcher">
-              <span className="profile-switcher-label"><i aria-hidden="true">{selectedProfile?.preferred_name.slice(0, 1) ?? "家"}</i><b>当前讲述者</b></span>
+              <span className="profile-switcher-label"><i aria-hidden="true">{selectedProfile?.preferred_name.slice(0, 1) ?? "家"}</i><b>当前人物档案</b></span>
               <select value={selectedProfileId} onChange={(event) => { setSelectedProfileId(event.target.value); setCloudConsentChecked(false); }}>
                 {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.display_name}</option>)}
               </select>
@@ -1101,7 +1259,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           ) : (
             <section className="card empty-state-card">
               <p className="card-kicker">还没有家庭档案</p>
-              <h2>先建立一位讲述者</h2>
+              <h2>先建立一位家人的档案</h2>
               <p>只需要一个称呼就能开始，其他资料以后再慢慢补充。</p>
               <Link className="button primary button-link" href="/family">建立家庭档案</Link>
             </section>
@@ -1135,12 +1293,12 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         <div className="section-heading">
           <span>01</span>
           <div>
-            <h2>{profiles.length > 0 ? "讲述者档案" : "建立讲述者档案"}</h2>
-            <p>{profiles.length > 0 ? "选择当前要记录回忆的家人；资料只用于整理家庭记忆。" : "先用一位家人的称呼开始，其他资料可以以后再补。"}</p>
+            <h2>{profiles.length > 0 ? "人物档案" : "建立人物档案"}</h2>
+            <p>{profiles.length > 0 ? "选择故事所属的家人；实际开口讲述的人会在每次采访前单独选择。" : "先用一位家人的称呼开始，其他资料可以以后再补。"}</p>
           </div>
         </div>
         {selectedProfile && (
-          <div className="profile-directory" aria-label="讲述者列表">
+          <div className="profile-directory" aria-label="人物档案列表">
             {currentFamilyProfiles.map((profile) => {
               const isCurrent = profile.id === selectedProfile.id;
               return (
@@ -1154,11 +1312,11 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                       disabled={busy || isCurrent}
                       onClick={() => { setSelectedProfileId(profile.id); setNotice(`已切换到“${profile.preferred_name}”的档案。`); }}
                     >
-                      {isCurrent ? "当前讲述者" : "切换到此人"}
+                      {isCurrent ? "当前人物档案" : "切换到此人"}
                     </button>
                   </div>
                   <details className="profile-edit-details">
-                    <summary>编辑这位讲述者的资料</summary>
+                    <summary>编辑这位家人的资料</summary>
                     <form onSubmit={(event) => updateProfile(event, profile)} className="form-grid">
                       <label className="field"><span>档案显示名</span><input name="displayName" defaultValue={profile.display_name} required /></label>
                       <label className="field"><span>家人希望怎么称呼</span><input name="preferredName" defaultValue={profile.preferred_name} required /></label>
@@ -1179,15 +1337,15 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           </div>
         )}
         <details className="create-panel" open={profiles.length === 0}>
-          <summary>{profiles.length ? "添加一位讲述者" : "创建第一位讲述者"}</summary>
+          <summary>{profiles.length ? "添加一位家人档案" : "创建第一位家人档案"}</summary>
           <form onSubmit={createProfile} className="form-grid">
             {!selectedProfile && <label className="field"><span>家庭档案名称</span><input name="familyName" required placeholder="例如：林家的回忆" /></label>}
-            <label className="field"><span>新讲述者的显示名称</span><input name="displayName" required placeholder="例如：林奶奶" /></label>
-            <label className="field"><span>家人怎么称呼这位讲述者</span><input name="preferredName" required placeholder="例如：奶奶" /></label>
+            <label className="field"><span>这位家人的显示名称</span><input name="displayName" required placeholder="例如：林奶奶" /></label>
+            <label className="field"><span>家里怎么称呼这位家人</span><input name="preferredName" required placeholder="例如：奶奶" /></label>
             <label className="field"><span>出生年份（可选）</span><input name="birthYear" type="number" min="1900" max="2100" /></label>
             <label className="field"><span>籍贯（可选）</span><input name="nativePlace" /></label>
             <label className="field"><span>职业摘要（可选）</span><input name="occupation" /></label>
-            <button className="button primary" disabled={busy}>{profiles.length ? "添加并切换到此人" : "建立讲述者档案"}</button>
+            <button className="button primary" disabled={busy}>{profiles.length ? "添加并切换到此人" : "建立人物档案"}</button>
           </form>
         </details>
         {selectedProfile && (
@@ -1199,7 +1357,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 <div className="family-person-list">
                   {familyPeople.map((person) => (
                     <div key={person.id}>
-                      <span><strong>{person.display_name}</strong><small>{person.role === "elder" ? "讲述者" : "家庭成员"}</small></span>
+                      <span><strong>{person.display_name}</strong><small>{person.role === "elder" ? "人物档案" : "家庭成员"}</small></span>
                       <span className="record-actions"><button className="button quiet" disabled={busy} onClick={() => renameFamilyPerson(person)}>改名</button>{person.role !== "elder" && <button className="button quiet danger" disabled={busy} onClick={() => deleteFamilyPerson(person)}>删除</button>}</span>
                     </div>
                   ))}
@@ -1262,14 +1420,36 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       {!initialLoading && view === "family" && <SecurityPanel key={selectedProfile?.family_id ?? "no-family"} familyId={selectedProfile?.family_id ?? null} />}
 
       {!initialLoading && view === "record" && !detail && <section className="card entry-card">
-        <div className="section-heading"><span>01</span><div><h2>今天想从哪一段聊起？</h2><p>只选一个话题，聆年会准备一个温和的问题。</p></div></div>
+        <div className="section-heading"><span>01</span><div><h2>先确定讲谁的故事</h2><p>记忆中的人和今天开口讲述的人，可以不是同一个人。</p></div></div>
+        {selectedProfile && (
+          <div className="interview-identity-grid">
+            <div className="identity-card subject-card">
+              <span>这次讲谁</span>
+              <strong>{selectedProfile.preferred_name}</strong>
+              <small>故事会归入这位家人的档案</small>
+            </div>
+            <label className="identity-card narrator-select">
+              <span>今天谁来讲</span>
+              <select
+                value={effectiveNarratorPersonId}
+                onChange={(event) => setSelectedNarratorPersonId(event.target.value)}
+              >
+                {familyPeople.map((person) => (
+                  <option key={person.id} value={person.id}>{person.display_name}</option>
+                ))}
+              </select>
+              <small>{selectedNarrator?.id === selectedProfile.person_id ? "本人亲口讲述" : "家人回忆或转述，会保留来源"}</small>
+            </label>
+          </div>
+        )}
+        <div className="section-heading interview-topic-heading"><span>02</span><div><h2>今天从哪一段聊起？</h2><p>聆年会用声音一次问一个问题，并根据回答继续追问。</p></div></div>
         <MemoryWorkflowStepper currentStep={0} />
         <div className="stage-grid">
           {LIFE_STAGES.map((stage) => {
             const coverage = stageCoverage(stage);
             const avoided = topicPreference(stage) === "avoid";
             return (
-              <button className={`stage-button${avoided ? " avoided" : ""}`} key={stage} disabled={!selectedProfileId || busy || avoided} onClick={() => startMemory(stage)}>
+              <button className={`stage-button${avoided ? " avoided" : ""}`} key={stage} disabled={!selectedProfileId || !effectiveNarratorPersonId || busy || avoided} onClick={() => startMemory(stage)}>
                 <span>{stage}</span>
                 <small>{avoided ? "不再询问" : coverage ? `${coverage.confirmed_story_count} 篇已确认` : "尚未开始"}</small>
               </button>
@@ -1283,7 +1463,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               {availableStages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
             </select>
           </label>
-          <button type="button" className="button primary" disabled={!activeLifeStage || !selectedProfileId || busy} onClick={() => activeLifeStage && startMemory(activeLifeStage)}>准备一个问题</button>
+          <button type="button" className="button primary" disabled={!activeLifeStage || !selectedProfileId || !effectiveNarratorPersonId || busy} onClick={() => activeLifeStage && startMemory(activeLifeStage)}>开始语音采访</button>
         </div>
         {selectedProfile && (
           <details className="secondary-entry">
@@ -1300,12 +1480,92 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         )}
       </section>}
 
-      {!initialLoading && view === "record" && detail && (
+      {!initialLoading && view === "record" && detail?.session.interview_mode === "guided_voice" && detail.session.status === "INTERVIEWING" && (
+        <section className="card guided-interview-card">
+          <div className="session-toolbar">
+            <span>正在采访 · 第 {detail.interview_turns.length + (activeInterviewTurn ? 0 : 1)} 轮</span>
+            <button type="button" className="button quiet" disabled={busy || isRecording} onClick={leaveSessionForLater}>稍后继续</button>
+          </div>
+          <div className="interview-provenance">
+            <div><small>回忆对象</small><strong>{selectedProfile?.preferred_name ?? "当前家人"}</strong></div>
+            <span aria-hidden="true">←</span>
+            <div><small>本次讲述人</small><strong>{sessionNarrator?.display_name ?? selectedProfile?.preferred_name ?? "家人"}</strong></div>
+          </div>
+
+          {existingTrigger && (
+            <div className="guided-trigger">
+              <Image unoptimized width={560} height={420} className="trigger-preview" src={mediaUrl(existingTrigger.content_url) ?? ""} alt="本次采访使用的回忆图片" />
+              <p>照片只用来帮助回想，系统不会猜测其中的人物、地点或年代。</p>
+            </div>
+          )}
+
+          {detail.interview_turns.filter((turn) => turn.status === "complete").length > 0 && (
+            <div className="interview-history" aria-label="已经完成的采访内容">
+              {detail.interview_turns.filter((turn) => turn.status === "complete").map((turn) => (
+                <article key={turn.id}>
+                  <div className="interviewer-line"><span>聆年</span><p>{turn.question_text}</p></div>
+                  <div className="narrator-line"><span>{sessionNarrator?.display_name ?? "家人"}</span><p>{turn.corrected_answer_text}</p></div>
+                </article>
+              ))}
+            </div>
+          )}
+
+          <div className="current-interview-question">
+            <div className="ai-orb" aria-hidden="true"><Volume2 size={24} /></div>
+            <div>
+              <span>聆年想问</span>
+              <blockquote>{detail.session.question_text}</blockquote>
+            </div>
+            <button type="button" className="button secondary speak-button" disabled={busy || isRecording} onClick={() => speakQuestion(detail.session.question_text)}>
+              <Volume2 size={17} />{isSpeaking ? "正在朗读" : "再听一遍"}
+            </button>
+          </div>
+
+          {!activeInterviewTurn ? (
+            <div className="interview-answer-panel">
+              <div className="answer-instruction"><Mic size={20} /><div><strong>请慢慢回答</strong><p>讲完一小段就停下来，聆年会先转成文字，再问下一题。</p></div></div>
+              <div className="button-row interview-record-actions">
+                {!isRecording ? <button type="button" className="button primary" onClick={startRecording} disabled={busy}><Mic size={18} />开始回答</button> : <button type="button" className="button recording" onClick={stopRecording}>停止录音</button>}
+                <label className={"button secondary file-button" + (isRecording ? " disabled" : "")}>选择已有音频<input aria-label="选择已有音频" type="file" accept="audio/*" disabled={busy || isRecording} onChange={(event) => event.target.files?.[0] && setPreviewFile(event.target.files[0])} /></label>
+                <button type="button" className="button quiet" disabled={busy || isRecording || detail.interview_turns.length >= 12} onClick={replaceInterviewQuestion}><RotateCcw size={16} />换个问题</button>
+              </div>
+              {isRecording && <div className="recording-live" role="status" aria-live="polite"><span aria-hidden="true" /><strong>正在录音 {formatRecordingDuration(recordingSeconds)}</strong><small>讲完后请点“停止录音”</small></div>}
+              {audioPreview && <audio controls src={audioPreview} className="audio-player" />}
+              {audioFile && <div className="file-line"><span>{audioFile.name}</span><div className="button-row compact-row"><button type="button" className="button quiet danger" disabled={busy} onClick={discardAudio}>重新录</button><button type="button" className="button primary" disabled={busy || isRecording} onClick={uploadAudio}>保存回答并转文字</button></div></div>}
+            </div>
+          ) : (
+            <div className="interview-review-panel">
+              <div className="review-title"><CheckCircle2 size={21} /><div><strong>听写完成，先看一眼</strong><p>有错字可以直接修改。确认以后，聆年才会继续问。</p></div></div>
+              <label>
+                <span className="sr-only">校对本轮回答</span>
+                <textarea rows={6} value={interviewAnswerText} onChange={(event) => { setInterviewAnswerText(event.target.value); setInterviewCloudConsentChecked(false); }} />
+              </label>
+              <audio controls preload="metadata" src={mediaUrl(activeInterviewTurn.audio_url) ?? undefined} className="audio-player" />
+              {requiresCloudConsent && (
+                <div className="interview-cloud-choice">
+                  <label><input type="checkbox" checked={interviewCloudConsentChecked} onChange={(event) => setInterviewCloudConsentChecked(event.target.checked)} />本轮允许把上面的文字发送给千问，生成更贴合内容的追问</label>
+                  <p>原始录音永不发送。不勾选也能继续，聆年会在本机从安全题库中选择下一问。</p>
+                </div>
+              )}
+              <div className="button-row interview-next-actions">
+                <button type="button" className="button primary" disabled={busy || !interviewAnswerText.trim()} onClick={continueInterview}>确认回答，继续追问</button>
+                <button type="button" className="button secondary" disabled={busy || !interviewAnswerText.trim()} onClick={finalizeInterview}>今天先到这里</button>
+              </div>
+            </div>
+          )}
+
+          {(interviewShouldEnd || detail.interview_turns.length >= 7) && <p className="interview-rest-note">已经聊了不少内容。现在结束也完全可以，记忆以后还能接着补。</p>}
+          {detail.interview_turns.length > 0 && !activeInterviewTurn && <button type="button" className="button quiet finish-interview" disabled={busy || isRecording} onClick={finalizeInterview}>结束这次采访，去统一校对</button>}
+          <button type="button" className="button quiet danger interview-skip" disabled={busy || isRecording} onClick={skipSession}>放弃整次采访并清理临时内容</button>
+        </section>
+      )}
+
+      {!initialLoading && view === "record" && detail && !(detail.session.interview_mode === "guided_voice" && detail.session.status === "INTERVIEWING") && (
         <section className="card memory-card">
-          <div className="session-toolbar"><span>当前只完成这一段</span><button type="button" className="button quiet" disabled={busy || isRecording} onClick={leaveSessionForLater}>稍后继续，返回选题</button></div>
+          <div className="session-toolbar"><span>{detail.session.interview_mode === "guided_voice" ? "采访已结束，正在整理" : "当前只完成这一段"}</span><button type="button" className="button quiet" disabled={busy || isRecording} onClick={leaveSessionForLater}>稍后继续，返回选题</button></div>
           <div className="session-meta"><span>{detail.session.life_stage}</span><strong>{sessionStatusLabel(detail.session.status)}</strong></div>
           <MemoryWorkflowStepper currentStep={currentWorkflowStep} />
-          <div className="memory-question"><span>今天只聊这一题</span><blockquote>{detail.session.question_text}</blockquote></div>
+          {detail.session.interview_mode === "single" ? <div className="memory-question"><span>今天只聊这一题</span><blockquote>{detail.session.question_text}</blockquote></div> : <div className="interview-finished-summary"><strong>{detail.interview_turns.length} 轮采访已合并</strong><span>来源：{sessionNarrator?.display_name ?? "家人"}讲述，故事归入{selectedProfile?.preferred_name ?? "当前家人"}档案</span></div>}
           {existingTrigger && (
             <div className="saved-trigger">
               <Image unoptimized width={560} height={420} className="trigger-preview" src={mediaUrl(existingTrigger.content_url) ?? ""} alt="本次回忆的触发图片" />
@@ -1314,7 +1574,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           )}
           {!(["SKIPPED", "ARCHIVED"].includes(detail.session.status)) && <button className="button quiet danger" disabled={busy} onClick={skipSession}>这次不想讲，直接跳过</button>}
 
-          {!(["SKIPPED", "ARCHIVED"].includes(detail.session.status)) && (
+          {detail.session.interview_mode === "single" && !(["SKIPPED", "ARCHIVED"].includes(detail.session.status)) && (
             <div className="workflow-block" data-state={currentWorkflowStep === 1 ? "current" : currentWorkflowStep > 1 ? "complete" : "upcoming"}>
               <h3>留下声音</h3>
               <p className="hint">开始后请慢慢讲。录音停止前只暂存在当前浏览器，点击“确认上传”后才会保存到本机档案。</p>
@@ -1418,7 +1678,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 <article key={item.story.id}>
                   <div className="archive-story-meta">
                     <time>{new Date(item.story.confirmed_at).toLocaleDateString("zh-CN")}</time>
-                    <span>{item.life_stage} · 故事 {String(filteredTimeline.length - index).padStart(2, "0")}</span>
+                    <span>{item.life_stage} · {item.narration_kind === "family_recollection" ? `${item.narrator_label ?? "家人"}回忆讲述` : `${item.narrator_label ?? selectedProfileLabel}亲口讲述`} · 故事 {String(filteredTimeline.length - index).padStart(2, "0")}</span>
                   </div>
                   <div className={`archive-story-body${item.image_url ? " with-image" : ""}`}>
                     {item.image_url && (
@@ -1430,7 +1690,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                     <div className="archive-story-content"><h3>{item.story.title}</h3><p>{item.story.body}</p></div>
                   </div>
                   {mediaUrl(item.audio_url) && (
-                    <div className="archive-story-audio"><span>亲口讲述</span><audio controls preload="metadata" src={mediaUrl(item.audio_url) ?? undefined} /></div>
+                    <div className="archive-story-audio"><span>{item.narration_kind === "family_recollection" ? `${item.narrator_label ?? "家人"}的回忆` : "亲口讲述"}</span><audio controls preload="metadata" src={mediaUrl(item.audio_url) ?? undefined} /></div>
                   )}
                 </article>
               ))}

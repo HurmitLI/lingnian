@@ -1,5 +1,6 @@
 const SESSION_STATUS_LABELS: Record<string, string> = {
   PROMPT_READY: "问题已准备",
+  INTERVIEWING: "正在语音采访",
   RECORDING_PENDING: "等待留下声音",
   AUDIO_UPLOADED: "音频已保存",
   TRANSCRIBING: "正在本机转写",
@@ -57,6 +58,7 @@ export function memoryWorkflowStep(status: string): number {
   if (
     [
       "PROMPT_READY",
+      "INTERVIEWING",
       "RECORDING_PENDING",
       "AUDIO_UPLOADED",
       "TRANSCRIBING",

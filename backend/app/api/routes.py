@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,6 +27,7 @@ from app.models import (
     ElderProfile,
     EncryptedField,
     FamilyArchive,
+    InterviewTurn,
     Keepsake,
     KeepsakeAuthorization,
     LegacyPlan,
@@ -72,6 +74,10 @@ from app.schemas.api import (
     GenerativeMediaRequestCreate,
     GenerativeMediaRequestRead,
     GenerativeMediaReviewCreate,
+    InterviewContinueRequest,
+    InterviewContinueResult,
+    InterviewTurnRead,
+    InterviewTurnUpdate,
     ElderMemoryContext,
     MediaAssetRead,
     MediaLinkRead,
@@ -147,6 +153,9 @@ from app.services.memory import (
     SelectedQuestion,
 )
 from app.services.generative_media import capability_catalog, estimate_request
+from app.services.asr import get_asr_provider
+from app.services.asr.audio import get_ffmpeg_binary, normalize_audio
+from app.services.llm import generate_local_interview_followup, get_llm_provider
 from app.services.keepsake import (
     build_keepsake_manifest,
     manifest_sha256 as keepsake_manifest_sha256,
@@ -397,12 +406,51 @@ def memory_session_read(
     return MemorySessionRead(
         id=session.id,
         elder_id=session.elder_id,
+        narrator_person_id=session.narrator_person_id,
+        interview_mode=session.interview_mode,
         life_stage=session.life_stage,
         prompt_id=session.prompt_id,
         question_text=secure_value(db, family, session, "question_text", store),
         status=session.status,
         created_at=session.created_at,
         updated_at=session.updated_at,
+    )
+
+
+def interview_turn_read(
+    db: Session, turn: InterviewTurn, store: SecretStore
+) -> InterviewTurnRead:
+    family = turn.session.elder.person.family
+    key = family_master_key(family, store)
+    return InterviewTurnRead(
+        id=turn.id,
+        session_id=turn.session_id,
+        turn_index=turn.turn_index,
+        question_text=secure_value(
+            db, family, turn, "question_text", store, master_key=key
+        ),
+        raw_answer_text=secure_value(
+            db, family, turn, "raw_answer_text", store, master_key=key
+        ),
+        corrected_answer_text=secure_value(
+            db, family, turn, "corrected_answer_text", store, master_key=key
+        ),
+        answer_version=turn.answer_version,
+        audio_asset_id=turn.audio_asset_id,
+        audio_url=(
+            f"/api/v1/media-assets/{turn.audio_asset_id}/content"
+            if turn.audio_asset_id
+            else None
+        ),
+        asr_provider=turn.asr_provider,
+        asr_model=turn.asr_model,
+        asr_metadata=secure_value(
+            db, family, turn, "asr_metadata", store, master_key=key
+        ),
+        followup_mode=turn.followup_mode,
+        status=turn.status,
+        created_at=turn.created_at,
+        updated_at=turn.updated_at,
     )
 
 
@@ -701,7 +749,20 @@ def decrypted_book_sources(
     )
     story_views = []
     for story in stories:
-        session_view = SimpleNamespace(life_stage=story.source_draft.session.life_stage)
+        session = story.source_draft.session
+        narrator = session.narrator or session.elder.person
+        narrator_label = secure_value(
+            db, family, narrator, "display_name", store, master_key=key
+        )
+        session_view = SimpleNamespace(
+            life_stage=session.life_stage,
+            narrator_label=narrator_label,
+            narration_kind=(
+                "first_person"
+                if narrator.id == session.elder.person_id
+                else "family_recollection"
+            ),
+        )
         draft_view = SimpleNamespace(session=session_view)
         story_views.append(
             SimpleNamespace(
@@ -2443,6 +2504,18 @@ def create_memory_session(
     elder = require(
         db, ElderProfile, payload.elder_id, "ELDER_NOT_FOUND", "没有找到这位老人的测试档案。"
     )
+    narrator_person_id = payload.narrator_person_id or elder.person_id
+    narrator = require(
+        db,
+        Person,
+        narrator_person_id,
+        "NARRATOR_NOT_FOUND",
+        "没有找到这位讲述人。",
+    )
+    if narrator.family_id != elder.person.family_id:
+        raise DomainError(
+            "NARRATOR_FAMILY_MISMATCH", "讲述人必须属于当前家庭档案。", 409
+        )
     try:
         if payload.trigger_kind in {"photo", "old_object"}:
             preference = db.scalar(
@@ -2493,10 +2566,12 @@ def create_memory_session(
         raise DomainError("QUESTION_GENERATION_FAILED", "暂时没能生成回忆问题，请重试。", 503) from exc
     session = MemorySession(
         elder_id=elder.id,
+        narrator_person_id=narrator.id,
+        interview_mode=payload.interview_mode,
         life_stage=payload.life_stage.strip(),
         prompt_id=question.prompt_id,
         question_text=question.question_text,
-        status="PROMPT_READY",
+        status="INTERVIEWING" if payload.interview_mode == "guided_voice" else "PROMPT_READY",
     )
     db.add(session)
     db.flush()
@@ -2523,10 +2598,15 @@ def get_memory_session(
         db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次回忆记录。"
     )
     assets = [media_read(db, asset, secret_store) for asset in session.media_assets]
+    interview_turns = [
+        interview_turn_read(db, turn, secret_store)
+        for turn in sorted(session.interview_turns, key=lambda item: item.turn_index)
+    ]
     tasks = sorted(session.tasks, key=lambda item: item.created_at, reverse=True)
     return SessionDetail(
         session=memory_session_read(db, session, secret_store),
         media_assets=assets,
+        interview_turns=interview_turns,
         transcript=transcript_read(db, session.transcript, secret_store)
         if session.transcript
         else None,
@@ -2552,7 +2632,7 @@ def skip_memory_session(
         raise DomainError("ARCHIVED_SESSION_LOCKED", "已经归档的故事不能在这里跳过。", 409)
 
     settings = get_settings()
-    deleted_object_ids: list[str] = []
+    deleted_object_ids: list[str] = [turn.id for turn in session.interview_turns]
     for asset in list(session.media_assets):
         deleted_object_ids.append(asset.id)
         deleted_object_ids.extend(link.id for link in asset.links)
@@ -2632,6 +2712,538 @@ async def upload_audio(
     db.commit()
     db.refresh(asset)
     return media_read(db, asset, secret_store)
+
+
+def _interview_history(
+    db: Session, session: MemorySession, store: SecretStore
+) -> list[dict[str, str]]:
+    family = session.elder.person.family
+    key = family_master_key(family, store)
+    return [
+        {
+            "question": secure_value(
+                db, family, turn, "question_text", store, master_key=key
+            ),
+            "answer": secure_value(
+                db, family, turn, "corrected_answer_text", store, master_key=key
+            ),
+        }
+        for turn in sorted(session.interview_turns, key=lambda item: item.turn_index)
+    ]
+
+
+@router.post(
+    "/memory-sessions/{session_id}/interview-turns/audio",
+    response_model=InterviewTurnRead,
+    status_code=201,
+)
+async def upload_interview_turn_audio(
+    session_id: str,
+    audio: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> InterviewTurnRead:
+    session = require(
+        db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次采访。"
+    )
+    if session.interview_mode != "guided_voice" or session.status != "INTERVIEWING":
+        raise DomainError("SESSION_NOT_INTERVIEWING", "当前记录不在语音采访中。", 409)
+    if any(turn.status == "answer_review" for turn in session.interview_turns):
+        raise DomainError("INTERVIEW_TURN_PENDING", "请先确认上一段回答。", 409)
+    if len(session.interview_turns) >= 12:
+        raise DomainError("INTERVIEW_TURN_LIMIT", "这次采访已经达到 12 轮，请先结束并整理。", 409)
+
+    stored = await store_audio_upload(audio, session.id, get_settings())
+    asset_path = resolve_controlled_path(
+        get_settings().resolved_asset_root, stored["relative_path"]
+    )
+    try:
+        asset = MediaAsset(
+            session_id=session.id,
+            kind="interview_turn_audio",
+            status="ready",
+            is_original=True,
+            **stored,
+        )
+        db.add(asset)
+        db.flush()
+        family = session.elder.person.family
+        protect_values(
+            db,
+            family,
+            asset,
+            {"original_filename": asset.original_filename},
+            secret_store,
+        )
+        encrypt_asset_if_needed(db, asset, family, secret_store)
+
+        with tempfile.TemporaryDirectory(prefix="lingnian-interview-") as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            source_path = asset_path
+            if asset.encryption_version == 1:
+                source_path = temp_dir / "answer.source"
+                key = family_master_key(family, secret_store)
+                if key is None:
+                    raise DomainError("MASTER_KEY_MISSING", "无法解锁家庭档案。", 409)
+                decrypted = decrypt_media_file(
+                    asset_path,
+                    source_path,
+                    key,
+                    associated_data=media_context(family.id, asset.id),
+                )
+                if (
+                    decrypted.plaintext_size != asset.plaintext_size_bytes
+                    or decrypted.plaintext_sha256 != asset.plaintext_sha256
+                ):
+                    raise RuntimeError("ASSET_PLAINTEXT_INTEGRITY_FAILED")
+            normalized_path = temp_dir / "answer.wav"
+            normalize_audio(source_path, normalized_path)
+            result = get_asr_provider().transcribe(normalized_path)
+
+        question_text = secure_value(
+            db, family, session, "question_text", secret_store
+        )
+        turn = InterviewTurn(
+            session_id=session.id,
+            turn_index=len(session.interview_turns) + 1,
+            question_text=question_text,
+            raw_answer_text=result.text,
+            corrected_answer_text=result.text,
+            answer_version=1,
+            audio_asset_id=asset.id,
+            asr_provider=result.provider,
+            asr_model=result.model,
+            asr_metadata=result.metadata,
+            followup_mode="pending",
+            status="answer_review",
+        )
+        db.add(turn)
+        db.flush()
+        protect_values(
+            db,
+            family,
+            turn,
+            {
+                "question_text": question_text,
+                "raw_answer_text": result.text,
+                "corrected_answer_text": result.text,
+                "asr_metadata": result.metadata,
+            },
+            secret_store,
+        )
+        db.commit()
+        db.refresh(turn)
+        return interview_turn_read(db, turn, secret_store)
+    except DomainError:
+        db.rollback()
+        asset_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        db.rollback()
+        asset_path.unlink(missing_ok=True)
+        raise DomainError(
+            "INTERVIEW_TRANSCRIPTION_FAILED",
+            "这段回答暂时没有转写成功，请保留原录音并重试。",
+            503,
+        ) from exc
+
+
+@router.patch(
+    "/interview-turns/{turn_id}", response_model=InterviewTurnRead
+)
+def update_interview_turn(
+    turn_id: str,
+    payload: InterviewTurnUpdate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> InterviewTurnRead:
+    turn = require(
+        db, InterviewTurn, turn_id, "INTERVIEW_TURN_NOT_FOUND", "没有找到这轮回答。"
+    )
+    if turn.session.status != "INTERVIEWING" or turn.status != "answer_review":
+        raise DomainError("INTERVIEW_TURN_LOCKED", "当前回答不能再修改。", 409)
+    corrected = payload.corrected_answer_text.strip()
+    turn.corrected_answer_text = corrected
+    turn.answer_version += 1
+    protect_values(
+        db,
+        turn.session.elder.person.family,
+        turn,
+        {"corrected_answer_text": corrected},
+        secret_store,
+    )
+    db.commit()
+    db.refresh(turn)
+    return interview_turn_read(db, turn, secret_store)
+
+
+@router.post(
+    "/memory-sessions/{session_id}/interview-turns/{turn_id}/continue",
+    response_model=InterviewContinueResult,
+)
+def continue_guided_interview(
+    session_id: str,
+    turn_id: str,
+    payload: InterviewContinueRequest,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> InterviewContinueResult:
+    session = require(
+        db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次采访。"
+    )
+    turn = require(
+        db, InterviewTurn, turn_id, "INTERVIEW_TURN_NOT_FOUND", "没有找到这轮回答。"
+    )
+    if turn.session_id != session.id or turn.status != "answer_review":
+        raise DomainError("INTERVIEW_TURN_LOCKED", "这轮回答已经确认或不属于当前采访。", 409)
+    if session.status != "INTERVIEWING":
+        raise DomainError("SESSION_NOT_INTERVIEWING", "当前记录不在语音采访中。", 409)
+
+    family = session.elder.person.family
+    corrected = payload.corrected_answer_text.strip()
+    turn.corrected_answer_text = corrected
+    turn.answer_version += 1
+    history = _interview_history(db, session, secret_store)
+    history[-1]["answer"] = corrected
+    subject_name = secure_value(
+        db, family, session.elder, "preferred_name", secret_store
+    )
+    narrator = session.narrator or session.elder.person
+    narrator_name = secure_value(
+        db, family, narrator, "display_name", secret_store
+    )
+    settings = get_settings()
+    followup_mode = "local_private"
+    try:
+        if settings.llm_provider == "qwen" and family.data_classification != "test":
+            if payload.allow_cloud_followup:
+                consent_input = json.dumps(
+                    {
+                        "memory_subject": subject_name,
+                        "narrator": narrator_name,
+                        "life_stage": session.life_stage,
+                        "turns": history[-6:],
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                consent = ModelConsentEvent(
+                    family_id=family.id,
+                    session_id=session.id,
+                    actor_label=payload.actor_label.strip(),
+                    purpose="interview_followup",
+                    data_classification=family.data_classification,
+                    decision="granted",
+                    one_time=True,
+                    input_sha256=hashlib.sha256(consent_input.encode("utf-8")).hexdigest(),
+                    used_at=now_utc(),
+                )
+                db.add(consent)
+                db.flush()
+                protect_values(
+                    db,
+                    family,
+                    consent,
+                    {"actor_label": payload.actor_label.strip()},
+                    secret_store,
+                )
+                followup = get_llm_provider().generate_interview_followup(
+                    subject_name, narrator_name, session.life_stage, history
+                )
+                followup_mode = "qwen_one_time"
+            else:
+                followup = generate_local_interview_followup(
+                    subject_name, narrator_name, session.life_stage, history
+                )
+        else:
+            followup = get_llm_provider().generate_interview_followup(
+                subject_name, narrator_name, session.life_stage, history
+            )
+            followup_mode = "test_or_local_model"
+    except Exception as exc:
+        db.rollback()
+        raise DomainError(
+            "INTERVIEW_FOLLOWUP_FAILED",
+            "下一问暂时没有生成成功；这段回答仍可重新确认。",
+            503,
+        ) from exc
+
+    turn.followup_mode = followup_mode
+    turn.status = "complete"
+    session.question_text = followup.next_question.strip()
+    protect_values(
+        db,
+        family,
+        turn,
+        {"corrected_answer_text": corrected},
+        secret_store,
+    )
+    protect_values(
+        db,
+        family,
+        session,
+        {"question_text": followup.next_question.strip()},
+        secret_store,
+    )
+    db.commit()
+    db.refresh(turn)
+    db.refresh(session)
+    return InterviewContinueResult(
+        session=memory_session_read(db, session, secret_store),
+        turn=interview_turn_read(db, turn, secret_store),
+        acknowledgement=followup.acknowledgement,
+        next_question=followup.next_question,
+        should_end=followup.should_end,
+        followup_mode=followup_mode,
+    )
+
+
+@router.post(
+    "/memory-sessions/{session_id}/interview-question/replace",
+    response_model=MemorySessionRead,
+)
+def replace_interview_question(
+    session_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> MemorySessionRead:
+    session = require(
+        db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次采访。"
+    )
+    if session.interview_mode != "guided_voice" or session.status != "INTERVIEWING":
+        raise DomainError("SESSION_NOT_INTERVIEWING", "当前记录不在语音采访中。", 409)
+    if any(turn.status == "answer_review" for turn in session.interview_turns):
+        raise DomainError("INTERVIEW_TURN_PENDING", "请先确认已经录下的回答。", 409)
+    family = session.elder.person.family
+    subject_name = secure_value(
+        db, family, session.elder, "preferred_name", secret_store
+    )
+    narrator = session.narrator or session.elder.person
+    narrator_name = secure_value(
+        db, family, narrator, "display_name", secret_store
+    )
+    history = _interview_history(db, session, secret_store)
+    history.append({"question": "", "answer": "不想回答这一题"})
+    followup = generate_local_interview_followup(
+        subject_name, narrator_name, session.life_stage, history
+    )
+    session.question_text = followup.next_question
+    protect_values(
+        db,
+        family,
+        session,
+        {"question_text": followup.next_question},
+        secret_store,
+    )
+    db.commit()
+    db.refresh(session)
+    return memory_session_read(db, session, secret_store)
+
+
+def _create_complete_interview_audio(
+    db: Session,
+    session: MemorySession,
+    store: SecretStore,
+) -> MediaAsset | None:
+    existing = db.scalar(
+        select(MediaAsset).where(
+            MediaAsset.session_id == session.id,
+            MediaAsset.kind == "audio_original",
+            MediaAsset.status == "ready",
+        )
+    )
+    if existing:
+        return existing
+    turns = [turn for turn in session.interview_turns if turn.audio_asset_id]
+    if not turns:
+        return None
+    settings = get_settings()
+    family = session.elder.person.family
+    key = family_master_key(family, store)
+    asset_id = str(uuid4())
+    relative_path = f"assets/original/{session.id}/{asset_id}.wav"
+    final_path = resolve_controlled_path(settings.resolved_asset_root, relative_path)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix="lingnian-interview-merge-") as temp_name:
+            temp_dir = Path(temp_name)
+            normalized_paths: list[Path] = []
+            for index, turn in enumerate(turns):
+                source_asset = turn.audio_asset
+                if source_asset is None:
+                    continue
+                stored_path = resolve_controlled_path(
+                    settings.resolved_asset_root, source_asset.relative_path
+                )
+                source_path = stored_path
+                if source_asset.encryption_version == 1:
+                    if key is None:
+                        raise RuntimeError("MASTER_KEY_MISSING")
+                    source_path = temp_dir / f"source-{index}"
+                    decrypted = decrypt_media_file(
+                        stored_path,
+                        source_path,
+                        key,
+                        associated_data=media_context(family.id, source_asset.id),
+                    )
+                    if (
+                        decrypted.plaintext_size != source_asset.plaintext_size_bytes
+                        or decrypted.plaintext_sha256 != source_asset.plaintext_sha256
+                    ):
+                        raise RuntimeError("ASSET_PLAINTEXT_INTEGRITY_FAILED")
+                normalized = temp_dir / f"turn-{index}.wav"
+                normalize_audio(source_path, normalized)
+                normalized_paths.append(normalized)
+            if not normalized_paths:
+                return None
+            concat_file = temp_dir / "inputs.txt"
+            concat_file.write_text(
+                "".join(f"file '{path.as_posix()}'\n" for path in normalized_paths),
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    get_ffmpeg_binary(),
+                    "-nostdin",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(concat_file),
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "16000",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(final_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=240,
+            )
+            if completed.returncode != 0 or not final_path.is_file():
+                raise RuntimeError("INTERVIEW_AUDIO_MERGE_FAILED")
+        final_path.chmod(0o600)
+        asset = MediaAsset(
+            id=asset_id,
+            session_id=session.id,
+            kind="audio_original",
+            relative_path=relative_path,
+            original_filename="完整采访录音.wav",
+            mime_type="audio/wav",
+            size_bytes=final_path.stat().st_size,
+            sha256=calculate_sha256(final_path),
+            status="ready",
+            is_original=True,
+        )
+        db.add(asset)
+        db.flush()
+        protect_values(
+            db,
+            family,
+            asset,
+            {"original_filename": "完整采访录音.wav"},
+            store,
+        )
+        encrypt_asset_if_needed(db, asset, family, store)
+        return asset
+    except Exception:
+        final_path.unlink(missing_ok=True)
+        raise
+
+
+@router.post(
+    "/memory-sessions/{session_id}/interview-finalize",
+    response_model=SessionDetail,
+)
+def finalize_guided_interview(
+    session_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> SessionDetail:
+    session = require(
+        db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次采访。"
+    )
+    if session.interview_mode != "guided_voice" or session.status != "INTERVIEWING":
+        raise DomainError("SESSION_NOT_INTERVIEWING", "当前记录不能结束采访。", 409)
+    if not session.interview_turns:
+        raise DomainError("INTERVIEW_EMPTY", "至少留下一个回答后再结束采访。", 409)
+    family = session.elder.person.family
+    narrator = session.narrator or session.elder.person
+    narrator_name = secure_value(
+        db, family, narrator, "display_name", secret_store
+    )
+    key = family_master_key(family, secret_store)
+    ordered_turns = sorted(session.interview_turns, key=lambda item: item.turn_index)
+    raw_blocks: list[str] = []
+    corrected_blocks: list[str] = []
+    for turn in ordered_turns:
+        question = secure_value(
+            db, family, turn, "question_text", secret_store, master_key=key
+        )
+        raw_answer = secure_value(
+            db, family, turn, "raw_answer_text", secret_store, master_key=key
+        )
+        corrected_answer = secure_value(
+            db, family, turn, "corrected_answer_text", secret_store, master_key=key
+        )
+        raw_blocks.append(f"采访者：{question}\n{narrator_name}：{raw_answer}")
+        corrected_blocks.append(
+            f"采访者：{question}\n{narrator_name}：{corrected_answer}"
+        )
+        if turn.status == "answer_review":
+            turn.status = "complete"
+            turn.followup_mode = "interview_ended"
+    raw_text = "\n\n".join(raw_blocks)
+    corrected_text = "\n\n".join(corrected_blocks)
+    transcript = session.transcript
+    if transcript is None:
+        transcript = Transcript(
+            session_id=session.id,
+            raw_text=raw_text,
+            corrected_text=corrected_text,
+            version=1,
+            asr_provider="interview_aggregate",
+            asr_model="per-turn-local-asr",
+            asr_metadata={"turn_count": len(ordered_turns)},
+        )
+        db.add(transcript)
+        db.flush()
+    else:
+        transcript.raw_text = raw_text
+        transcript.corrected_text = corrected_text
+        transcript.version += 1
+        transcript.asr_metadata = {"turn_count": len(ordered_turns)}
+    protect_values(
+        db,
+        family,
+        transcript,
+        {
+            "raw_text": raw_text,
+            "corrected_text": corrected_text,
+            "asr_metadata": {"turn_count": len(ordered_turns)},
+        },
+        secret_store,
+    )
+    try:
+        _create_complete_interview_audio(db, session, secret_store)
+    except Exception as exc:
+        db.rollback()
+        raise DomainError(
+            "INTERVIEW_AUDIO_MERGE_FAILED",
+            "回答已经保留，但完整录音暂时没有合并成功，请稍后重试结束采访。",
+            503,
+        ) from exc
+    session.status = "TRANSCRIPT_REVIEW"
+    db.commit()
+    db.expire_all()
+    return get_memory_session(session.id, db, secret_store)
 
 
 @router.post(
@@ -3123,6 +3735,10 @@ def get_timeline(
     items: list[TimelineItem] = []
     for story in stories:
         session = story.source_draft.session
+        narrator = session.narrator or session.elder.person
+        narrator_label = secure_value(
+            db, profile.person.family, narrator, "display_name", secret_store
+        )
         original = db.scalar(
             select(MediaAsset)
             .join(MemorySession, MediaAsset.session_id == MemorySession.id)
@@ -3151,6 +3767,13 @@ def get_timeline(
             TimelineItem(
                 story=story_read(db, story, secret_store),
                 life_stage=session.life_stage,
+                narrator_person_id=narrator.id,
+                narrator_label=narrator_label,
+                narration_kind=(
+                    "first_person"
+                    if narrator.id == session.elder.person_id
+                    else "family_recollection"
+                ),
                 events=[
                     timeline_event_read(
                         db, event, profile.person.family, secret_store
@@ -3214,6 +3837,10 @@ def ask_family_archive(
     documents: list[SearchDocument] = []
     for story in stories:
         session = story.source_draft.session
+        narrator = session.narrator or session.elder.person
+        narrator_label = secure_value(
+            db, family, narrator, "display_name", secret_store, master_key=key
+        )
         audio = db.scalar(
             select(MediaAsset)
             .where(
@@ -3241,10 +3868,12 @@ def ask_family_archive(
                 audio_url=f"/api/v1/media-assets/{audio.id}/content" if audio else None,
                 image_url=f"/api/v1/media-assets/{image.id}/content" if image else None,
                 source_id=story.id,
-                source_kind="elder_story",
-                source_label=secure_value(
-                    db, family, profile, "preferred_name", secret_store, master_key=key
+                source_kind=(
+                    "elder_story"
+                    if narrator.id == session.elder.person_id
+                    else "family_recollection"
                 ),
+                source_label=narrator_label,
             )
         )
         story_title = secure_value(db, family, story, "title", secret_store, master_key=key)

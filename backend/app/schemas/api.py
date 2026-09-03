@@ -145,6 +145,8 @@ class ElderProfileRead(ORMModel):
 
 class MemorySessionCreate(BaseModel):
     elder_id: str
+    narrator_person_id: str | None = None
+    interview_mode: str = Field(default="single", pattern="^(single|guided_voice)$")
     life_stage: str = Field(min_length=1, max_length=40)
     topic_confirmed: bool = False
     trigger_kind: str = Field(default="question", pattern="^(question|photo|old_object)$")
@@ -153,12 +155,52 @@ class MemorySessionCreate(BaseModel):
 class MemorySessionRead(ORMModel):
     id: str
     elder_id: str
+    narrator_person_id: str | None
+    interview_mode: str
     life_stage: str
     prompt_id: str
     question_text: str
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class InterviewTurnRead(ORMModel):
+    id: str
+    session_id: str
+    turn_index: int
+    question_text: str
+    raw_answer_text: str
+    corrected_answer_text: str
+    answer_version: int
+    audio_asset_id: str | None
+    audio_url: str | None = None
+    asr_provider: str
+    asr_model: str
+    asr_metadata: dict
+    followup_mode: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class InterviewTurnUpdate(BaseModel):
+    corrected_answer_text: str = Field(min_length=1, max_length=20_000)
+
+
+class InterviewContinueRequest(BaseModel):
+    corrected_answer_text: str = Field(min_length=1, max_length=20_000)
+    allow_cloud_followup: bool = False
+    actor_label: str = Field(default="本机家庭管理员", min_length=1, max_length=80)
+
+
+class InterviewContinueResult(BaseModel):
+    session: MemorySessionRead
+    turn: InterviewTurnRead
+    acknowledgement: str
+    next_question: str
+    should_end: bool
+    followup_mode: str
 
 
 class MediaAssetRead(ORMModel):
@@ -649,6 +691,9 @@ class TimelineEventRead(ORMModel):
 class TimelineItem(BaseModel):
     story: StoryRead
     life_stage: str
+    narrator_person_id: str | None = None
+    narrator_label: str | None = None
+    narration_kind: str = "first_person"
     events: list[TimelineEventRead]
     audio_url: str | None = None
     image_url: str | None = None
@@ -662,6 +707,7 @@ class TimelineItem(BaseModel):
 class SessionDetail(BaseModel):
     session: MemorySessionRead
     media_assets: list[MediaAssetRead]
+    interview_turns: list[InterviewTurnRead] = Field(default_factory=list)
     transcript: TranscriptRead | None
     story_draft: StoryDraftRead | None
     tasks: list[TaskRead]
@@ -671,6 +717,20 @@ class QuestionOutput(BaseModel):
     question: str = Field(min_length=1, max_length=300)
     reason: str = Field(min_length=1, max_length=300)
     safety_check: str = Field(min_length=1, max_length=120)
+
+
+class InterviewFollowupOutput(BaseModel):
+    acknowledgement: str = Field(min_length=1, max_length=120)
+    next_question: str = Field(min_length=1, max_length=300)
+    uncertainties: list[str] = Field(default_factory=list, max_length=20)
+    should_end: bool = False
+
+    @field_validator("uncertainties")
+    @classmethod
+    def cap_uncertainty_length(cls, values: list[str]) -> list[str]:
+        if any(len(value) > 300 for value in values):
+            raise ValueError("待核实信息过长")
+        return values
 
 
 class TimelineMention(BaseModel):

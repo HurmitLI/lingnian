@@ -1,5 +1,6 @@
 export type ElderProfile = {
   id: string;
+  person_id: string;
   family_id: string;
   data_classification: "test" | "authorized_non_sensitive" | "authorized_sensitive";
   display_name: string;
@@ -33,12 +34,42 @@ export type FamilyRelationship = {
 export type MemorySession = {
   id: string;
   elder_id: string;
+  narrator_person_id: string | null;
+  interview_mode: "single" | "guided_voice";
   life_stage: string;
   prompt_id: string;
   question_text: string;
   status: string;
   created_at: string;
   updated_at: string;
+};
+
+export type InterviewTurn = {
+  id: string;
+  session_id: string;
+  turn_index: number;
+  question_text: string;
+  raw_answer_text: string;
+  corrected_answer_text: string;
+  answer_version: number;
+  audio_asset_id: string | null;
+  audio_url: string | null;
+  asr_provider: string;
+  asr_model: string;
+  asr_metadata: Record<string, unknown>;
+  followup_mode: string;
+  status: "answer_review" | "complete" | string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InterviewContinueResult = {
+  session: MemorySession;
+  turn: InterviewTurn;
+  acknowledgement: string;
+  next_question: string;
+  should_end: boolean;
+  followup_mode: string;
 };
 
 export type MediaAsset = {
@@ -229,6 +260,7 @@ export type Keepsake = {
 export type SessionDetail = {
   session: MemorySession;
   media_assets: MediaAsset[];
+  interview_turns: InterviewTurn[];
   transcript: Transcript | null;
   story_draft: StoryDraft | null;
   tasks: WorkflowTask[];
@@ -243,6 +275,9 @@ export type TimelineItem = {
     confirmed_at: string;
   };
   life_stage: string;
+  narrator_person_id: string | null;
+  narrator_label: string | null;
+  narration_kind: "first_person" | "family_recollection" | string;
   events: Array<{
     id: string;
     time_expression: string | null;
@@ -294,7 +329,7 @@ export type MediaPersonTag = {
 export type ArchiveCitation = {
   source_id: string;
   story_id: string;
-  source_kind: "elder_story" | "family_contribution";
+  source_kind: "elder_story" | "family_recollection" | "family_contribution";
   source_label: string | null;
   title: string;
   life_stage: string;

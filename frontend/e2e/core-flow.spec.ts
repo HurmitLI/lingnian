@@ -27,32 +27,32 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
   const correctedStory = `${preferredName}小时候常跟家里人去河边。这是第三阶段隔离验收内容。`;
 
   await page.goto("/family");
-  await expect(page.getByRole("heading", { name: "讲述者档案" })).toBeVisible();
-  const addNarrator = page.getByText("添加一位讲述者", { exact: true });
+  await expect(page.getByRole("heading", { name: "人物档案" })).toBeVisible();
+  const addNarrator = page.getByText("添加一位家人档案", { exact: true });
   if ((await addNarrator.count()) > 0) {
     await addNarrator.click();
   }
   await expect(
-    page.getByRole("button", { name: /(建立讲述者档案|添加并切换到此人)/ }),
+    page.getByRole("button", { name: /(建立人物档案|添加并切换到此人)/ }),
   ).toBeVisible();
   const familyNameInput = page.getByLabel("家庭档案名称");
   if ((await familyNameInput.count()) > 0) {
     await familyNameInput.fill(`隔离家庭${suffix}`);
   }
-  await page.getByLabel("新讲述者的显示名称").fill(`${preferredName}（虚构）`);
-  await page.getByLabel("家人怎么称呼这位讲述者").fill(preferredName);
-  await page.getByRole("button", { name: /(建立讲述者档案|添加并切换到此人)/ }).click();
-  await expect(page.getByRole("status").filter({ hasText: /(讲述者档案已建立|新讲述者已添加)/ })).toBeVisible();
+  await page.getByLabel("这位家人的显示名称").fill(`${preferredName}（虚构）`);
+  await page.getByLabel("家里怎么称呼这位家人").fill(preferredName);
+  await page.getByRole("button", { name: /(建立人物档案|添加并切换到此人)/ }).click();
+  await expect(page.getByRole("status").filter({ hasText: /(人物档案已建立|新人物已添加)/ })).toBeVisible();
 
   const navigation = page.getByRole("navigation", { name: isMobile ? "手机主导航" : "桌面主导航" });
   await navigation.getByRole("link", { name: "开始记录" }).click();
   if (isMobile) {
     await page.getByLabel("选择一个话题").selectOption("童年");
-    await page.getByRole("button", { name: "准备一个问题" }).click();
+    await page.getByRole("button", { name: "开始语音采访" }).click();
   } else {
     await page.getByRole("button", { name: /童年/ }).click();
   }
-  await expect(page.getByText("问题已准备", { exact: true })).toBeVisible();
+  await expect(page.getByText(/正在采访 · 第 1 轮/)).toBeVisible();
 
   const audioInput = page.locator('input[aria-label="选择已有音频"]');
   await audioInput.setInputFiles({
@@ -61,9 +61,11 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
     buffer: silentWavBuffer(),
   });
   await expect(page.getByText("第三阶段测试.wav", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "确认上传到本机档案" }).click();
-  await expect(page.getByText(/已保留原始音频：第三阶段测试.wav/)).toBeVisible();
-  await page.getByRole("button", { name: "开始本地转写" }).click();
+  await page.getByRole("button", { name: "保存回答并转文字" }).click();
+  const turnInput = page.getByRole("textbox", { name: "校对本轮回答" });
+  await expect(turnInput).toBeVisible();
+  await turnInput.fill(correctedStory);
+  await page.getByRole("button", { name: "今天先到这里" }).click();
 
   const correctedInput = page.getByRole("textbox", { name: "人工校对稿" });
   await expect(correctedInput).toBeVisible();
@@ -74,7 +76,7 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
   await expect(page.locator("p.story-body")).toHaveText(correctedStory);
   await page.getByRole("button", { name: "人工确认并归档" }).click();
   await expect(page.getByText("这段故事已由人工确认并归档，可以到“回忆档案”查看。", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "今天想从哪一段聊起？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "先确定讲谁的故事" })).toBeVisible();
 
   await navigation.getByRole("link", { name: "回忆档案" }).click();
   await expect(page.getByRole("heading", { name: "一段愿意留给家人的回忆" })).toBeVisible();

@@ -3,6 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 
 const profile = {
   id: "elder-test",
+  person_id: "person-elder-test",
   family_id: "family-test",
   data_classification: "authorized_sensitive",
   display_name: "测试奶奶",
@@ -16,6 +17,8 @@ const profile = {
 const session = {
   id: "session-test",
   elder_id: profile.id,
+  narrator_person_id: profile.person_id,
+  interview_mode: "single",
   life_stage: "童年",
   prompt_id: "prompt-test",
   question_text: "小时候，哪件小事让你一直记到现在？",
@@ -30,6 +33,15 @@ const gapSession = {
   life_stage: "家人提问",
   prompt_id: "family-question:test",
   question_text: "年轻时第一次离开家乡是什么时候？",
+};
+
+const guidedSession = {
+  ...session,
+  id: "session-guided",
+  narrator_person_id: "person-test",
+  interview_mode: "guided_voice",
+  question_text: "你第一次听家里人讲起外公，是在什么时候？",
+  status: "INTERVIEWING",
 };
 
 const timelineItem = {
@@ -90,7 +102,10 @@ async function mockLocalApi(page: Page) {
     } else if (path.endsWith("/memory-sessions")) {
       body = [session, gapSession];
     } else if (path.endsWith("/people")) {
-      body = [{ id: "person-test", family_id: profile.family_id, role: "family_member", display_name: "测试女儿", created_at: "2026-08-29T08:00:00Z" }];
+      body = [
+        { id: profile.person_id, family_id: profile.family_id, role: "elder", display_name: "测试奶奶", created_at: "2026-08-29T08:00:00Z" },
+        { id: "person-test", family_id: profile.family_id, role: "family_member", display_name: "测试女儿", created_at: "2026-08-29T08:00:00Z" },
+      ];
     } else if (path.endsWith("/legacy-plan")) {
       body = null;
     } else if (path === "/api/v1/generative-media/capabilities") {
@@ -107,7 +122,9 @@ async function mockLocalApi(page: Page) {
         answer_mode: "local_extract_with_sources",
       };
     } else if (path === `/api/v1/memory-sessions/${session.id}`) {
-      body = { session, media_assets: [], transcript: null, story_draft: null, tasks: [] };
+      body = { session, media_assets: [], interview_turns: [], transcript: null, story_draft: null, tasks: [] };
+    } else if (path === `/api/v1/memory-sessions/${guidedSession.id}`) {
+      body = { session: guidedSession, media_assets: [], interview_turns: [], transcript: null, story_draft: null, tasks: [] };
     }
 
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
@@ -160,6 +177,20 @@ test("刷新后能从链接恢复未完成记录", async ({ page }) => {
   await expect(workflow.locator('[aria-current="step"]')).toContainText("留下声音");
   await page.reload();
   await expect(page.getByText(session.question_text)).toBeVisible();
+});
+
+test("语音采访明确区分回忆对象与讲述人", async ({ page }) => {
+  await page.goto(`/record?elder=${profile.id}&session=${guidedSession.id}`);
+  await expect(page.getByText("回忆对象")).toBeVisible();
+  await expect(page.getByText("本次讲述人")).toBeVisible();
+  await expect(page.getByText("测试女儿", { exact: true })).toBeVisible();
+  await expect(page.getByText(guidedSession.question_text)).toBeVisible();
+  await expect(page.getByRole("button", { name: /开始回答/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /再听一遍/ })).toBeVisible();
+  const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(hasOverflow).toBe(false);
+  const accessibility = await new AxeBuilder({ page }).analyze();
+  expect(accessibility.violations, accessibility.violations.map((item) => `${item.id}: ${item.help}`).join("\n")).toEqual([]);
 });
 
 test("回忆档案可以搜索并清除筛选", async ({ page }) => {
@@ -217,7 +248,7 @@ test("手机记录页一次只突出一个开始动作", async ({ page, isMobile
   test.skip(!isMobile, "手机项目覆盖简化后的记录入口");
   await page.goto("/record");
   await expect(page.getByLabel("选择一个话题")).toBeVisible();
-  await expect(page.getByRole("button", { name: "准备一个问题" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "开始语音采访" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "用照片或老物件触发回忆" })).toBeHidden();
   await expect(page.getByRole("button", { name: /童年/ })).toBeHidden();
 });
@@ -237,7 +268,7 @@ test("手机档案先看故事，低频工具默认收起", async ({ page, isMob
 test("手机家庭管理去掉重复选择，话题设置默认收起", async ({ page, isMobile }) => {
   test.skip(!isMobile, "手机项目覆盖简化后的家庭管理页");
   await page.goto("/family");
-  await expect(page.getByLabel("当前讲述者")).toHaveCount(1);
+  await expect(page.getByLabel("当前人物档案")).toHaveCount(1);
   await expect(page.getByText("查看或修改 7 个话题意愿", { exact: true })).toBeVisible();
   await expect(page.getByText("童年", { exact: true })).toBeHidden();
 });
