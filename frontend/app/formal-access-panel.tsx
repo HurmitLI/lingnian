@@ -12,6 +12,7 @@ type AuthUser = {
   display_name: string;
   family_name: string;
   role: "owner" | "member";
+  platform_role: "admin" | "user";
 };
 
 type Invitation = {
@@ -50,6 +51,21 @@ type FamilyMember = {
   last_login_at: string | null;
 };
 
+type PlatformInvitation = {
+  id: string;
+  expires_at: string;
+  max_uses: number;
+  use_count: number;
+  status: "active" | "used" | "expired" | "revoked";
+};
+
+type CreatedPlatformInvitation = {
+  id: string;
+  invitation_code: string;
+  expires_at: string;
+  max_uses: number;
+};
+
 const STATUS_TEXT: Record<Invitation["status"], string> = {
   active: "等待使用",
   used: "已使用",
@@ -82,7 +98,9 @@ export default function FormalAccessPanel({
   const [user, setUser] = useState<AuthUser | null>(null);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [platformInvitations, setPlatformInvitations] = useState<PlatformInvitation[]>([]);
   const [created, setCreated] = useState<CreatedInvitation | null>(null);
+  const [createdPlatform, setCreatedPlatform] = useState<CreatedPlatformInvitation | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -91,12 +109,21 @@ export default function FormalAccessPanel({
     const me = await api<AuthUser>("/api/v1/auth/me");
     setUser(me);
     if (me.role === "owner") {
-      const [invitationResult, memberResult] = await Promise.all([
+      const requests: [Promise<Invitation[]>, Promise<FamilyMember[]>, Promise<PlatformInvitation[]> | null] = [
         api<Invitation[]>("/api/v1/auth/invitations"),
         api<FamilyMember[]>("/api/v1/auth/members"),
+        me.platform_role === "admin"
+          ? api<PlatformInvitation[]>("/api/v1/auth/platform-invitations")
+          : null,
+      ];
+      const [invitationResult, memberResult, platformResult] = await Promise.all([
+        requests[0],
+        requests[1],
+        requests[2] ?? Promise.resolve([]),
       ]);
       setInvitations(invitationResult);
       setMembers(memberResult);
+      setPlatformInvitations(platformResult);
     }
   }
 
@@ -122,6 +149,50 @@ export default function FormalAccessPanel({
       await refresh();
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : "邀请码生成失败，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createPlatformInvitation() {
+    setBusy(true);
+    setMessage("");
+    setCopied(false);
+    try {
+      const result = await api<CreatedPlatformInvitation>("/api/v1/auth/platform-invitations", {
+        method: "POST",
+        body: JSON.stringify({ expires_in_days: 7 }),
+      });
+      setCreatedPlatform(result);
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "新家庭体验码生成失败，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyPlatformInvitation() {
+    if (!createdPlatform) return;
+    try {
+      await navigator.clipboard.writeText(
+        `请打开 ${window.location.origin}/login，选择“邀请码建账”，输入新家庭体验码 ${createdPlatform.invitation_code}。请为自己的家庭设置独立的家庭空间名称。`,
+      );
+      setCopied(true);
+    } catch {
+      setMessage("浏览器没有允许复制，请手动选中体验码复制。");
+    }
+  }
+
+  async function revokePlatformInvitation(id: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      await api(`/api/v1/auth/platform-invitations/${id}`, { method: "DELETE" });
+      if (createdPlatform?.id === id) setCreatedPlatform(null);
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "撤销失败，请重试。");
     } finally {
       setBusy(false);
     }
@@ -240,6 +311,29 @@ export default function FormalAccessPanel({
       {user && <p className="formal-current-user"><KeyRound size={16} aria-hidden="true" />{user.display_name} · {user.role === "owner" ? "家庭管理员" : "家庭成员"}</p>}
       {user?.role === "owner" && (
         <>
+          {user.platform_role === "admin" && (
+            <div className="interview-invite-card platform-invite-card">
+              <div><h3>邀请一个新家庭体验</h3><p>这个码会建立全新、独立加密的家庭空间，不会进入你的家庭档案。</p></div>
+              <button className="button secondary" type="button" disabled={busy} onClick={createPlatformInvitation}><UserPlus size={18} aria-hidden="true" />生成新家庭体验码</button>
+              {createdPlatform && (
+                <div className="created-invitation" aria-live="polite">
+                  <span>只显示这一次，复制后发给另一个家庭的管理员。</span>
+                  <code>{createdPlatform.invitation_code}</code>
+                  <button className="button ghost" type="button" onClick={copyPlatformInvitation}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "已复制" : "复制体验说明"}</button>
+                </div>
+              )}
+              {platformInvitations.length > 0 && (
+                <div className="invitation-list">
+                  {platformInvitations.map((item) => (
+                    <div key={item.id}>
+                      <span><strong>新家庭体验码 · {STATUS_TEXT[item.status]}</strong><small>{new Date(item.expires_at).toLocaleDateString("zh-CN")} 前有效</small></span>
+                      {item.status === "active" && <button type="button" disabled={busy} onClick={() => void revokePlatformInvitation(item.id)} aria-label="撤销新家庭体验码"><X size={17} /></button>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="interview-invite-card">
             <div><h3>邀请家人补充一段回忆</h3><p>选好讲谁、谁来讲和话题。家人用邀请码建账后，会直接进入这次语音采访。</p></div>
             {profiles.length > 0 && people.length > 0 ? (

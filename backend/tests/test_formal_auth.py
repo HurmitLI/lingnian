@@ -76,6 +76,7 @@ def test_invitation_registration_login_and_logout(client, db, monkeypatch):
     assert payload["username"] == "daughter@example.com"
     assert payload["family_name"] == "我们的家"
     assert payload["role"] == "owner"
+    assert payload["platform_role"] == "admin"
     assert client.cookies.get("lingnian_session")
 
     account = db.scalar(select(UserAccount).where(UserAccount.username == "daughter@example.com"))
@@ -99,6 +100,68 @@ def test_invitation_registration_login_and_logout(client, db, monkeypatch):
     )
     assert logged_in.status_code == 200
     assert client.get("/api/v1/auth/me").status_code == 200
+
+
+def test_platform_admin_can_invite_a_new_isolated_family(client, monkeypatch):
+    enable_formal_auth(monkeypatch)
+    first = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": "family-invite-2026",
+            "username": "platform.owner",
+            "display_name": "平台管理员",
+            "password": "platform-secure-password",
+            "family_name": "第一个家",
+        },
+    )
+    assert first.status_code == 201, first.text
+    assert first.json()["platform_role"] == "admin"
+
+    created = client.post(
+        "/api/v1/auth/platform-invitations",
+        json={"expires_in_days": 3},
+    )
+    assert created.status_code == 201, created.text
+    invitation_code = created.json()["invitation_code"]
+    assert invitation_code.startswith("LN-F-")
+    assert all(
+        "invitation_code" not in item
+        for item in client.get("/api/v1/auth/platform-invitations").json()
+    )
+
+    assert client.post("/api/v1/auth/logout").status_code == 204
+    second = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": invitation_code,
+            "username": "second.family.owner",
+            "display_name": "第二个家的管理员",
+            "password": "second-family-password",
+            "family_name": "第二个家",
+        },
+    )
+    assert second.status_code == 201, second.text
+    assert second.json()["role"] == "owner"
+    assert second.json()["platform_role"] == "user"
+    assert second.json()["family_id"] != first.json()["family_id"]
+    assert second.json()["family_name"] == "第二个家"
+    assert client.get("/api/v1/elder-profiles").json() == []
+    denied = client.post("/api/v1/auth/platform-invitations", json={})
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "PLATFORM_ADMIN_REQUIRED"
+
+    assert client.post("/api/v1/auth/logout").status_code == 204
+    reused = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": invitation_code,
+            "username": "third.family.owner",
+            "display_name": "第三个家",
+            "password": "third-family-password",
+            "family_name": "第三个家",
+        },
+    )
+    assert reused.status_code == 403
 
 
 def test_duplicate_username_is_rejected(client, monkeypatch):

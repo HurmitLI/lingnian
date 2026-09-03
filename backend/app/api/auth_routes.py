@@ -23,6 +23,7 @@ from app.models import (
     InterviewAssignment,
     MemorySession,
     Person,
+    PlatformFamilyInvite,
     UserAccount,
 )
 from app.services.memory import select_question
@@ -69,6 +70,7 @@ class AuthRead(BaseModel):
     family_id: str
     family_name: str
     role: str
+    platform_role: str
     next_path: str | None = None
 
 
@@ -120,6 +122,25 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=10, max_length=200)
 
 
+class PlatformInvitationCreate(BaseModel):
+    expires_in_days: int = Field(default=7, ge=1, le=30)
+
+
+class PlatformInvitationCreated(BaseModel):
+    id: str
+    invitation_code: str
+    expires_at: datetime
+    max_uses: int
+
+
+class PlatformInvitationRead(BaseModel):
+    id: str
+    expires_at: datetime
+    max_uses: int
+    use_count: int
+    status: str
+
+
 def require_formal_mode() -> None:
     if not get_settings().formal_auth_required:
         raise DomainError("FORMAL_AUTH_DISABLED", "正式账号模式尚未开启。", 404)
@@ -149,6 +170,16 @@ def current_owner() -> tuple[str, str]:
     if context.role != "owner":
         raise DomainError("OWNER_REQUIRED", "只有家庭空间管理员可以管理邀请码。", 403)
     return context.user_id, context.family_id
+
+
+def current_platform_admin(db: Session) -> UserAccount:
+    context = current_auth.get()
+    if context is None:
+        raise DomainError("AUTH_REQUIRED", "请先登录。", 401)
+    user = db.get(UserAccount, context.user_id)
+    if user is None or user.platform_role != "admin":
+        raise DomainError("PLATFORM_ADMIN_REQUIRED", "只有平台管理员可以发放新家庭体验码。", 403)
+    return user
 
 
 def next_interview_path(db: Session, user_id: str) -> str | None:
@@ -182,6 +213,7 @@ def auth_read(db: Session, user: UserAccount, membership: FamilyMembership) -> A
         family_id=family.id,
         family_name=family.display_name,
         role=membership.role,
+        platform_role=user.platform_role,
         next_path=next_interview_path(db, user.id),
     )
 
@@ -285,6 +317,7 @@ def register(
     family = None
     membership_role = "owner" if account_count == 0 else "member"
     pending_invitation = None
+    pending_platform_invitation = None
     pending_assignment = None
     if account_count == 0:
         expected = settings.formal_invite_code.get_secret_value() if settings.formal_invite_code else ""
@@ -301,19 +334,31 @@ def register(
             family = families[0] if families else None
     else:
         now = datetime.now(UTC).replace(tzinfo=None)
+        code_hash = invitation_hash(payload.invitation_code.strip())
         pending_invitation = db.scalar(
             select(FamilyInvite).where(
-                FamilyInvite.code_hash == invitation_hash(payload.invitation_code.strip()),
+                FamilyInvite.code_hash == code_hash,
                 FamilyInvite.revoked_at.is_(None),
                 FamilyInvite.expires_at > now,
                 FamilyInvite.use_count < FamilyInvite.max_uses,
             )
         )
         if pending_invitation is None:
-            raise DomainError("INVITATION_INVALID", "邀请码不正确或已经失效。", 403)
-        family = pending_invitation.family
-        membership_role = pending_invitation.role
-        pending_assignment = assignment_for_invite(db, pending_invitation.id)
+            pending_platform_invitation = db.scalar(
+                select(PlatformFamilyInvite).where(
+                    PlatformFamilyInvite.code_hash == code_hash,
+                    PlatformFamilyInvite.revoked_at.is_(None),
+                    PlatformFamilyInvite.expires_at > now,
+                    PlatformFamilyInvite.use_count < PlatformFamilyInvite.max_uses,
+                )
+            )
+            if pending_platform_invitation is None:
+                raise DomainError("INVITATION_INVALID", "邀请码不正确或已经失效。", 403)
+            membership_role = "owner"
+        else:
+            family = pending_invitation.family
+            membership_role = pending_invitation.role
+            pending_assignment = assignment_for_invite(db, pending_invitation.id)
     if family is None:
         family = FamilyArchive(
             display_name=payload.family_name.strip(),
@@ -336,6 +381,7 @@ def register(
         display_name=payload.display_name.strip(),
         password_salt=salt,
         password_hash=password_hash,
+        platform_role="admin" if account_count == 0 else "user",
     )
     db.add(user)
     db.flush()
@@ -347,6 +393,8 @@ def register(
     db.add(membership)
     if pending_invitation is not None:
         pending_invitation.use_count += 1
+    if pending_platform_invitation is not None:
+        pending_platform_invitation.use_count += 1
     if pending_assignment is not None:
         create_assigned_interview_session(
             db,
@@ -362,6 +410,93 @@ def register(
     auth_attempt_limiter.reset(attempt_key)
     set_session_cookie(response, token)
     return auth_read(db, user, membership)
+
+
+@router.post(
+    "/platform-invitations",
+    response_model=PlatformInvitationCreated,
+    status_code=201,
+)
+def create_platform_invitation(
+    payload: PlatformInvitationCreate,
+    db: Session = Depends(get_db),
+) -> PlatformInvitationCreated:
+    require_formal_mode()
+    admin = current_platform_admin(db)
+    code = f"LN-F-{secrets.token_urlsafe(12)}"
+    expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(
+        days=payload.expires_in_days
+    )
+    invitation = PlatformFamilyInvite(
+        created_by_user_id=admin.id,
+        code_hash=invitation_hash(code),
+        max_uses=1,
+        use_count=0,
+        expires_at=expires_at,
+    )
+    db.add(invitation)
+    db.commit()
+    db.refresh(invitation)
+    return PlatformInvitationCreated(
+        id=invitation.id,
+        invitation_code=code,
+        expires_at=invitation.expires_at,
+        max_uses=invitation.max_uses,
+    )
+
+
+@router.get(
+    "/platform-invitations",
+    response_model=list[PlatformInvitationRead],
+)
+def list_platform_invitations(
+    db: Session = Depends(get_db),
+) -> list[PlatformInvitationRead]:
+    require_formal_mode()
+    admin = current_platform_admin(db)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    invitations = db.scalars(
+        select(PlatformFamilyInvite)
+        .where(PlatformFamilyInvite.created_by_user_id == admin.id)
+        .order_by(PlatformFamilyInvite.created_at.desc())
+        .limit(30)
+    ).all()
+    return [
+        PlatformInvitationRead(
+            id=item.id,
+            expires_at=item.expires_at,
+            max_uses=item.max_uses,
+            use_count=item.use_count,
+            status=(
+                "revoked"
+                if item.revoked_at is not None
+                else "used"
+                if item.use_count >= item.max_uses
+                else "expired"
+                if item.expires_at <= now
+                else "active"
+            ),
+        )
+        for item in invitations
+    ]
+
+
+@router.delete("/platform-invitations/{invitation_id}", status_code=204)
+def revoke_platform_invitation(
+    invitation_id: str,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> Response:
+    require_formal_mode()
+    admin = current_platform_admin(db)
+    invitation = db.get(PlatformFamilyInvite, invitation_id)
+    if invitation is None or invitation.created_by_user_id != admin.id:
+        raise DomainError("PLATFORM_INVITATION_NOT_FOUND", "没有找到这个新家庭体验码。", 404)
+    if invitation.revoked_at is None:
+        invitation.revoked_at = datetime.now(UTC).replace(tzinfo=None)
+        db.commit()
+    response.status_code = 204
+    return response
 
 
 @router.post("/invitations", response_model=InvitationCreated, status_code=201)

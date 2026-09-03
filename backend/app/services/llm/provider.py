@@ -186,11 +186,18 @@ class MockLLMProvider:
             acknowledgement = "没关系，不记得或者不想讲都可以。"
         else:
             acknowledgement = "我听到了，谢谢您把这段记忆讲下来。"
+        asked_questions = {
+            turn.get("question", "").strip() for turn in turns if turn.get("question")
+        }
+        next_question = next(
+            (question for question in questions if question not in asked_questions),
+            "今天关于这段回忆，最后还有什么是您希望家里人以后记得的？",
+        )
         return InterviewFollowupOutput(
             acknowledgement=acknowledgement,
-            next_question=questions[min(turn_count - 1, len(questions) - 1)],
+            next_question=next_question,
             uncertainties=[],
-            should_end=turn_count >= 7,
+            should_end=turn_count >= 6,
         )
 
 

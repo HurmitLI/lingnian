@@ -5,9 +5,12 @@ import wave
 
 from sqlalchemy import select
 
+from app.api import routes
 from app.main import app
 from app.models import EncryptedField, InterviewTurn, MediaAsset
+from app.services.llm.provider import MockLLMProvider
 from app.services.security import InMemorySecretStore, get_secret_store
+from app.services.tts.provider import SpeechResult
 
 
 def wav_bytes(seconds: float = 0.15) -> bytes:
@@ -38,6 +41,57 @@ def create_subject_and_narrator(client):
         json={"display_name": "妈妈", "role": "family_member"},
     ).json()
     return subject, narrator
+
+
+def test_interview_question_audio_can_speak_acknowledgement_before_next_question(
+    client, monkeypatch
+):
+    subject, narrator = create_subject_and_narrator(client)
+    session = client.post(
+        "/api/v1/memory-sessions",
+        json={
+            "elder_id": subject["id"],
+            "narrator_person_id": narrator["id"],
+            "interview_mode": "guided_voice",
+            "life_stage": "童年",
+        },
+    ).json()
+    spoken: list[str] = []
+
+    class CapturingTTSProvider:
+        def synthesize(self, text: str) -> SpeechResult:
+            spoken.append(text)
+            return SpeechResult(
+                audio=wav_bytes(),
+                provider="test",
+                model="test-voice",
+                voice="warm",
+            )
+
+    monkeypatch.setattr(routes, "get_tts_provider", lambda: CapturingTTSProvider())
+    response = client.get(
+        f"/api/v1/memory-sessions/{session['id']}/interview-question-audio",
+        params={"lead_in": "我听到了，谢谢您。"},
+    )
+    assert response.status_code == 200, response.text
+    assert spoken == [f"我听到了，谢谢您。{session['question_text']}"]
+
+
+def test_local_interview_followup_avoids_repeating_asked_questions():
+    provider = MockLLMProvider()
+    turns = [
+        {"question": question, "answer": "这是一段真实的回忆。"}
+        for question in [
+            "那时候家里住的地方是什么样的？",
+            "这件事里，您印象最深的是谁？",
+            "当时您心里是什么感受？",
+            "后来这件事还影响过您吗？",
+            "关于那段童年，还有哪个小细节您愿意留下？",
+        ]
+    ]
+    result = provider.generate_interview_followup("外公", "妈妈", "童年", turns)
+    assert result.next_question == "今天关于这段回忆，最后还有什么是您希望家里人以后记得的？"
+    assert result.next_question not in {turn["question"] for turn in turns}
 
 
 def test_guided_interview_keeps_subject_and_narrator_separate(client):

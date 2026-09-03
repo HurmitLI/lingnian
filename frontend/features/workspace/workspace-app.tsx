@@ -978,21 +978,25 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     text: string,
     sessionId = detail?.session.id,
     shouldContinue: () => boolean = () => true,
+    leadIn = "",
   ): Promise<void> {
     cancelQuestionPlayback();
     questionAudioBlobRef.current = null;
     if (questionAudioUrlRef.current) URL.revokeObjectURL(questionAudioUrlRef.current);
     questionAudioUrlRef.current = null;
     if (!shouldContinue()) return;
+    const naturalLeadIn = leadIn.trim().replace(/[。！？!?，,；;\s]+$/u, "");
+    const spokenText = naturalLeadIn ? `${naturalLeadIn}。${text}` : text;
     if (!sessionId) {
-      await speakQuestionFallback(text);
+      await speakQuestionFallback(spokenText);
       return;
     }
     setIsSpeaking(true);
     try {
-      const download = await apiDownload(
-        `/api/v1/memory-sessions/${sessionId}/interview-question-audio`,
-      );
+      const audioPath = naturalLeadIn
+        ? `/api/v1/memory-sessions/${sessionId}/interview-question-audio?lead_in=${encodeURIComponent(naturalLeadIn)}`
+        : `/api/v1/memory-sessions/${sessionId}/interview-question-audio`;
+      const download = await apiDownload(audioPath);
       if (!shouldContinue()) {
         setIsSpeaking(false);
         return;
@@ -1017,7 +1021,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           player.onended = null;
           player.onerror = null;
           questionPlaybackResolveRef.current = null;
-          void speakQuestionFallback(text).then(resolve);
+          void speakQuestionFallback(spokenText).then(resolve);
         };
         questionPlaybackResolveRef.current = complete;
         player.onended = complete;
@@ -1026,7 +1030,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       });
     } catch {
       setIsSpeaking(false);
-      if (shouldContinue()) await speakQuestionFallback(text);
+      if (shouldContinue()) await speakQuestionFallback(spokenText);
     }
   }
 
@@ -1034,9 +1038,15 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     questionText: string,
     sessionId: string,
     preparedStream?: MediaStream,
+    leadIn = "",
   ) {
     setContinuousInterviewPhase("speaking");
-    await speakQuestion(questionText, sessionId, () => continuousInterviewRef.current);
+    await speakQuestion(
+      questionText,
+      sessionId,
+      () => continuousInterviewRef.current,
+      leadIn,
+    );
     if (!continuousInterviewRef.current) {
       preparedStream?.getTracks().forEach((track) => track.stop());
       return;
@@ -1233,10 +1243,20 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       setNotice(`${result.acknowledgement} 正在准备下一问。`);
       if (continuousInterviewRef.current) {
         setBusy(false);
-        await beginContinuousQuestion(result.next_question, sessionId);
+        await beginContinuousQuestion(
+          result.next_question,
+          sessionId,
+          undefined,
+          result.acknowledgement,
+        );
       } else {
         setContinuousInterviewPhase("idle");
-        await speakQuestion(result.next_question, sessionId);
+        await speakQuestion(
+          result.next_question,
+          sessionId,
+          () => true,
+          result.acknowledgement,
+        );
       }
     } catch (value) {
       continuousInterviewRef.current = false;
@@ -1310,7 +1330,12 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       audioPreviewUrlRef.current = null;
       setAudioPreview(null);
       setNotice(`${result.acknowledgement} 已准备好下一问。`);
-      speakQuestion(result.next_question, detail.session.id);
+      speakQuestion(
+        result.next_question,
+        detail.session.id,
+        () => true,
+        result.acknowledgement,
+      );
     } catch (value) {
       showError(value);
     } finally {

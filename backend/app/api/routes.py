@@ -2852,6 +2852,7 @@ def _interview_history(
 @router.get("/memory-sessions/{session_id}/interview-question-audio")
 def get_interview_question_audio(
     session_id: str,
+    lead_in: str | None = Query(default=None, max_length=160),
     db: Session = Depends(get_db),
     secret_store: SecretStore = Depends(get_secret_store),
 ) -> Response:
@@ -2863,8 +2864,14 @@ def get_interview_question_audio(
     question_text = secure_value(
         db, session.elder.person.family, session, "question_text", secret_store
     )
+    natural_lead_in = (
+        " ".join(lead_in.split()).rstrip("。！？!? ，, ；;") if lead_in else ""
+    )
+    speech_text = (
+        f"{natural_lead_in}。{question_text}" if natural_lead_in else question_text
+    )
     try:
-        result = get_tts_provider().synthesize(question_text)
+        result = get_tts_provider().synthesize(speech_text)
     except Exception as exc:
         raise DomainError(
             "INTERVIEW_SPEECH_FAILED",

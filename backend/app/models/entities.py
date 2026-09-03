@@ -62,6 +62,7 @@ class UserAccount(TimestampMixin, Base):
     display_name: Mapped[str] = mapped_column(String(80))
     password_salt: Mapped[str] = mapped_column(String(64))
     password_hash: Mapped[str] = mapped_column(String(128))
+    platform_role: Mapped[str] = mapped_column(String(24), default="user")
     status: Mapped[str] = mapped_column(String(24), default="active")
     last_login_at: Mapped[datetime | None] = mapped_column()
 
@@ -70,6 +71,9 @@ class UserAccount(TimestampMixin, Base):
     )
     sessions: Mapped[list[AuthSession]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
+    )
+    platform_invitations: Mapped[list[PlatformFamilyInvite]] = relationship(
+        back_populates="created_by", cascade="all, delete-orphan"
     )
 
 
@@ -126,6 +130,22 @@ class FamilyInvite(TimestampMixin, Base):
     revoked_at: Mapped[datetime | None] = mapped_column()
 
     family: Mapped[FamilyArchive] = relationship(back_populates="invitations")
+
+
+class PlatformFamilyInvite(TimestampMixin, Base):
+    __tablename__ = "platform_family_invites"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    created_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    use_count: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime] = mapped_column(index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column()
+
+    created_by: Mapped[UserAccount] = relationship(back_populates="platform_invitations")
 
 
 class InterviewAssignment(TimestampMixin, Base):
