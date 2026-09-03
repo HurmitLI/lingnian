@@ -297,6 +297,67 @@
 }
 .app-shell .welcome-card,
 .app-shell .home-progress-card { min-height: 390px; margin: 0; }
+.app-shell .family-start-guide { margin-top: 18px; }
+.app-shell .family-start-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+.app-shell .family-start-heading h2 { margin: 4px 0 7px; font-size: 25px; }
+.app-shell .family-start-heading p:last-child { margin: 0; color: var(--formal-muted); }
+.app-shell .family-start-heading > span {
+  min-width: 58px;
+  padding: 8px 10px;
+  color: var(--formal-orange-deep);
+  border: 1.5px solid var(--formal-charcoal);
+  border-radius: 999px;
+  background: var(--formal-soft);
+  text-align: center;
+  font-weight: 750;
+}
+.app-shell .family-start-steps { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.app-shell .family-start-steps li {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 76px;
+  padding: 10px 2px;
+  border-top: 1px solid var(--formal-line);
+}
+.app-shell .family-start-number {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  color: var(--formal-muted);
+  border: 1.5px solid rgba(23, 23, 23, .35);
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 750;
+}
+.app-shell .family-start-steps li > div { display: grid; gap: 4px; }
+.app-shell .family-start-steps small { color: var(--formal-muted); line-height: 1.5; }
+.app-shell .family-start-steps a {
+  min-height: 42px;
+  padding: 10px 15px;
+  color: var(--formal-charcoal);
+  border: 1.5px solid var(--formal-charcoal);
+  border-radius: 8px;
+  background: var(--formal-orange);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, .18);
+  text-decoration: none;
+  font-weight: 720;
+}
+.app-shell .family-start-steps li[data-state="done"] .family-start-number {
+  color: white;
+  border-color: var(--formal-green);
+  background: var(--formal-green);
+}
+.app-shell .family-start-steps li[data-state="upcoming"] { opacity: .58; }
+.app-shell .family-start-status { color: var(--formal-muted); font-size: 12px; }
 .app-shell .welcome-card,
 .app-shell .card.welcome-card {
   position: relative;
@@ -1179,6 +1240,12 @@
     border-bottom: 1px solid var(--formal-line);
   }
   .app-shell .home-trust-list li:last-child { padding-bottom: 0; border-bottom: 0; }
+  .app-shell .family-start-heading { gap: 12px; }
+  .app-shell .family-start-heading h2 { font-size: 22px; }
+  .app-shell .family-start-steps li { grid-template-columns: 34px minmax(0, 1fr); gap: 10px; padding-block: 13px; }
+  .app-shell .family-start-steps li > a,
+  .app-shell .family-start-steps li > .family-start-status { grid-column: 2; justify-self: start; }
+  .app-shell .family-start-steps li > a { width: 100%; text-align: center; }
   .app-shell .recent-story-card { grid-template-columns: 1fr; gap: 16px; }
   .app-shell .recent-story-card .text-link { grid-column: 1; margin-top: -4px; }
   .app-shell .stage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

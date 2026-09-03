@@ -8,6 +8,7 @@ import { CalendarClock, CheckCircle2, ImageIcon, Mic, RotateCcw, Search, Volume2
 
 import SecurityPanel from "@/app/security-panel";
 import FormalAccessPanel from "@/app/formal-access-panel";
+import FamilyStartGuide from "@/components/family-start-guide";
 import AppShell from "@/components/layout/app-shell";
 import MemoryWorkflowStepper from "@/components/ui/memory-workflow-stepper";
 import { api, ApiError, apiDownload, mediaUrl } from "@/lib/api";
@@ -80,6 +81,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const [recentSessions, setRecentSessions] = useState<MemorySession[]>([]);
   const [familyPeople, setFamilyPeople] = useState<FamilyPerson[]>([]);
   const [familyRelationships, setFamilyRelationships] = useState<FamilyRelationship[]>([]);
+  const [formalRole, setFormalRole] = useState("");
+  const [formalMemberCount, setFormalMemberCount] = useState<number | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioPreview, setAudioPreview] = useState<string | null>(null);
   const [triggerPreview, setTriggerPreview] = useState<string | null>(null);
@@ -301,6 +304,26 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       cancelled = true;
     };
   }, [showError]);
+
+  useEffect(() => {
+    if (!IS_FORMAL_CLOUD) return;
+    let cancelled = false;
+    void api<{ role: string }>("/api/v1/auth/me")
+      .then(async (account) => {
+        if (cancelled) return;
+        setFormalRole(account.role);
+        if (account.role !== "owner") {
+          setFormalMemberCount(1);
+          return;
+        }
+        const members = await api<Array<{ membership_id: string }>>("/api/v1/auth/members");
+        if (!cancelled) setFormalMemberCount(members.length);
+      })
+      .catch(() => {
+        if (!cancelled) setFormalMemberCount(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!selectedProfileId) return;
@@ -1859,6 +1882,15 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
             </section>
           )}
 
+          {formalRole === "owner" && formalMemberCount !== null && (
+            <FamilyStartGuide
+              hasProfile={profiles.length > 0}
+              hasNarrator={familyPeople.length > 1}
+              hasStory={timeline.length > 0}
+              hasInvitedAccount={formalMemberCount > 1}
+            />
+          )}
+
           {selectedProfile && timeline.length > 0 && (
             <section className="card recent-story-card">
               <div className="section-heading"><span>最近</span><div><h2>刚刚保存的故事</h2><p>这些内容都经过家人确认。</p></div></div>
@@ -2004,7 +2036,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       )}
 
       {!initialLoading && view === "family" && process.env.NEXT_PUBLIC_FORMAL_AUTH_REQUIRED === "true" && (
-        <FormalAccessPanel profiles={currentFamilyProfiles} people={familyPeople} />
+        <div id="family-access"><FormalAccessPanel profiles={currentFamilyProfiles} people={familyPeople} /></div>
       )}
       {!initialLoading && view === "family" && process.env.NEXT_PUBLIC_FORMAL_AUTH_REQUIRED !== "true" && <SecurityPanel key={selectedProfile?.family_id ?? "no-family"} familyId={selectedProfile?.family_id ?? null} />}
 
