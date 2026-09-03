@@ -47,6 +47,11 @@ frontend/test-results/
 # Logs
 *.log
 .runtime/
+local_node/.env
+local_node/runtime/
+local_node/outputs/
+local_node/credentials/
+*.nnresult
 
 # Cloud deployment bindings are account and environment specific
 .vefaas/

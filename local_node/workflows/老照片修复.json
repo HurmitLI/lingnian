@@ -1,0 +1,7 @@
+{
+  "1":{"class_type":"LoadImage","inputs":{"image":"test_old_photo.png"}},
+  "2":{"class_type":"UpscaleModelLoader","inputs":{"model_name":"RealESRGAN_x4plus.pth"}},
+  "3":{"class_type":"ImageUpscaleWithModel","inputs":{"upscale_model":["2",0],"image":["1",0]}},
+  "4":{"class_type":"ImageScale","inputs":{"image":["3",0],"upscale_method":"lanczos","width":1024,"height":1024,"crop":"disabled"}},
+  "5":{"class_type":"SaveImage","inputs":{"filename_prefix":"lingnian/restored","images":["4",0]}}
+}

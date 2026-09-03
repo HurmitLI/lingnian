@@ -1,0 +1,4 @@
+cryptography>=50,<51
+httpx>=0.28,<1
+pydantic>=2.13,<3
+pytest>=8.3,<9
