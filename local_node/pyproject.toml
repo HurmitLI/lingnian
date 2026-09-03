@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lingnian-local-node"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.11,<3.13"
 dependencies = ["cryptography>=50,<51", "httpx>=0.28,<1", "pydantic>=2.13,<3", "keyring>=25,<26"]
 

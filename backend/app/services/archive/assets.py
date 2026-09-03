@@ -139,8 +139,14 @@ async def store_audio_upload(
 
 
 async def store_image_upload(
-    upload: UploadFile, session_id: str, settings: Settings
+    upload: UploadFile,
+    session_id: str,
+    settings: Settings,
+    *,
+    storage_class: str = "original",
 ) -> dict:
+    if storage_class not in {"original", "generated"}:
+        raise ValueError("storage_class must be original or generated")
     mime = normalized_mime(upload.content_type)
     extension = IMAGE_MIME_EXTENSIONS.get(mime)
     if not extension:
@@ -180,7 +186,7 @@ async def store_image_upload(
             )
         if width * height > 40_000_000 or width > 12_000 or height > 12_000:
             raise DomainError("IMAGE_DIMENSIONS_TOO_LARGE", "图片尺寸过大。", 413)
-        relative_path = f"assets/original/{session_id}/{generated_name}"
+        relative_path = f"assets/{storage_class}/{session_id}/{generated_name}"
         final_path = resolve_controlled_path(asset_root, relative_path)
         final_path.parent.mkdir(parents=True, exist_ok=True)
         os.replace(temp_path, final_path)

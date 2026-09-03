@@ -48,6 +48,7 @@ frontend/test-results/
 *.log
 .runtime/
 local_node/.env
+local_node/config.json
 local_node/runtime/
 local_node/outputs/
 local_node/credentials/

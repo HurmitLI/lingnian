@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.api.auth_routes import router as auth_router
+from app.api.generation_node_routes import router as generation_node_router
 from app.core.config import get_settings
 from app.core.database import SessionLocal, initialize_database
 from app.core.errors import (
@@ -76,7 +77,7 @@ async def formal_auth_middleware(request: Request, call_next):
         "/api/v1/readiness",
         "/api/v1/auth/register",
         "/api/v1/auth/login",
-    }:
+    } or path.startswith("/api/v1/generation-worker/"):
         return await call_next(request)
     token = request.cookies.get(settings.auth_cookie_name)
     if not token:
@@ -103,10 +104,19 @@ async def formal_auth_middleware(request: Request, call_next):
 @app.middleware("http")
 async def formal_database_snapshot_middleware(request: Request, call_next):
     response = await call_next(request)
+    high_frequency_worker_update = (
+        request.url.path == "/api/v1/generation-worker/heartbeat"
+        or (
+            request.url.path.startswith("/api/v1/generation-worker/tasks/")
+            and request.url.path.endswith("/progress")
+        )
+    )
     if (
         settings.formal_auth_required
         and request.method in {"POST", "PUT", "PATCH", "DELETE"}
         and response.status_code < 400
+        and not high_frequency_worker_update
+        and response.headers.get("X-Lingnian-No-Snapshot") != "1"
     ):
         try:
             persist_configured_database_snapshot(settings)
@@ -149,3 +159,4 @@ async def request_observability_middleware(request: Request, call_next):
 
 app.include_router(auth_router)
 app.include_router(router)
+app.include_router(generation_node_router)

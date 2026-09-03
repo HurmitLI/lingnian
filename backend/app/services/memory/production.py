@@ -63,6 +63,8 @@ def build_production_package(
     no_impersonation: bool,
     audio: ProductionMedia | None,
     image: ProductionMedia | None,
+    external_upload_authorized: bool = False,
+    package_status: str = "local_preproduction_only",
 ) -> Path:
     """Create a local-only, provider-neutral production handoff package."""
 
@@ -96,7 +98,7 @@ def build_production_package(
     manifest = {
         "format": "lingnian-generation-production-package",
         "version": 1,
-        "status": "local_preproduction_only",
+        "status": package_status,
         "generated_at": generated_at,
         "generation_type": generation_type,
         "story": {
@@ -113,7 +115,7 @@ def build_production_package(
             "subject_consent": subject_consent,
             "rights_confirmed": rights_confirmed,
             "no_impersonation": no_impersonation,
-            "external_upload_authorized": False,
+            "external_upload_authorized": external_upload_authorized,
         },
         "media": [
             {

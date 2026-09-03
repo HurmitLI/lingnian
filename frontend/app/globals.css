@@ -173,16 +173,37 @@ h1 { font-size: clamp(42px, 7vw, 68px); line-height: 1; font-weight: 600; letter
 .platform-account-list dt { color: var(--muted); font-size: 11px; }
 .platform-account-list dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 .platform-account-protected { max-width: 150px; color: var(--muted); font-size: 11px; line-height: 1.5; text-align: right; }
+.platform-generation-center { border-color: #9db7a6; background: linear-gradient(145deg, #f5faf6, #fffdf9); }
+.generation-admin-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 24px; }
+.generation-admin-stats article { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 9px; padding: 15px; border: 1px solid #cbd9cf; border-radius: 13px; background: rgba(255,255,255,.8); }
+.generation-admin-stats svg { grid-row: 1 / 3; color: #456c53; }
+.generation-admin-stats span { color: var(--muted); font-size: 11px; }
+.generation-admin-stats strong { font-size: 21px; }
+.platform-node-secret { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 20px; align-items: center; margin-top: 20px; padding: 20px; border: 1.5px solid #456c53; border-radius: 14px; background: white; }
+.platform-node-secret > strong, .platform-node-secret > p { grid-column: 1 / -1; }
+.platform-node-secret p { margin: 0; color: var(--muted); line-height: 1.6; }
+.platform-node-secret code { overflow-wrap: anywhere; font-size: 15px; }
+.platform-node-list, .platform-generation-queue { display: grid; gap: 10px; margin-top: 22px; }
+.platform-node-list article, .platform-generation-queue article { display: grid; grid-template-columns: auto minmax(220px, 1.2fr) minmax(160px, .7fr) auto; align-items: center; gap: 14px; padding: 15px 16px; border: 1px solid var(--line); border-radius: 13px; background: white; }
+.platform-node-list article > div, .platform-generation-queue article > div { display: grid; gap: 4px; }
+.platform-node-list small, .platform-generation-queue small { color: var(--muted); font-size: 11px; }
+.platform-node-state, .platform-generation-queue article > span { width: fit-content; padding: 5px 8px; border-radius: 999px; background: #eee9e2; color: #625a51; font-size: 11px; font-weight: 700; }
+.platform-node-state[data-state="online"], .platform-generation-queue article > span[data-status="accepted"] { background: #e5f2e8; color: #376247; }
+.platform-node-state[data-state="revoked"], .platform-generation-queue article > span[data-status="failed"], .platform-generation-queue article > span[data-status="rejected"] { background: #f6e5e2; color: #853d36; }
+.platform-generation-queue h3 { margin: 10px 0 2px; font-size: 21px; }
+.platform-empty { margin: 0; padding: 15px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); }
 .platform-admin-loading, .platform-admin-denied { min-height: 460px; display: grid; place-content: center; justify-items: center; gap: 12px; text-align: center; }
 .platform-admin-loading p, .platform-admin-denied p { max-width: 560px; color: var(--muted); line-height: 1.7; }
 .platform-admin-denied h1 { margin: 4px 0; font-size: 38px; }
 
 @media (max-width: 850px) {
   .platform-admin-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .generation-admin-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .platform-admin-hero, .platform-admin-section-heading { display: grid; }
   .platform-account-list article { grid-template-columns: 1fr; }
   .platform-account-list dl { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .platform-account-protected { max-width: none; text-align: left; }
+  .platform-node-list article, .platform-generation-queue article { grid-template-columns: auto minmax(0, 1fr); }
 }
 
 @media (max-width: 560px) {
@@ -192,6 +213,9 @@ h1 { font-size: clamp(42px, 7vw, 68px); line-height: 1; font-weight: 600; letter
   .platform-admin-stats { grid-template-columns: 1fr 1fr; }
   .platform-admin-stats article { padding: 15px; }
   .platform-created-invite { grid-template-columns: 1fr; }
+  .platform-node-secret { grid-template-columns: 1fr; }
+  .platform-node-secret > strong, .platform-node-secret > p { grid-column: auto; }
+  .generation-admin-stats { grid-template-columns: 1fr 1fr; }
   .platform-created-invite .button { width: 100%; }
   .platform-account-list dl { grid-template-columns: 1fr; }
 }

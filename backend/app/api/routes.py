@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -27,6 +27,7 @@ from app.models import (
     ElderProfile,
     EncryptedField,
     FamilyArchive,
+    GenerationNode,
     InterviewTurn,
     Keepsake,
     KeepsakeAuthorization,
@@ -729,6 +730,7 @@ def generative_request_read(
         generation_type=request.generation_type,
         provider_key=request.provider_key,
         status=request.status,
+        assigned_node_id=request.assigned_node_id,
         actor_label=secure_value(db, family, request, "actor_label", store),
         subject_consent=request.subject_consent,
         rights_confirmed=request.rights_confirmed,
@@ -737,6 +739,13 @@ def generative_request_read(
         estimated_cost_cents=request.estimated_cost_cents,
         actual_cost_cents=request.actual_cost_cents,
         max_cost_cents=request.max_cost_cents,
+        attempt_count=request.attempt_count,
+        progress_percent=request.progress_percent,
+        progress_stage=request.progress_stage,
+        queued_at=request.queued_at,
+        started_at=request.started_at,
+        completed_at=request.completed_at,
+        last_error_message=request.last_error_message,
         error_code=request.error_code,
         review_checks=request.review_checks or {},
         reviewed_by=secure_value(db, family, request, "reviewed_by", store),
@@ -4937,8 +4946,53 @@ def download_generation_production_package(
     "/generative-media/capabilities",
     response_model=list[GenerativeMediaCapability],
 )
-def get_generative_media_capabilities() -> list[GenerativeMediaCapability]:
-    return [GenerativeMediaCapability(**item.__dict__) for item in capability_catalog()]
+def get_generative_media_capabilities(
+    db: Session = Depends(get_db),
+) -> list[GenerativeMediaCapability]:
+    online_after = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=90)
+    online_nodes = db.scalars(
+        select(GenerationNode).where(
+            GenerationNode.status == "active",
+            GenerationNode.revoked_at.is_(None),
+            GenerationNode.last_seen_at >= online_after,
+        )
+    ).all()
+    online_capabilities = {
+        capability
+        for node in online_nodes
+        for capability in (node.capabilities or [])
+    }
+    result: list[GenerativeMediaCapability] = []
+    for item in capability_catalog():
+        if item.generation_type in online_capabilities:
+            result.append(
+                GenerativeMediaCapability(
+                    generation_type=item.generation_type,
+                    label=item.label,
+                    available=True,
+                    provider_key="home_comfyui",
+                    requires_external_upload=True,
+                    requires_subject_consent=item.requires_subject_consent,
+                    estimated_cost_cents=0,
+                    unavailable_reason="家用生成节点已在线；每项任务仍需单独授权，生成结果必须经过家庭验收。",
+                )
+            )
+        elif item.generation_type in {"photo_restore", "portrait_video", "scene_video"}:
+            result.append(
+                GenerativeMediaCapability(
+                    generation_type=item.generation_type,
+                    label=item.label,
+                    available=False,
+                    provider_key="home_comfyui",
+                    requires_external_upload=True,
+                    requires_subject_consent=item.requires_subject_consent,
+                    estimated_cost_cents=0,
+                    unavailable_reason="家用生成节点尚未在线；完成单次授权后可以先排队，电脑上线会自动领取。",
+                )
+            )
+        else:
+            result.append(GenerativeMediaCapability(**item.__dict__))
+    return result
 
 
 @router.get(
@@ -4987,6 +5041,9 @@ def create_generative_media_request(
     if capability.requires_subject_consent and not payload.subject_consent:
         raise DomainError("SUBJECT_CONSENT_REQUIRED", "人物影像或声音生成必须有讲述者本人明确授权。", 409)
     provider_key, estimated_cost, status = estimate_request(payload.generation_type)
+    if payload.allow_external_upload and payload.generation_type != "voice_replica":
+        provider_key = "home_comfyui"
+        status = "queued"
     canonical = json.dumps(
         {
             "elder_id": profile.id,
@@ -5012,8 +5069,11 @@ def create_generative_media_request(
         allow_external_upload=payload.allow_external_upload,
         estimated_cost_cents=estimated_cost,
         max_cost_cents=payload.max_cost_cents,
+        queued_at=now_utc() if status == "queued" else None,
+        progress_percent=0,
+        progress_stage="等待家用生成节点" if status == "queued" else None,
         request_sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
-        error_code="PROVIDER_NOT_CONFIGURED",
+        error_code=None if status == "queued" else "PROVIDER_NOT_CONFIGURED",
     )
     db.add(request)
     db.flush()
@@ -5122,17 +5182,26 @@ def review_generative_media_result(
         "expression_natural": payload.expression_natural,
         "narrative_consistent": payload.narrative_consistent,
         "duration_appropriate": payload.duration_appropriate,
+        "source_preserved": payload.source_preserved,
+        "identity_preserved": payload.identity_preserved,
     }
-    required_checks = (
-        tuple(checks)
-        if request.generation_type == "portrait_video"
-        else (
+    required_checks = {
+        "portrait_video": (
+            "audio_present",
+            "lip_sync_verified",
+            "pauses_natural",
+            "expression_natural",
+            "narrative_consistent",
+            "duration_appropriate",
+        ),
+        "scene_video": (
             "audio_present",
             "expression_natural",
             "narrative_consistent",
             "duration_appropriate",
-        )
-    )
+        ),
+        "photo_restore": ("source_preserved", "identity_preserved"),
+    }.get(request.generation_type, tuple(checks))
     if payload.decision == "accepted" and not all(
         checks[name] for name in required_checks
     ):
@@ -5141,7 +5210,7 @@ def review_generative_media_result(
             (
                 "人物视频六项验收必须全部通过，才能标记为可用成片。"
                 if request.generation_type == "portrait_video"
-                else "故事情景视频四项验收必须全部通过，才能标记为可用成片。"
+                else "这项生成结果的必检项目必须全部通过，才能标记为可用。"
             ),
             409,
         )
@@ -5154,7 +5223,7 @@ def review_generative_media_result(
     request.error_code = (
         None if payload.decision == "accepted" else "HUMAN_REVIEW_REJECTED"
     )
-    request.review_checks = checks
+    request.review_checks = {name: checks[name] for name in required_checks}
     request.reviewed_by = payload.reviewed_by.strip()
     request.review_notes = notes
     request.reviewed_at = now_utc()
