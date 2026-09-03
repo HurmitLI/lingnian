@@ -235,6 +235,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         if (cancelled) return;
         setHealth(healthResult);
         setProfiles(profileResult);
+        setError("");
         const params = new URLSearchParams(window.location.search);
         const requestedProfile = params.get("elder");
         const storedProfile = window.localStorage.getItem("niannian.profileId");
@@ -317,6 +318,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           setReminders(reminderResult);
           setMemoryBooks(bookResult);
           setRecentSessions(sessionResult);
+          setError("");
         }
       } catch (value) {
         if (!cancelled) showError(value);
@@ -338,6 +340,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       if (!cancelled) {
         setFamilyPeople(peopleResult);
         setFamilyRelationships(relationshipResult);
+        setError("");
       }
     }).catch((value: unknown) => {
       if (!cancelled) showError(value);

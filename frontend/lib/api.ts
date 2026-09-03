@@ -15,6 +15,12 @@ export class ApiError extends Error {
 
 type ApiOptions = RequestInit & { timeoutMs?: number };
 
+const RETRYABLE_GET_STATUS = new Set([429, 502, 503, 504]);
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 async function request(path: string, options: ApiOptions = {}): Promise<Response> {
   const { timeoutMs, signal: externalSignal, ...requestOptions } = options;
   const controller = new AbortController();
@@ -27,6 +33,8 @@ async function request(path: string, options: ApiOptions = {}): Promise<Response
   try {
     return await fetch(`${API_BASE}${path}`, {
       ...requestOptions,
+      cache: requestOptions.cache ?? "no-store",
+      credentials: requestOptions.credentials ?? "same-origin",
       signal: controller.signal,
       headers: {
         ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
@@ -69,12 +77,35 @@ async function responseError(response: Response, fallback: string): Promise<ApiE
 }
 
 export async function api<T>(path: string, options?: ApiOptions): Promise<T> {
-  const response = await request(path, options);
-  if (!response.ok) {
-    throw await responseError(response, "请求没有成功，请稍后重试。");
+  const method = (options?.method ?? "GET").toUpperCase();
+  const maxAttempts = FORMAL_CLOUD && method === "GET" ? 3 : 1;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await request(path, options);
+      if (!response.ok) {
+        if (attempt < maxAttempts && RETRYABLE_GET_STATUS.has(response.status)) {
+          await wait(attempt * 180);
+          continue;
+        }
+        throw await responseError(response, "请求没有成功，请稍后重试。");
+      }
+      if (response.status === 204) return undefined as T;
+      return response.json() as Promise<T>;
+    } catch (value) {
+      if (
+        attempt < maxAttempts
+        && value instanceof ApiError
+        && value.retryable
+      ) {
+        await wait(attempt * 180);
+        continue;
+      }
+      throw value;
+    }
   }
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+
+  throw new ApiError("REQUEST_FAILED", "请求没有成功，请稍后重试。", true);
 }
 
 export async function apiDownload(
