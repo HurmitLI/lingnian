@@ -84,6 +84,7 @@ const timelineItem = {
 const unexpectedBrowserErrors = new WeakMap<Page, string[]>();
 
 async function mockLocalApi(page: Page) {
+  let guidedTurns: Array<Record<string, unknown>> = [];
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -124,7 +125,51 @@ async function mockLocalApi(page: Page) {
     } else if (path === `/api/v1/memory-sessions/${session.id}`) {
       body = { session, media_assets: [], interview_turns: [], transcript: null, story_draft: null, tasks: [] };
     } else if (path === `/api/v1/memory-sessions/${guidedSession.id}`) {
-      body = { session: guidedSession, media_assets: [], interview_turns: [], transcript: null, story_draft: null, tasks: [] };
+      body = { session: guidedSession, media_assets: [], interview_turns: guidedTurns, transcript: null, story_draft: null, tasks: [] };
+    } else if (path === `/api/v1/memory-sessions/${guidedSession.id}/interview-turns/audio`) {
+      body = {
+        id: "guided-turn-uploaded",
+        session_id: guidedSession.id,
+        turn_index: 1,
+        question_text: guidedSession.question_text,
+        raw_answer_text: "我第一次听妈妈提起外公。",
+        corrected_answer_text: "我第一次听妈妈提起外公。",
+        answer_version: 1,
+        audio_asset_id: "guided-audio",
+        audio_url: "/api/v1/media-assets/guided-audio/content",
+        question_audio_asset_id: "guided-question-audio",
+        question_audio_url: "/api/v1/media-assets/guided-question-audio/content",
+        asr_provider: "mock",
+        asr_model: "mock",
+        followup_mode: "pending",
+        status: "answer_review",
+      };
+    } else if (path.includes(`/api/v1/memory-sessions/${guidedSession.id}/interview-turns/`) && path.endsWith("/continue")) {
+      guidedTurns = Array.from({ length: 12 }, (_, index) => ({
+        id: `guided-turn-${index + 1}`,
+        session_id: guidedSession.id,
+        turn_index: index + 1,
+        question_text: index === 0 ? guidedSession.question_text : `第 ${index + 1} 个测试问题`,
+        raw_answer_text: "测试回答。",
+        corrected_answer_text: "测试回答。",
+        answer_version: 2,
+        audio_asset_id: `guided-audio-${index + 1}`,
+        audio_url: null,
+        question_audio_asset_id: `guided-question-audio-${index + 1}`,
+        question_audio_url: null,
+        asr_provider: "mock",
+        asr_model: "mock",
+        followup_mode: "local_private",
+        status: "complete",
+      }));
+      body = {
+        session: guidedSession,
+        turn: guidedTurns[0],
+        acknowledgement: "谢谢你慢慢讲。",
+        next_question: "后来你又听说了什么？",
+        should_end: true,
+        followup_mode: "local_private",
+      };
     }
 
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
@@ -185,13 +230,85 @@ test("语音采访明确区分回忆对象与讲述人", async ({ page }) => {
   await expect(page.getByText("本次讲述人")).toBeVisible();
   await expect(page.getByText("测试女儿", { exact: true })).toBeVisible();
   await expect(page.getByText(guidedSession.question_text)).toBeVisible();
-  await expect(page.getByText(/自动流程已开启/)).toBeVisible();
-  await expect(page.getByRole("button", { name: /开始回答/ })).toBeVisible();
+  await expect(page.getByText(/自动整理已开启/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /开始连续采访/ })).toBeVisible();
+  await expect(page.getByText("一次开始，后面只管慢慢讲")).toBeVisible();
   await expect(page.getByRole("button", { name: /再听一遍/ })).toBeVisible();
   const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(hasOverflow).toBe(false);
   const accessibility = await new AxeBuilder({ page }).analyze();
   expect(accessibility.violations, accessibility.violations.map((item) => `${item.id}: ${item.help}`).join("\n")).toEqual([]);
+});
+
+test("连续采访一次开始后自动进入收音和提交", async ({ page }) => {
+  await page.addInitScript(() => {
+    const track = {
+      addEventListener: () => undefined,
+      stop: () => undefined,
+    } as unknown as MediaStreamTrack;
+    const stream = {
+      getAudioTracks: () => [track],
+      getTracks: () => [track],
+    } as unknown as MediaStream;
+
+    class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      state: RecordingState = "inactive";
+      mimeType = "audio/webm";
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      start() { this.state = "recording"; }
+      stop() {
+        if (this.state !== "recording") return;
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob(["voice"], { type: this.mimeType }) } as BlobEvent);
+        this.onstop?.();
+      }
+    }
+
+    class FakeAudio {
+      onended: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      pause() { return undefined; }
+      play() {
+        window.setTimeout(() => this.onended?.(new Event("ended")), 20);
+        return Promise.resolve();
+      }
+    }
+
+    class FakeAudioContext {
+      createAnalyser() {
+        return {
+          fftSize: 2048,
+          smoothingTimeConstant: 0,
+          getFloatTimeDomainData: (samples: Float32Array) => samples.fill(0),
+        } as unknown as AnalyserNode;
+      }
+      createMediaStreamSource() {
+        return { connect: () => undefined, disconnect: () => undefined } as unknown as MediaStreamAudioSourceNode;
+      }
+      close() { return Promise.resolve(); }
+    }
+
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: () => Promise.resolve(stream) },
+    });
+    Object.defineProperty(window, "MediaRecorder", { configurable: true, value: FakeMediaRecorder });
+    Object.defineProperty(window, "Audio", { configurable: true, value: FakeAudio });
+    Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudioContext });
+  });
+
+  await page.goto(`/record?elder=${profile.id}&session=${guidedSession.id}`);
+  await page.getByRole("button", { name: "开始连续采访" }).click();
+  await expect(page.getByText("可以开始说了")).toBeVisible();
+  await expect(page.getByRole("button", { name: "我还在想" })).toBeVisible();
+  await page.getByRole("button", { name: "我还在想" }).click();
+  await expect(page.getByText(/接下来 15 秒不会/)).toBeVisible();
+  await page.getByRole("button", { name: "我说完了" }).click();
+  await expect(page.getByText(/已经聊满 12 轮/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "结束这次采访，查看完整整理稿" })).toBeVisible();
 });
 
 test("回忆档案可以搜索并清除筛选", async ({ page }) => {

@@ -623,6 +623,58 @@
 .app-shell .review-title > svg { flex: 0 0 auto; margin-top: 2px; color: var(--formal-orange-deep); }
 .app-shell .answer-instruction p,
 .app-shell .review-title p { margin: 4px 0 0; color: var(--formal-muted); line-height: 1.6; }
+.app-shell .continuous-start-button {
+  width: min(420px, 100%);
+  min-height: 58px;
+  margin-top: 18px;
+  justify-content: center;
+  font-size: 17px;
+}
+.app-shell .manual-recording-options {
+  display: grid;
+  gap: 10px;
+  margin-top: 19px;
+  padding-top: 16px;
+  border-top: 1px solid var(--formal-line);
+}
+.app-shell .manual-recording-options > span { color: var(--formal-muted); font-size: 12px; }
+.app-shell .continuous-interview-live {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 112px;
+  padding: 20px;
+  border: 1.5px solid var(--formal-charcoal);
+  border-radius: 12px;
+  background: #fff8ef;
+}
+.app-shell .continuous-interview-live strong { font-size: 19px; }
+.app-shell .continuous-interview-live p { margin: 5px 0 0; color: var(--formal-muted); line-height: 1.55; }
+.app-shell .continuous-pulse {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 111, 30, .16);
+}
+.app-shell .continuous-pulse span {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--formal-orange-deep);
+  box-shadow: 0 0 0 8px rgba(255, 111, 30, .12);
+}
+.app-shell .continuous-interview-live.phase-listening .continuous-pulse span { animation: listening-pulse 1.45s ease-in-out infinite; }
+.app-shell .continuous-interview-live.phase-processing .continuous-pulse span { animation: processing-turn 1.05s linear infinite; }
+.app-shell .continuous-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.app-shell .continuous-controls .button { min-height: 46px; }
+@keyframes listening-pulse {
+  0%, 100% { transform: scale(.82); box-shadow: 0 0 0 6px rgba(255, 111, 30, .1); }
+  50% { transform: scale(1); box-shadow: 0 0 0 13px rgba(255, 111, 30, .04); }
+}
+@keyframes processing-turn { to { transform: rotate(360deg); border-radius: 35%; } }
 .app-shell .interview-review-panel { display: grid; gap: 14px; }
 .app-shell .interview-review-panel textarea { width: 100%; min-height: 150px; padding: 15px; font-size: 17px; line-height: 1.75; resize: vertical; }
 .app-shell .interview-cloud-choice { padding: 14px 16px; border: 1px solid #d7b86e; border-radius: 9px; background: #fff8dc; }
@@ -1144,6 +1196,10 @@
   .app-shell .narrator-line p { max-width: 94%; }
   .app-shell .interview-answer-panel,
   .app-shell .interview-review-panel { padding: 16px 13px; }
+  .app-shell .continuous-start-button { width: 100%; }
+  .app-shell .continuous-interview-live { grid-template-columns: auto minmax(0, 1fr); padding: 17px 14px; }
+  .app-shell .continuous-controls { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .app-shell .continuous-controls .button:last-child { grid-column: 1 / -1; }
   .app-shell .interview-skip { justify-self: stretch; }
   .app-shell .archive-toolbar { grid-template-columns: 1fr; }
   .app-shell .archive-stage-filter { justify-content: space-between; padding-inline: 2px; }
@@ -1203,4 +1259,5 @@
   .app-shell .workspace-header .eyebrow,
   .app-shell .section-heading > span,
   .app-shell .sidebar-note { transform: none; }
+  .app-shell .continuous-interview-live .continuous-pulse span { animation: none; }
 }

@@ -15,6 +15,12 @@ import {
   recordingErrorMessage,
   recordingExtension,
 } from "@/lib/media/recording";
+import {
+  audioRms,
+  SPEECH_RMS_THRESHOLD,
+  THINKING_EXTENSION_MS,
+  shouldSubmitAfterSilence,
+} from "@/lib/media/silence";
 import { pollWorkflowTask } from "@/lib/workflow/poll-task";
 import {
   hasMeaningfulStoryContent,
@@ -45,6 +51,8 @@ import type {
 export type WorkspaceView = "home" | "record" | "archive" | "family";
 
 const LIFE_STAGES = ["童年", "求学", "工作", "婚恋", "育儿", "价值观", "老物件"];
+type ContinuousInterviewPhase = "idle" | "speaking" | "listening" | "processing";
+type RecordingStopReason = "manual" | "silence" | "skip" | "finish";
 const RELATIONSHIP_LABELS: Record<string, string> = {
   parent: "父母",
   child: "子女",
@@ -87,6 +95,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const [interviewCloudConsentChecked, setInterviewCloudConsentChecked] = useState(false);
   const [interviewShouldEnd, setInterviewShouldEnd] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [continuousInterviewActive, setContinuousInterviewActive] = useState(false);
+  const [continuousInterviewPhase, setContinuousInterviewPhase] = useState<ContinuousInterviewPhase>("idle");
+  const [interviewHeardVoice, setInterviewHeardVoice] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -95,6 +106,14 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const questionAudioBlobRef = useRef<Blob | null>(null);
   const questionAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const questionAudioUrlRef = useRef<string | null>(null);
+  const questionPlaybackResolveRef = useRef<(() => void) | null>(null);
+  const audioPreviewUrlRef = useRef<string | null>(null);
+  const continuousInterviewRef = useRef(false);
+  const recordingAutoSubmitRef = useRef(false);
+  const recordingStopReasonRef = useRef<RecordingStopReason>("manual");
+  const silenceMonitorStopRef = useRef<(() => void) | null>(null);
+  const silenceExtensionUntilRef = useRef(0);
+  const thinkingExtensionTimerRef = useRef<number | null>(null);
 
   const selectedProfile = profiles.find((item) => item.id === selectedProfileId) ?? null;
   const effectiveNarratorPersonId = familyPeople.some(
@@ -235,6 +254,16 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
             } else {
               setDetail(sessionResult);
               setSelectedProfileId(sessionResult.session.elder_id);
+              const pendingTurn = [...sessionResult.interview_turns].reverse().find(
+                (turn) => turn.status === "answer_review",
+              );
+              setInterviewAnswerText(pendingTurn?.corrected_answer_text ?? "");
+              const storedAssist = window.localStorage.getItem(
+                `lingnian.interviewAssist.${sessionResult.session.id}`,
+              );
+              if (storedAssist !== null) {
+                setInterviewCloudConsentChecked(storedAssist === "true");
+              }
               if (sessionResult.transcript) {
                 setCorrectedText(sessionResult.transcript.corrected_text);
                 setSavedCorrectedText(sessionResult.transcript.corrected_text);
@@ -314,15 +343,20 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
 
   useEffect(() => {
     return () => {
-      if (audioPreview) URL.revokeObjectURL(audioPreview);
+      continuousInterviewRef.current = false;
+      silenceMonitorStopRef.current?.();
+      if (audioPreviewUrlRef.current) URL.revokeObjectURL(audioPreviewUrlRef.current);
       if (recordingTimerRef.current !== null) window.clearInterval(recordingTimerRef.current);
+      if (thinkingExtensionTimerRef.current !== null) window.clearTimeout(thinkingExtensionTimerRef.current);
       if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       window.speechSynthesis?.cancel();
       questionAudioPlayerRef.current?.pause();
+      questionPlaybackResolveRef.current?.();
+      questionPlaybackResolveRef.current = null;
       if (questionAudioUrlRef.current) URL.revokeObjectURL(questionAudioUrlRef.current);
     };
-  }, [audioPreview]);
+  }, []);
 
   async function createProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -429,17 +463,22 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   }
 
   function clearActiveSession(message?: string) {
+    continuousInterviewRef.current = false;
+    setContinuousInterviewActive(false);
+    setContinuousInterviewPhase("idle");
+    stopSilenceMonitoring();
     window.localStorage.removeItem("niannian.sessionId");
     setDetail(null);
     setAudioFile(null);
+    if (audioPreviewUrlRef.current) URL.revokeObjectURL(audioPreviewUrlRef.current);
+    audioPreviewUrlRef.current = null;
     setAudioPreview(null);
     setCorrectedText("");
     setSavedCorrectedText("");
     setInterviewAnswerText("");
     setInterviewCloudConsentChecked(false);
     setInterviewShouldEnd(false);
-    window.speechSynthesis?.cancel();
-    setIsSpeaking(false);
+    cancelQuestionPlayback();
     const url = new URL("/record", window.location.origin);
     if (selectedProfileId) url.searchParams.set("elder", selectedProfileId);
     window.history.replaceState({}, "", `${url.pathname}${url.search}`);
@@ -447,6 +486,11 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   }
 
   function leaveSessionForLater() {
+    if (mediaRecorderRef.current?.state === "recording") {
+      recordingAutoSubmitRef.current = false;
+      recordingStopReasonRef.current = "manual";
+      mediaRecorderRef.current.stop();
+    }
     clearActiveSession("当前记录已经保存在本机。以后可以从首页的“继续记录”回来。");
   }
 
@@ -552,8 +596,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       await loadMemoryContext(selectedProfileId);
       await loadRecentSessions(selectedProfileId);
       setAudioFile(null);
-      setNotice("采访已经准备好。聆年一次只问一个问题，随时可以结束。 ");
-      speakQuestion(session.question_text, session.id);
+      setNotice("采访已经准备好。点击一次“开始连续采访”，后面只需要慢慢回答。 ");
     } catch (value) {
       showError(value);
     } finally {
@@ -604,8 +647,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       formElement.reset();
       if (triggerPreview) URL.revokeObjectURL(triggerPreview);
       setTriggerPreview(null);
-      setNotice("图片已保存在本机。问题只邀请讲述，不会猜测图片中的人物、地点或年代。");
-      speakQuestion(session.question_text, session.id);
+      setNotice("图片已保存在本机。点击“开始连续采访”后，问题只邀请讲述，不会猜测图片中的信息。");
     } catch (value) {
       showError(value);
     } finally {
@@ -629,26 +671,115 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   }
 
   function setPreviewFile(file: File) {
-    if (audioPreview) URL.revokeObjectURL(audioPreview);
+    if (audioPreviewUrlRef.current) URL.revokeObjectURL(audioPreviewUrlRef.current);
+    const previewUrl = URL.createObjectURL(file);
+    audioPreviewUrlRef.current = previewUrl;
     setAudioFile(file);
-    setAudioPreview(URL.createObjectURL(file));
+    setAudioPreview(previewUrl);
   }
 
-  async function startRecording() {
+  function stopSilenceMonitoring() {
+    silenceMonitorStopRef.current?.();
+    silenceMonitorStopRef.current = null;
+    if (thinkingExtensionTimerRef.current !== null) {
+      window.clearTimeout(thinkingExtensionTimerRef.current);
+      thinkingExtensionTimerRef.current = null;
+    }
+    silenceExtensionUntilRef.current = 0;
+  }
+
+  function startSilenceMonitoring(stream: MediaStream, recorder: MediaRecorder) {
+    stopSilenceMonitoring();
+    const AudioContextConstructor = window.AudioContext
+      ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextConstructor) return;
+    let context: AudioContext;
+    let analyser: AnalyserNode;
+    let source: MediaStreamAudioSourceNode;
+    try {
+      context = new AudioContextConstructor();
+      analyser = context.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.35;
+      source = context.createMediaStreamSource(stream);
+      source.connect(analyser);
+    } catch {
+      return;
+    }
+    const samples = new Float32Array(analyser.fftSize);
+    let recordingStartedAt = -1;
+    let lastVoiceAt = -1;
+    let heardSpeech = false;
+    let animationFrame = 0;
+
+    const inspectLevel = (now: number) => {
+      if (recorder.state !== "recording") return;
+      if (recordingStartedAt < 0) {
+        recordingStartedAt = now;
+        lastVoiceAt = now;
+      }
+      analyser.getFloatTimeDomainData(samples);
+      if (audioRms(samples) >= SPEECH_RMS_THRESHOLD) {
+        lastVoiceAt = now;
+        if (!heardSpeech) {
+          heardSpeech = true;
+          setInterviewHeardVoice(true);
+        }
+      } else if (shouldSubmitAfterSilence({
+        heardSpeech,
+        recordingStartedAt,
+        lastVoiceAt,
+        holdUntil: silenceExtensionUntilRef.current,
+        now,
+      })) {
+        recordingStopReasonRef.current = "silence";
+        recorder.stop();
+        return;
+      }
+      animationFrame = window.requestAnimationFrame(inspectLevel);
+    };
+    animationFrame = window.requestAnimationFrame(inspectLevel);
+    silenceMonitorStopRef.current = () => {
+      window.cancelAnimationFrame(animationFrame);
+      source.disconnect();
+      void context.close();
+    };
+  }
+
+  async function startRecording(options: {
+    autoSubmit?: boolean;
+    sessionId?: string;
+    preparedStream?: MediaStream;
+  } = {}) {
     setError("");
     setNotice("");
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       setError("当前浏览器不支持直接录音。请使用最新版 Safari、Chrome 或 Edge，也可以直接选择已有音频。");
-      return;
+      return false;
     }
     try {
       window.speechSynthesis?.cancel();
       setIsSpeaking(false);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = options.preparedStream
+        ?? await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
       mediaStreamRef.current = stream;
       const mimeType = chooseRecordingMimeType((type) => MediaRecorder.isTypeSupported(type));
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       chunksRef.current = [];
+      recordingAutoSubmitRef.current = Boolean(options.autoSubmit);
+      recordingStopReasonRef.current = "manual";
+      silenceExtensionUntilRef.current = 0;
+      if (thinkingExtensionTimerRef.current !== null) {
+        window.clearTimeout(thinkingExtensionTimerRef.current);
+        thinkingExtensionTimerRef.current = null;
+      }
+      setInterviewHeardVoice(false);
       stream.getAudioTracks().forEach((track) => {
         track.addEventListener("ended", () => {
           if (recorder.state !== "recording") return;
@@ -661,15 +792,35 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         if (event.data.size) chunksRef.current.push(event.data);
       };
       recorder.onstop = () => {
+        stopSilenceMonitoring();
         const type = recorder.mimeType || "audio/webm";
         const extension = recordingExtension(type);
         const blob = new Blob(chunksRef.current, { type });
+        const autoSubmit = recordingAutoSubmitRef.current;
+        const stopReason = recordingStopReasonRef.current;
+        setIsRecording(false);
+        setInterviewHeardVoice(false);
         if (blob.size > 0) {
           const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-          setPreviewFile(new File([blob], `聆年录音-${timestamp}.${extension}`, { type }));
-          setNotice("录音已停止并暂存在当前浏览器中。请先试听，确认后再上传保存。");
+          const file = new File([blob], `聆年录音-${timestamp}.${extension}`, { type });
+          if (autoSubmit && options.sessionId) {
+            if (stopReason === "skip") {
+              void replaceInterviewQuestionAndResume(options.sessionId);
+            } else {
+              void uploadGuidedAudioFile(file, options.sessionId, stopReason === "finish");
+            }
+          } else {
+            setPreviewFile(file);
+            setNotice("录音已停止并暂存在当前浏览器中。请先试听，确认后再上传保存。");
+          }
         } else {
-          setError("这次没有录到声音。请检查麦克风后再试，或直接选择已有音频。");
+          if (autoSubmit && options.sessionId && stopReason === "skip") {
+            void replaceInterviewQuestionAndResume(options.sessionId);
+          } else if (autoSubmit && options.sessionId && stopReason === "finish") {
+            void finishInterviewSession(options.sessionId);
+          } else {
+            setError("这次没有录到声音。请检查麦克风后再试，或直接选择已有音频。");
+          }
         }
         stream.getTracks().forEach((track) => track.stop());
         if (recordingTimerRef.current !== null) window.clearInterval(recordingTimerRef.current);
@@ -683,28 +834,48 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       recorder.start(1000);
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
+      if (options.autoSubmit) {
+        setContinuousInterviewPhase("listening");
+        startSilenceMonitoring(stream, recorder);
+      }
       setRecordingSeconds(0);
       recordingTimerRef.current = window.setInterval(() => {
         setRecordingSeconds((seconds) => seconds + 1);
       }, 1000);
+      return true;
     } catch (value) {
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
+      if (options.autoSubmit) {
+        continuousInterviewRef.current = false;
+        setContinuousInterviewActive(false);
+        setContinuousInterviewPhase("idle");
+      }
       setError(recordingErrorMessage(value));
+      return false;
     }
   }
 
   function stopRecording() {
+    recordingStopReasonRef.current = "manual";
     if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
     if (recordingTimerRef.current !== null) window.clearInterval(recordingTimerRef.current);
     recordingTimerRef.current = null;
     setIsRecording(false);
   }
 
-  function speakQuestionFallback(text: string) {
+  function cancelQuestionPlayback() {
+    questionAudioPlayerRef.current?.pause();
+    window.speechSynthesis?.cancel();
+    setIsSpeaking(false);
+    questionPlaybackResolveRef.current?.();
+    questionPlaybackResolveRef.current = null;
+  }
+
+  function speakQuestionFallback(text: string): Promise<void> {
     if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
       setNotice("当前浏览器不能朗读问题，您仍然可以看着文字继续采访。");
-      return;
+      return Promise.resolve();
     }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
@@ -719,21 +890,37 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     ) ?? voices.find((voice) => voice.lang.toLowerCase() === "zh-cn")
       ?? voices.find((voice) => voice.lang.toLowerCase().startsWith("zh"));
     if (preferredVoice) utterance.voice = preferredVoice;
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => {
-      setIsSpeaking(false);
-      setNotice("这次没有成功朗读，问题文字仍然可以正常使用。");
-    };
-    window.speechSynthesis.speak(utterance);
+    return new Promise((resolve) => {
+      const complete = () => {
+        if (questionPlaybackResolveRef.current === complete) {
+          questionPlaybackResolveRef.current = null;
+        }
+        setIsSpeaking(false);
+        resolve();
+      };
+      questionPlaybackResolveRef.current = complete;
+      utterance.onstart = () => setIsSpeaking(true);
+      utterance.onend = complete;
+      utterance.onerror = () => {
+        setNotice("这次没有成功朗读，问题文字仍然可以正常使用。");
+        complete();
+      };
+      window.speechSynthesis.speak(utterance);
+    });
   }
 
-  async function speakQuestion(text: string, sessionId = detail?.session.id) {
-    questionAudioPlayerRef.current?.pause();
+  async function speakQuestion(
+    text: string,
+    sessionId = detail?.session.id,
+    shouldContinue: () => boolean = () => true,
+  ): Promise<void> {
+    cancelQuestionPlayback();
+    questionAudioBlobRef.current = null;
     if (questionAudioUrlRef.current) URL.revokeObjectURL(questionAudioUrlRef.current);
     questionAudioUrlRef.current = null;
+    if (!shouldContinue()) return;
     if (!sessionId) {
-      speakQuestionFallback(text);
+      await speakQuestionFallback(text);
       return;
     }
     setIsSpeaking(true);
@@ -741,25 +928,262 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       const download = await apiDownload(
         `/api/v1/memory-sessions/${sessionId}/interview-question-audio`,
       );
+      if (!shouldContinue()) {
+        setIsSpeaking(false);
+        return;
+      }
       questionAudioBlobRef.current = download.blob;
       const url = URL.createObjectURL(download.blob);
       questionAudioUrlRef.current = url;
       const player = new Audio(url);
       questionAudioPlayerRef.current = player;
-      player.onended = () => setIsSpeaking(false);
-      player.onerror = () => {
-        setIsSpeaking(false);
-        speakQuestionFallback(text);
-      };
-      await player.play();
+      await new Promise<void>((resolve) => {
+        let fallbackStarted = false;
+        const complete = () => {
+          if (questionPlaybackResolveRef.current === complete) {
+            questionPlaybackResolveRef.current = null;
+          }
+          setIsSpeaking(false);
+          resolve();
+        };
+        const startFallback = () => {
+          if (fallbackStarted) return;
+          fallbackStarted = true;
+          player.onended = null;
+          player.onerror = null;
+          questionPlaybackResolveRef.current = null;
+          void speakQuestionFallback(text).then(resolve);
+        };
+        questionPlaybackResolveRef.current = complete;
+        player.onended = complete;
+        player.onerror = startFallback;
+        void player.play().catch(startFallback);
+      });
     } catch {
       setIsSpeaking(false);
-      speakQuestionFallback(text);
+      if (shouldContinue()) await speakQuestionFallback(text);
+    }
+  }
+
+  async function beginContinuousQuestion(
+    questionText: string,
+    sessionId: string,
+    preparedStream?: MediaStream,
+  ) {
+    setContinuousInterviewPhase("speaking");
+    await speakQuestion(questionText, sessionId, () => continuousInterviewRef.current);
+    if (!continuousInterviewRef.current) {
+      preparedStream?.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    const started = await startRecording({
+      autoSubmit: true,
+      sessionId,
+      preparedStream,
+    });
+    if (started) setNotice("正在听你讲。自然停顿没关系，说完后会自动保存并继续提问。");
+  }
+
+  async function startContinuousInterview() {
+    if (!detail || activeInterviewTurn) return;
+    setError("");
+    setNotice("");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setError("当前浏览器不支持连续采访。请使用最新版 Safari、Chrome 或 Edge，也可以继续手动录音。");
+      return;
+    }
+    try {
+      const preparedStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      continuousInterviewRef.current = true;
+      setContinuousInterviewActive(true);
+      await beginContinuousQuestion(
+        detail.session.question_text,
+        detail.session.id,
+        preparedStream,
+      );
+    } catch (value) {
+      continuousInterviewRef.current = false;
+      setContinuousInterviewActive(false);
+      setContinuousInterviewPhase("idle");
+      setError(recordingErrorMessage(value));
+    }
+  }
+
+  function extendThinkingTime() {
+    silenceExtensionUntilRef.current = Number.POSITIVE_INFINITY;
+    if (thinkingExtensionTimerRef.current !== null) {
+      window.clearTimeout(thinkingExtensionTimerRef.current);
+    }
+    thinkingExtensionTimerRef.current = window.setTimeout(() => {
+      silenceExtensionUntilRef.current = 0;
+      thinkingExtensionTimerRef.current = null;
+    }, THINKING_EXTENSION_MS);
+    setNotice("好的，慢慢想。接下来 15 秒不会因为停顿自动结束回答。");
+  }
+
+  async function replaceInterviewQuestionAndResume(sessionId: string) {
+    setBusy(true);
+    setContinuousInterviewPhase("processing");
+    setError("");
+    try {
+      const session = await api<MemorySession>(
+        `/api/v1/memory-sessions/${sessionId}/interview-question/replace`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      await loadSession(sessionId);
+      setNotice("已经换成一个更容易回答的问题。");
+      if (continuousInterviewRef.current) {
+        setBusy(false);
+        await beginContinuousQuestion(session.question_text, sessionId);
+      } else {
+        setContinuousInterviewPhase("idle");
+      }
+    } catch (value) {
+      continuousInterviewRef.current = false;
+      setContinuousInterviewActive(false);
+      setContinuousInterviewPhase("idle");
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function skipCurrentInterviewQuestion() {
+    if (!detail || busy) return;
+    if (isRecording && mediaRecorderRef.current?.state === "recording") {
+      recordingStopReasonRef.current = "skip";
+      mediaRecorderRef.current.stop();
+      return;
+    }
+    cancelQuestionPlayback();
+    void replaceInterviewQuestionAndResume(detail.session.id);
+  }
+
+  function applyFinalizedInterview(result: SessionDetail) {
+    continuousInterviewRef.current = false;
+    setContinuousInterviewActive(false);
+    setContinuousInterviewPhase("idle");
+    setDetail(result);
+    setCorrectedText(result.transcript?.corrected_text ?? "");
+    setSavedCorrectedText(result.transcript?.corrected_text ?? "");
+    setInterviewAnswerText("");
+    setInterviewCloudConsentChecked(false);
+    setNotice("采访已结束，提问和回答已经合并，AI 整理稿也已生成。需要时再修改，然后整理成故事。");
+  }
+
+  async function finishInterviewSession(sessionId: string) {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api<SessionDetail>(
+        `/api/v1/memory-sessions/${sessionId}/interview-finalize`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      applyFinalizedInterview(result);
+    } catch (value) {
+      setContinuousInterviewPhase("idle");
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function finishContinuousInterview() {
+    if (!detail || busy || detail.interview_turns.length === 0) return;
+    continuousInterviewRef.current = false;
+    setContinuousInterviewActive(false);
+    stopSilenceMonitoring();
+    if (isRecording && mediaRecorderRef.current?.state === "recording") {
+      recordingStopReasonRef.current = "finish";
+      mediaRecorderRef.current.stop();
+      return;
+    }
+    cancelQuestionPlayback();
+    void finishInterviewSession(detail.session.id);
+  }
+
+  async function uploadGuidedAudioFile(file: File, sessionId: string, finishAfter: boolean) {
+    setBusy(true);
+    setContinuousInterviewPhase("processing");
+    setError("");
+    const form = new FormData();
+    form.append("audio", file);
+    if (questionAudioBlobRef.current) {
+      form.append(
+        "question_audio",
+        new File([questionAudioBlobRef.current], "聆年提问.wav", { type: "audio/wav" }),
+      );
+    }
+    try {
+      const turn = await api<InterviewTurn>(
+        `/api/v1/memory-sessions/${sessionId}/interview-turns/audio`,
+        { method: "POST", body: form },
+      );
+      const result = await api<InterviewContinueResult>(
+        `/api/v1/memory-sessions/${sessionId}/interview-turns/${turn.id}/continue`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            corrected_answer_text: turn.corrected_answer_text,
+            allow_cloud_followup: interviewCloudConsentChecked,
+            actor_label: "本机家庭管理员",
+          }),
+        },
+      );
+      questionAudioBlobRef.current = null;
+      setInterviewShouldEnd(result.should_end);
+      const updated = await loadSession(sessionId);
+      setInterviewAnswerText("");
+      setAudioFile(null);
+      if (audioPreviewUrlRef.current) URL.revokeObjectURL(audioPreviewUrlRef.current);
+      audioPreviewUrlRef.current = null;
+      setAudioPreview(null);
+      setRecordingSeconds(0);
+
+      if (finishAfter) {
+        const finalized = await api<SessionDetail>(
+          `/api/v1/memory-sessions/${sessionId}/interview-finalize`,
+          { method: "POST", body: JSON.stringify({}) },
+        );
+        applyFinalizedInterview(finalized);
+        return;
+      }
+
+      if (updated.interview_turns.length >= 12) {
+        continuousInterviewRef.current = false;
+        setContinuousInterviewActive(false);
+        setContinuousInterviewPhase("idle");
+        setNotice("这次已经聊满 12 轮，内容都已保存。可以结束采访并查看完整整理稿。");
+        return;
+      }
+
+      setNotice(`${result.acknowledgement} 正在准备下一问。`);
+      if (continuousInterviewRef.current) {
+        setBusy(false);
+        await beginContinuousQuestion(result.next_question, sessionId);
+      } else {
+        setContinuousInterviewPhase("idle");
+        await speakQuestion(result.next_question, sessionId);
+      }
+    } catch (value) {
+      continuousInterviewRef.current = false;
+      setContinuousInterviewActive(false);
+      setContinuousInterviewPhase("idle");
+      showError(value);
+    } finally {
+      setBusy(false);
     }
   }
 
   function discardAudio() {
-    if (audioPreview) URL.revokeObjectURL(audioPreview);
+    if (audioPreviewUrlRef.current) URL.revokeObjectURL(audioPreviewUrlRef.current);
+    audioPreviewUrlRef.current = null;
     setAudioPreview(null);
     setAudioFile(null);
     setRecordingSeconds(0);
@@ -768,56 +1192,26 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
 
   async function uploadAudio() {
     if (!detail || !audioFile) return;
+    if (detail.session.interview_mode === "guided_voice" && detail.session.status === "INTERVIEWING") {
+      await uploadGuidedAudioFile(audioFile, detail.session.id, false);
+      return;
+    }
     setBusy(true);
     setError("");
     const form = new FormData();
     form.append("audio", audioFile);
     try {
-      if (detail.session.interview_mode === "guided_voice" && detail.session.status === "INTERVIEWING") {
-        if (questionAudioBlobRef.current) {
-          form.append(
-            "question_audio",
-            new File([questionAudioBlobRef.current], "聆年提问.wav", { type: "audio/wav" }),
-          );
-        }
-        const turn = await api<InterviewTurn>(
-          `/api/v1/memory-sessions/${detail.session.id}/interview-turns/audio`,
-          { method: "POST", body: form },
-        );
-        const result = await api<InterviewContinueResult>(
-          `/api/v1/memory-sessions/${detail.session.id}/interview-turns/${turn.id}/continue`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              corrected_answer_text: turn.corrected_answer_text,
-              allow_cloud_followup: interviewCloudConsentChecked,
-              actor_label: "本机家庭管理员",
-            }),
-          },
-        );
-        questionAudioBlobRef.current = null;
-        setInterviewShouldEnd(result.should_end);
-        await loadSession(detail.session.id);
-        setInterviewAnswerText("");
-        speakQuestion(result.next_question, detail.session.id);
-      } else {
-        await api(`/api/v1/memory-sessions/${detail.session.id}/audio`, {
-          method: "POST",
-          body: form,
-        });
-      }
-      if (!(detail.session.interview_mode === "guided_voice" && detail.session.status === "INTERVIEWING")) {
-        await loadSession(detail.session.id);
-      }
-      if (audioPreview) URL.revokeObjectURL(audioPreview);
+      await api(`/api/v1/memory-sessions/${detail.session.id}/audio`, {
+        method: "POST",
+        body: form,
+      });
+      await loadSession(detail.session.id);
+      if (audioPreviewUrlRef.current) URL.revokeObjectURL(audioPreviewUrlRef.current);
+      audioPreviewUrlRef.current = null;
       setAudioPreview(null);
       setAudioFile(null);
       setRecordingSeconds(0);
-      setNotice(
-        detail.session.interview_mode === "guided_voice"
-          ? "回答已经保存并自动进入下一问。"
-          : "原始音频已安全保留，可以开始转写。 ",
-      );
+      setNotice("原始音频已安全保留，可以开始转写。 ");
     } catch (value) {
       showError(value);
     } finally {
@@ -845,6 +1239,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       setInterviewAnswerText("");
       setInterviewShouldEnd(result.should_end);
       setAudioFile(null);
+      if (audioPreviewUrlRef.current) URL.revokeObjectURL(audioPreviewUrlRef.current);
+      audioPreviewUrlRef.current = null;
       setAudioPreview(null);
       setNotice(`${result.acknowledgement} 已准备好下一问。`);
       speakQuestion(result.next_question, detail.session.id);
@@ -876,6 +1272,10 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
 
   async function finalizeInterview() {
     if (!detail) return;
+    continuousInterviewRef.current = false;
+    setContinuousInterviewActive(false);
+    setContinuousInterviewPhase("idle");
+    stopSilenceMonitoring();
     setBusy(true);
     setError("");
     try {
@@ -889,18 +1289,12 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           body: JSON.stringify({ corrected_answer_text: interviewAnswerText.trim() }),
         });
       }
-      window.speechSynthesis?.cancel();
-      setIsSpeaking(false);
+      cancelQuestionPlayback();
       const result = await api<SessionDetail>(
         `/api/v1/memory-sessions/${detail.session.id}/interview-finalize`,
         { method: "POST", body: JSON.stringify({}) },
       );
-      setDetail(result);
-      setCorrectedText(result.transcript?.corrected_text ?? "");
-      setSavedCorrectedText(result.transcript?.corrected_text ?? "");
-      setInterviewAnswerText("");
-      setInterviewCloudConsentChecked(false);
-      setNotice("采访已结束，提问和回答已经合并，AI 整理稿也已生成。需要时再修改，然后整理成故事。");
+      applyFinalizedInterview(result);
     } catch (value) {
       showError(value);
     } finally {
@@ -1261,7 +1655,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           {profiles.length > 0 && (
             <label className="profile-switcher">
               <span className="profile-switcher-label"><i aria-hidden="true">{selectedProfile?.preferred_name.slice(0, 1) ?? "家"}</i><b>当前人物档案</b></span>
-              <select value={selectedProfileId} onChange={(event) => { setSelectedProfileId(event.target.value); setCloudConsentChecked(false); }}>
+              <select disabled={continuousInterviewActive || isRecording} value={selectedProfileId} onChange={(event) => { setSelectedProfileId(event.target.value); setCloudConsentChecked(false); }}>
                 {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.display_name}</option>)}
               </select>
             </label>
@@ -1574,7 +1968,11 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           </div>
           <div className="interview-auto-status">
             <CheckCircle2 size={17} aria-hidden="true" />
-            <span>{interviewCloudConsentChecked ? "AI 自动整理已开启：说完后直接进入下一问" : "自动流程已开启：本机整理后直接进入下一问"}</span>
+            <span>{continuousInterviewActive
+              ? "连续采访进行中：聆年会自动提问、收音、整理并继续"
+              : interviewCloudConsentChecked
+                ? "AI 自动整理已开启：开始后不用逐段确认"
+                : "本机自动整理已开启：开始后不用逐段确认"}</span>
           </div>
 
           {existingTrigger && (
@@ -1601,20 +1999,55 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               <span>聆年想问</span>
               <blockquote>{detail.session.question_text}</blockquote>
             </div>
-            <button type="button" className="button secondary speak-button" disabled={busy || isRecording} onClick={() => speakQuestion(detail.session.question_text)}>
-              <Volume2 size={17} />{isSpeaking ? "正在朗读" : "再听一遍"}
+            <button type="button" className="button secondary speak-button" disabled={busy || isRecording || continuousInterviewActive} onClick={() => speakQuestion(detail.session.question_text)}>
+              <Volume2 size={17} />{isSpeaking ? "正在提问" : "再听一遍"}
             </button>
           </div>
 
           {!activeInterviewTurn ? (
             <div className="interview-answer-panel">
-              <div className="answer-instruction"><Mic size={20} /><div><strong>请慢慢回答</strong><p>讲完一小段就停下来，聆年会先转成文字，再问下一题。</p></div></div>
-              <div className="button-row interview-record-actions">
-                {!isRecording ? <button type="button" className="button primary" onClick={startRecording} disabled={busy}><Mic size={18} />开始回答</button> : <button type="button" className="button recording" onClick={stopRecording}>停止录音</button>}
-                <label className={"button secondary file-button" + (isRecording ? " disabled" : "")}>选择已有音频<input aria-label="选择已有音频" type="file" accept="audio/*" disabled={busy || isRecording} onChange={(event) => event.target.files?.[0] && setPreviewFile(event.target.files[0])} /></label>
-                <button type="button" className="button quiet" disabled={busy || isRecording || detail.interview_turns.length >= 12} onClick={replaceInterviewQuestion}><RotateCcw size={16} />换个问题</button>
-              </div>
-              {isRecording && <div className="recording-live" role="status" aria-live="polite"><span aria-hidden="true" /><strong>正在录音 {formatRecordingDuration(recordingSeconds)}</strong><small>讲完后请点“停止录音”</small></div>}
+              {!continuousInterviewActive ? (
+                <>
+                  <div className="answer-instruction"><Mic size={20} /><div><strong>一次开始，后面只管慢慢讲</strong><p>聆年问完会自动收音；听到你说完后，会保存、整理并继续问下一题。</p></div></div>
+                  <button type="button" className="button primary continuous-start-button" onClick={startContinuousInterview} disabled={busy || Boolean(audioFile)}>
+                    <Mic size={19} />{detail.interview_turns.length ? "继续连续采访" : "开始连续采访"}
+                  </button>
+                  <div className="manual-recording-options">
+                    <span>也可以手动完成这一题</span>
+                    <div className="button-row interview-record-actions">
+                      {!isRecording ? <button type="button" className="button secondary" onClick={() => startRecording()} disabled={busy}><Mic size={18} />手动录一段</button> : <button type="button" className="button recording" onClick={stopRecording}>停止录音</button>}
+                      <label className={"button secondary file-button" + (isRecording ? " disabled" : "")}>选择已有音频<input aria-label="选择已有音频" type="file" accept="audio/*" disabled={busy || isRecording} onChange={(event) => event.target.files?.[0] && setPreviewFile(event.target.files[0])} /></label>
+                      <button type="button" className="button quiet" disabled={busy || isRecording || detail.interview_turns.length >= 12} onClick={replaceInterviewQuestion}><RotateCcw size={16} />这题不想回答</button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className={`continuous-interview-live phase-${continuousInterviewPhase}`} role="status" aria-live="polite">
+                  <div className="continuous-pulse" aria-hidden="true"><span /></div>
+                  <div>
+                    <strong>{continuousInterviewPhase === "speaking"
+                      ? "聆年正在提问"
+                      : continuousInterviewPhase === "processing"
+                        ? "正在保存并整理这段回答"
+                        : interviewHeardVoice
+                          ? "正在听你讲"
+                          : "可以开始说了"}</strong>
+                    <p>{continuousInterviewPhase === "listening"
+                      ? `录音 ${formatRecordingDuration(recordingSeconds)} · 自然停顿没关系`
+                      : continuousInterviewPhase === "processing"
+                        ? "处理完成后会自动继续下一问"
+                        : "问题说完后会自动开始录音"}</p>
+                  </div>
+                  {continuousInterviewPhase === "listening" && (
+                    <div className="continuous-controls">
+                      <button type="button" className="button secondary" onClick={extendThinkingTime}>我还在想</button>
+                      <button type="button" className="button primary" onClick={stopRecording}>我说完了</button>
+                      <button type="button" className="button quiet" onClick={skipCurrentInterviewQuestion}>这题不想回答</button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {isRecording && !continuousInterviewActive && <div className="recording-live" role="status" aria-live="polite"><span aria-hidden="true" /><strong>正在录音 {formatRecordingDuration(recordingSeconds)}</strong><small>讲完后请点“停止录音”</small></div>}
               {audioPreview && <audio controls src={audioPreview} className="audio-player" />}
               {audioFile && <div className="file-line"><span>{audioFile.name}</span><div className="button-row compact-row"><button type="button" className="button quiet danger" disabled={busy} onClick={discardAudio}>重新录</button><button type="button" className="button primary" disabled={busy || isRecording} onClick={uploadAudio}>保存回答，自动继续</button></div></div>}
             </div>
@@ -1634,7 +2067,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           )}
 
           {(interviewShouldEnd || detail.interview_turns.length >= 7) && <p className="interview-rest-note">已经聊了不少内容。现在结束也完全可以，记忆以后还能接着补。</p>}
-          {detail.interview_turns.length > 0 && !activeInterviewTurn && <button type="button" className="button quiet finish-interview" disabled={busy || isRecording} onClick={finalizeInterview}>结束这次采访，查看完整整理稿</button>}
+          {detail.interview_turns.length > 0 && !activeInterviewTurn && <button type="button" className="button quiet finish-interview" disabled={busy || continuousInterviewPhase === "processing"} onClick={continuousInterviewActive ? finishContinuousInterview : finalizeInterview}>结束这次采访，查看完整整理稿</button>}
           <button type="button" className="button quiet danger interview-skip" disabled={busy || isRecording} onClick={skipSession}>放弃整次采访并清理临时内容</button>
         </section>
       )}
@@ -1658,7 +2091,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               <h3>留下声音</h3>
               <p className="hint">开始后请慢慢讲。录音停止前只暂存在当前浏览器，点击“确认上传”后才会保存到本机档案。</p>
               <div className="button-row">
-                {!isRecording ? <button type="button" className="button secondary" onClick={startRecording} disabled={busy}>开始录音</button> : <button type="button" className="button recording" onClick={stopRecording}>停止录音</button>}
+                {!isRecording ? <button type="button" className="button secondary" onClick={() => startRecording()} disabled={busy}>开始录音</button> : <button type="button" className="button recording" onClick={stopRecording}>停止录音</button>}
                 <label className={`button secondary file-button${isRecording ? " disabled" : ""}`}>选择已有音频<input aria-label="选择已有音频" type="file" accept="audio/*" disabled={busy || isRecording} onChange={(event) => event.target.files?.[0] && setPreviewFile(event.target.files[0])} /></label>
               </div>
               {isRecording && <div className="recording-live" role="status" aria-live="polite"><span aria-hidden="true" /><strong>正在录音 {formatRecordingDuration(recordingSeconds)}</strong><small>讲完后请点“停止录音”</small></div>}
