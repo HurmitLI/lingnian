@@ -197,3 +197,34 @@ def test_owner_creates_one_time_invitation_for_a_member(client, monkeypatch):
     )
     assert logged_in.status_code == 200
     assert client.delete(f"/api/v1/auth/invitations/{invitation_id}").status_code == 204
+
+
+def test_formal_mode_disables_local_keychain_and_whole_archive_backup(client, monkeypatch):
+    enable_formal_auth(monkeypatch)
+    registered = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": "family-invite-2026",
+            "username": "cloud.owner",
+            "display_name": "云端管理员",
+            "password": "cloud-secure-password",
+            "family_name": "云端家庭",
+        },
+    )
+    assert registered.status_code == 201
+    family_id = registered.json()["family_id"]
+
+    security = client.get(f"/api/v1/families/{family_id}/security")
+    assert security.status_code == 200
+    assert security.json()["encryption_status"] == "active_encrypted"
+
+    initialize = client.post(
+        f"/api/v1/families/{family_id}/security/initialize",
+        json={"actor_label": "管理员"},
+    )
+    assert initialize.status_code == 403
+    assert initialize.json()["error"]["code"] == "CLOUD_SECURITY_MANAGED"
+
+    backups = client.get("/api/v1/backups")
+    assert backups.status_code == 403
+    assert backups.json()["error"]["code"] == "CLOUD_SECURITY_MANAGED"

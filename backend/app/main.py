@@ -19,13 +19,21 @@ from app.core.errors import (
 )
 from app.services.keepsake import recover_interrupted_keepsakes
 from app.services.auth import authenticate_session, current_auth
+from app.services.database_snapshot import (
+    DatabaseSnapshotError,
+    persist_configured_database_snapshot,
+    restore_configured_database_snapshot,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    get_settings().validate_formal_runtime()
+    settings = get_settings()
+    settings.validate_formal_runtime()
+    restore_configured_database_snapshot(settings)
     initialize_database()
     recover_interrupted_keepsakes()
+    persist_configured_database_snapshot(settings)
     yield
 
 
@@ -74,6 +82,29 @@ async def formal_auth_middleware(request: Request, call_next):
         return await call_next(request)
     finally:
         current_auth.reset(context_token)
+
+
+@app.middleware("http")
+async def formal_database_snapshot_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if (
+        settings.formal_auth_required
+        and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        and response.status_code < 400
+    ):
+        try:
+            persist_configured_database_snapshot(settings)
+        except DatabaseSnapshotError:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "code": "DATABASE_SNAPSHOT_FAILED",
+                        "message": "本次修改未能安全写入云端，请稍后重试。",
+                    }
+                },
+            )
+    return response
 
 app.include_router(auth_router)
 app.include_router(router)

@@ -997,6 +997,15 @@ def family_security_read(
     )
 
 
+def require_local_archive_controls() -> None:
+    if get_settings().formal_auth_required:
+        raise DomainError(
+            "CLOUD_SECURITY_MANAGED",
+            "正式云端空间由部署环境统一管理加密与持久备份。",
+            403,
+        )
+
+
 @router.get("/families/{family_id}/security", response_model=FamilySecurityRead)
 def get_family_security(
     family_id: str,
@@ -1032,6 +1041,7 @@ def initialize_family_security(
     db: Session = Depends(get_db),
     secret_store: SecretStore = Depends(get_secret_store),
 ) -> FamilySecurityRead:
+    require_local_archive_controls()
     family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
     metadata = db.scalar(
         select(ArchiveSecurity).where(ArchiveSecurity.family_id == family.id)
@@ -1073,6 +1083,7 @@ def create_recovery_package(
     db: Session = Depends(get_db),
     secret_store: SecretStore = Depends(get_secret_store),
 ) -> Response:
+    require_local_archive_controls()
     family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
     metadata = db.scalar(
         select(ArchiveSecurity).where(ArchiveSecurity.family_id == family.id)
@@ -1127,6 +1138,7 @@ async def verify_recovery_package(
     db: Session = Depends(get_db),
     secret_store: SecretStore = Depends(get_secret_store),
 ) -> FamilySecurityRead:
+    require_local_archive_controls()
     family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
     metadata = db.scalar(
         select(ArchiveSecurity).where(ArchiveSecurity.family_id == family.id)
@@ -1178,6 +1190,7 @@ def activate_family_security(
     db: Session = Depends(get_db),
     secret_store: SecretStore = Depends(get_secret_store),
 ) -> FamilySecurityRead:
+    require_local_archive_controls()
     family = require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
     metadata = db.scalar(
         select(ArchiveSecurity).where(ArchiveSecurity.family_id == family.id)
@@ -1241,6 +1254,7 @@ def create_local_backup(
     payload: BackupCreate,
     db: Session = Depends(get_db),
 ) -> BackupManifest:
+    require_local_archive_controls()
     context = current_auth.get()
     unsafe_families = db.scalars(
         select(FamilyArchive).where(
@@ -1286,6 +1300,7 @@ def create_local_backup(
 
 @router.get("/backups", response_model=list[BackupRead])
 def list_local_backups(db: Session = Depends(get_db)) -> list[BackupManifest]:
+    require_local_archive_controls()
     context = current_auth.get()
     query = select(BackupManifest)
     if context is not None:
@@ -1301,6 +1316,7 @@ def list_local_backups(db: Session = Depends(get_db)) -> list[BackupManifest]:
 def download_local_backup(
     backup_id: str, db: Session = Depends(get_db)
 ) -> FileResponse:
+    require_local_archive_controls()
     backup = require(
         db, BackupManifest, backup_id, "BACKUP_NOT_FOUND", "没有找到这份本机备份。"
     )
@@ -1324,6 +1340,7 @@ def download_local_backup(
 def verify_backup_copy(
     backup_id: str, db: Session = Depends(get_db)
 ) -> BackupManifest:
+    require_local_archive_controls()
     backup = require(
         db, BackupManifest, backup_id, "BACKUP_NOT_FOUND", "没有找到这份本机备份。"
     )
@@ -1359,6 +1376,7 @@ async def rehearse_backup_recovery(
     recovery_passphrase: str = Form(..., min_length=12, max_length=200),
     db: Session = Depends(get_db),
 ) -> BackupManifest:
+    require_local_archive_controls()
     require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
     backup = require(
         db, BackupManifest, backup_id, "BACKUP_NOT_FOUND", "没有找到这份本机备份。"

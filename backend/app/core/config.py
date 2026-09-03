@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     formal_family_id: str | None = None
     formal_archive_master_key: SecretStr | None = None
     formal_persistent_storage_mount: Path | None = None
+    formal_database_snapshot_dir: Path | None = None
     auth_cookie_name: str = "lingnian_session"
     auth_session_days: int = Field(default=30, ge=1, le=180)
     auth_cookie_secure: bool = False
@@ -114,8 +115,20 @@ class Settings(BaseSettings):
                 raise RuntimeError("ASSET_ROOT must be inside the persistent storage mount")
             if self.resolved_database_url.startswith("sqlite:///"):
                 database_path = Path(self.resolved_database_url.removeprefix("sqlite:///"))
-                if not database_path.resolve().is_relative_to(resolved_mount):
-                    raise RuntimeError("SQLite DATABASE_URL must be inside the persistent storage mount")
+                database_is_persistent = database_path.resolve().is_relative_to(
+                    resolved_mount
+                )
+                snapshot_dir = self.formal_database_snapshot_dir
+                snapshot_is_persistent = (
+                    snapshot_dir is not None
+                    and snapshot_dir.is_absolute()
+                    and snapshot_dir.resolve().is_relative_to(resolved_mount)
+                )
+                if not database_is_persistent and not snapshot_is_persistent:
+                    raise RuntimeError(
+                        "SQLite DATABASE_URL must be inside the persistent storage mount "
+                        "or FORMAL_DATABASE_SNAPSHOT_DIR must point inside that mount"
+                    )
 
 
 @lru_cache
