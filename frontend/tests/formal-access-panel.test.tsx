@@ -16,6 +16,19 @@ describe("正式家庭访问管理", () => {
       if (path === "/api/v1/auth/me") {
         return Promise.resolve({ display_name: "管理员", family_name: "我的家庭", role: "owner" });
       }
+      if (path === "/api/v1/auth/invitations" && options?.method === "POST") {
+        const request = JSON.parse(String(options.body));
+        return Promise.resolve({
+          id: "invite-interview",
+          invitation_code: "LN-interview-test",
+          expires_at: "2026-09-10T10:00:00Z",
+          max_uses: 1,
+          purpose: request.elder_id ? "interview" : "family_access",
+          elder_id: request.elder_id ?? null,
+          narrator_person_id: request.narrator_person_id ?? null,
+          life_stage: request.life_stage ?? null,
+        });
+      }
       if (path === "/api/v1/auth/invitations") return Promise.resolve([]);
       if (path === "/api/v1/auth/members") {
         return Promise.resolve([
@@ -66,5 +79,50 @@ describe("正式家庭访问管理", () => {
         expect.objectContaining({ method: "POST" }),
       );
     });
+  });
+
+  it("管理员可以指定人物、讲述人和话题生成采访邀请", async () => {
+    render(<FormalAccessPanel
+      profiles={[{
+        id: "elder-1",
+        person_id: "person-elder",
+        family_id: "family-1",
+        data_classification: "authorized_sensitive",
+        display_name: "测试外公",
+        preferred_name: "外公",
+        birth_year: null,
+        birth_era: null,
+        native_place: null,
+        occupation_summary: null,
+        health_notes: null,
+      }]}
+      people={[{
+        id: "person-mother",
+        family_id: "family-1",
+        role: "family_member",
+        display_name: "妈妈",
+        created_at: "2026-09-03T10:00:00Z",
+      }]}
+    />);
+
+    expect(await screen.findByText("邀请家人补充一段回忆")).toBeVisible();
+    fireEvent.change(screen.getByLabelText("先聊哪一段"), { target: { value: "工作" } });
+    fireEvent.click(screen.getByRole("button", { name: "生成采访邀请" }));
+
+    await waitFor(() => {
+      expect(apiMock).toHaveBeenCalledWith(
+        "/api/v1/auth/invitations",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            expires_in_days: 7,
+            elder_id: "elder-1",
+            narrator_person_id: "person-mother",
+            life_stage: "工作",
+          }),
+        }),
+      );
+    });
+    expect(await screen.findByText("LN-interview-test")).toBeVisible();
   });
 });

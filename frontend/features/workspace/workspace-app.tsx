@@ -282,6 +282,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               }
               setDraftTitle(sessionResult.story_draft?.title ?? "");
               setDraftBody(sessionResult.story_draft?.body ?? "");
+              if (params.get("source") === "family-invite") {
+                setNotice("你已进入家人邀请的采访。这次回答会保存到同一个家庭档案，结束后再由家人确认归档。");
+              }
             }
           } catch {
             window.localStorage.removeItem("niannian.sessionId");
@@ -2000,7 +2003,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         </section>
       )}
 
-      {!initialLoading && view === "family" && process.env.NEXT_PUBLIC_FORMAL_AUTH_REQUIRED === "true" && <FormalAccessPanel />}
+      {!initialLoading && view === "family" && process.env.NEXT_PUBLIC_FORMAL_AUTH_REQUIRED === "true" && (
+        <FormalAccessPanel profiles={currentFamilyProfiles} people={familyPeople} />
+      )}
       {!initialLoading && view === "family" && process.env.NEXT_PUBLIC_FORMAL_AUTH_REQUIRED !== "true" && <SecurityPanel key={selectedProfile?.family_id ?? "no-family"} familyId={selectedProfile?.family_id ?? null} />}
 
       {!initialLoading && view === "record" && !detail && <section className="card entry-card">

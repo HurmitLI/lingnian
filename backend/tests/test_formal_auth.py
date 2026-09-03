@@ -7,7 +7,15 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.models import AuthSession, ElderProfile, FamilyArchive, Person, UserAccount
+from app.models import (
+    AuthSession,
+    ElderProfile,
+    FamilyArchive,
+    InterviewAssignment,
+    MemorySession,
+    Person,
+    UserAccount,
+)
 from app.services.request_limits import auth_attempt_limiter
 from app.services.security import get_secret_store
 
@@ -236,6 +244,105 @@ def test_owner_creates_one_time_invitation_for_a_member(client, monkeypatch):
         json={"username": "member.account", "password": "member-secure-password"},
     )
     assert revoked_member.status_code == 403
+
+
+def test_interview_invitation_starts_assigned_family_interview(client, db, monkeypatch):
+    enable_formal_auth(monkeypatch)
+    owner = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": "family-invite-2026",
+            "username": "interview.owner",
+            "display_name": "管理员",
+            "password": "owner-secure-password",
+            "family_name": "我们的家",
+        },
+    )
+    assert owner.status_code == 201
+    family_id = owner.json()["family_id"]
+    elder = client.post(
+        "/api/v1/elder-profiles",
+        json={
+            "family_id": family_id,
+            "display_name": "外公",
+            "preferred_name": "外公",
+        },
+    )
+    assert elder.status_code == 201
+    narrator = client.post(
+        f"/api/v1/families/{family_id}/people",
+        json={"display_name": "妈妈", "role": "family_member"},
+    )
+    assert narrator.status_code == 201
+
+    incomplete = client.post(
+        "/api/v1/auth/invitations",
+        json={"elder_id": elder.json()["id"], "life_stage": "童年"},
+    )
+    assert incomplete.status_code == 422
+    assert incomplete.json()["error"]["code"] == "INTERVIEW_INVITATION_INCOMPLETE"
+
+    created = client.post(
+        "/api/v1/auth/invitations",
+        json={
+            "expires_in_days": 7,
+            "elder_id": elder.json()["id"],
+            "narrator_person_id": narrator.json()["id"],
+            "life_stage": "童年",
+        },
+    )
+    assert created.status_code == 201
+    invitation = created.json()
+    assert invitation["purpose"] == "interview"
+    assert invitation["life_stage"] == "童年"
+
+    client.post("/api/v1/auth/logout")
+    member = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": invitation["invitation_code"],
+            "username": "invited.narrator",
+            "display_name": "受邀讲述人",
+            "password": "member-secure-password",
+        },
+    )
+    assert member.status_code == 201
+    next_path = member.json()["next_path"]
+    assert next_path.startswith(f"/record?elder={elder.json()['id']}&session=")
+    session_id = next_path.split("session=", 1)[1].split("&", 1)[0]
+
+    detail = client.get(f"/api/v1/memory-sessions/{session_id}")
+    assert detail.status_code == 200
+    assert detail.json()["session"]["interview_mode"] == "guided_voice"
+    assert detail.json()["session"]["narrator_person_id"] == narrator.json()["id"]
+    assert detail.json()["session"]["life_stage"] == "童年"
+    assert detail.json()["session"]["status"] == "INTERVIEWING"
+
+    assignment = db.scalar(
+        select(InterviewAssignment).where(InterviewAssignment.session_id == session_id)
+    )
+    assert assignment is not None
+    assert assignment.status == "claimed"
+    assert db.get(MemorySession, session_id) is not None
+
+    client.post("/api/v1/auth/logout")
+    resumed = client.post(
+        "/api/v1/auth/login",
+        json={"username": "invited.narrator", "password": "member-secure-password"},
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["next_path"] == next_path
+
+    client.post("/api/v1/auth/logout")
+    assert client.post(
+        "/api/v1/auth/login",
+        json={"username": "interview.owner", "password": "owner-secure-password"},
+    ).status_code == 200
+    listed = client.get("/api/v1/auth/invitations")
+    listed_item = next(item for item in listed.json() if item["id"] == invitation["id"])
+    assert listed_item["purpose"] == "interview"
+    assert listed_item["session_id"] == session_id
+    assert listed_item["interview_status"] == "INTERVIEWING"
 
 
 def test_account_can_change_password_and_other_sessions_are_revoked(client, monkeypatch):

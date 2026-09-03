@@ -128,6 +128,33 @@ class FamilyInvite(TimestampMixin, Base):
     family: Mapped[FamilyArchive] = relationship(back_populates="invitations")
 
 
+class InterviewAssignment(TimestampMixin, Base):
+    __tablename__ = "interview_assignments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_invite_id: Mapped[str] = mapped_column(
+        ForeignKey("family_invites.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    family_id: Mapped[str] = mapped_column(
+        ForeignKey("family_archives.id", ondelete="CASCADE"), index=True
+    )
+    elder_id: Mapped[str] = mapped_column(
+        ForeignKey("elder_profiles.id", ondelete="CASCADE"), index=True
+    )
+    narrator_person_id: Mapped[str | None] = mapped_column(
+        ForeignKey("people.id", ondelete="SET NULL"), index=True
+    )
+    assigned_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), index=True
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("memory_sessions.id", ondelete="SET NULL"), unique=True, index=True
+    )
+    life_stage: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    claimed_at: Mapped[datetime | None] = mapped_column()
+
+
 class Person(TimestampMixin, Base):
     __tablename__ = "people"
 

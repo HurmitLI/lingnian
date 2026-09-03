@@ -16,12 +16,23 @@ from app.core.errors import DomainError
 from app.models import (
     ArchiveSecurity,
     AuthSession,
+    ElderProfile,
     FamilyArchive,
     FamilyInvite,
     FamilyMembership,
+    InterviewAssignment,
+    MemorySession,
+    Person,
     UserAccount,
 )
-from app.services.security import SecretStore, get_family_key_manager, get_secret_store
+from app.services.memory import select_question
+from app.services.security import (
+    TEXT_PLACEHOLDER,
+    SecretStore,
+    get_family_key_manager,
+    get_secret_store,
+    protect_field,
+)
 from app.services.request_limits import auth_attempt_key, auth_attempt_limiter
 from app.services.auth import (
     create_session,
@@ -35,6 +46,7 @@ from app.services.auth import (
 
 
 router = APIRouter(prefix="/api/v1/auth", tags=["formal-auth"])
+LIFE_STAGES = {"童年", "求学", "工作", "婚恋", "育儿", "价值观", "老物件"}
 
 
 class RegisterRequest(BaseModel):
@@ -57,10 +69,14 @@ class AuthRead(BaseModel):
     family_id: str
     family_name: str
     role: str
+    next_path: str | None = None
 
 
 class InvitationCreate(BaseModel):
     expires_in_days: int = Field(default=7, ge=1, le=30)
+    elder_id: str | None = None
+    narrator_person_id: str | None = None
+    life_stage: str | None = Field(default=None, max_length=40)
 
 
 class InvitationCreated(BaseModel):
@@ -68,6 +84,10 @@ class InvitationCreated(BaseModel):
     invitation_code: str
     expires_at: datetime
     max_uses: int
+    purpose: str
+    elder_id: str | None = None
+    narrator_person_id: str | None = None
+    life_stage: str | None = None
 
 
 class InvitationRead(BaseModel):
@@ -77,6 +97,12 @@ class InvitationRead(BaseModel):
     use_count: int
     revoked: bool
     status: str
+    purpose: str
+    elder_id: str | None = None
+    narrator_person_id: str | None = None
+    life_stage: str | None = None
+    session_id: str | None = None
+    interview_status: str | None = None
 
 
 class MemberRead(BaseModel):
@@ -125,6 +151,26 @@ def current_owner() -> tuple[str, str]:
     return context.user_id, context.family_id
 
 
+def next_interview_path(db: Session, user_id: str) -> str | None:
+    assignment = db.scalar(
+        select(InterviewAssignment)
+        .join(MemorySession, MemorySession.id == InterviewAssignment.session_id)
+        .where(
+            InterviewAssignment.assigned_user_id == user_id,
+            InterviewAssignment.status == "claimed",
+            MemorySession.status.not_in({"ARCHIVED", "SKIPPED"}),
+        )
+        .order_by(InterviewAssignment.claimed_at.desc())
+        .limit(1)
+    )
+    if assignment is None or assignment.session_id is None:
+        return None
+    return (
+        f"/record?elder={assignment.elder_id}"
+        f"&session={assignment.session_id}&source=family-invite"
+    )
+
+
 def auth_read(db: Session, user: UserAccount, membership: FamilyMembership) -> AuthRead:
     family = db.get(FamilyArchive, membership.family_id)
     if family is None:
@@ -136,7 +182,87 @@ def auth_read(db: Session, user: UserAccount, membership: FamilyMembership) -> A
         family_id=family.id,
         family_name=family.display_name,
         role=membership.role,
+        next_path=next_interview_path(db, user.id),
     )
+
+
+def assignment_for_invite(db: Session, invitation_id: str) -> InterviewAssignment | None:
+    return db.scalar(
+        select(InterviewAssignment).where(
+            InterviewAssignment.family_invite_id == invitation_id
+        )
+    )
+
+
+def create_assigned_interview_session(
+    db: Session,
+    *,
+    assignment: InterviewAssignment,
+    family: FamilyArchive,
+    user: UserAccount,
+    secret_store: SecretStore,
+) -> MemorySession:
+    elder = db.get(ElderProfile, assignment.elder_id)
+    narrator = db.get(Person, assignment.narrator_person_id)
+    if (
+        elder is None
+        or narrator is None
+        or elder.person.family_id != family.id
+        or narrator.family_id != family.id
+    ):
+        raise DomainError(
+            "INTERVIEW_INVITATION_CONTEXT_INVALID",
+            "这份采访邀请已失效，请联系家庭管理员重新生成。",
+            409,
+        )
+    try:
+        question = select_question(
+            db,
+            elder_id=elder.id,
+            life_stage=assignment.life_stage,
+            topic_confirmed=True,
+        )
+    except ValueError as exc:
+        if str(exc) == "TOPIC_BLOCKED_BY_PREFERENCE":
+            raise DomainError(
+                "TOPIC_BLOCKED_BY_PREFERENCE",
+                "这位家人已选择不再聊这个话题。",
+                409,
+            ) from exc
+        raise
+    except Exception as exc:
+        raise DomainError(
+            "QUESTION_GENERATION_FAILED",
+            "暂时没能生成采访问题，请联系家庭管理员重试。",
+            503,
+        ) from exc
+    session = MemorySession(
+        elder_id=elder.id,
+        narrator_person_id=narrator.id,
+        interview_mode="guided_voice",
+        life_stage=assignment.life_stage,
+        prompt_id=question.prompt_id,
+        question_text=question.question_text,
+        status="INTERVIEWING",
+    )
+    db.add(session)
+    db.flush()
+    master_key, _ = get_family_key_manager(family.id, secret_store).get_or_create()
+    protect_field(
+        db,
+        family=family,
+        object_type=session.__tablename__,
+        object_id=session.id,
+        field_name="question_text",
+        value=question.question_text,
+        master_key=master_key,
+    )
+    session.question_text = TEXT_PLACEHOLDER
+    assignment.assigned_user_id = user.id
+    assignment.session_id = session.id
+    assignment.status = "claimed"
+    assignment.claimed_at = datetime.now(UTC).replace(tzinfo=None)
+    return session
 
 
 @router.post("/register", response_model=AuthRead, status_code=201)
@@ -159,6 +285,7 @@ def register(
     family = None
     membership_role = "owner" if account_count == 0 else "member"
     pending_invitation = None
+    pending_assignment = None
     if account_count == 0:
         expected = settings.formal_invite_code.get_secret_value() if settings.formal_invite_code else ""
         if not hmac.compare_digest(payload.invitation_code.strip(), expected.strip()):
@@ -186,6 +313,7 @@ def register(
             raise DomainError("INVITATION_INVALID", "邀请码不正确或已经失效。", 403)
         family = pending_invitation.family
         membership_role = pending_invitation.role
+        pending_assignment = assignment_for_invite(db, pending_invitation.id)
     if family is None:
         family = FamilyArchive(
             display_name=payload.family_name.strip(),
@@ -219,6 +347,14 @@ def register(
     db.add(membership)
     if pending_invitation is not None:
         pending_invitation.use_count += 1
+    if pending_assignment is not None:
+        create_assigned_interview_session(
+            db,
+            assignment=pending_assignment,
+            family=family,
+            user=user,
+            secret_store=secret_store,
+        )
     db.commit()
     db.refresh(user)
     db.refresh(membership)
@@ -244,6 +380,49 @@ def create_invitation(payload: InvitationCreate, db: Session = Depends(get_db)) 
         expires_at=expires_at,
     )
     db.add(invitation)
+    assignment = None
+    assignment_values = [payload.elder_id, payload.narrator_person_id, payload.life_stage]
+    if any(value is not None for value in assignment_values):
+        if not all(value is not None for value in assignment_values):
+            raise DomainError(
+                "INTERVIEW_INVITATION_INCOMPLETE",
+                "采访邀请需要同时选择记录对象、讲述人和话题。",
+                422,
+            )
+        life_stage = payload.life_stage.strip()
+        if life_stage not in LIFE_STAGES:
+            raise DomainError("LIFE_STAGE_INVALID", "请选择有效的人生阶段。", 422)
+        elder = db.get(ElderProfile, payload.elder_id)
+        narrator = db.get(Person, payload.narrator_person_id)
+        if elder is None or elder.person.family_id != family_id:
+            raise DomainError("ELDER_NOT_FOUND", "没有找到要记录的家人。", 404)
+        if narrator is None or narrator.family_id != family_id:
+            raise DomainError("NARRATOR_NOT_FOUND", "没有找到本次讲述人。", 404)
+        try:
+            select_question(
+                db,
+                elder_id=elder.id,
+                life_stage=life_stage,
+                topic_confirmed=True,
+            )
+        except ValueError as exc:
+            if str(exc) == "TOPIC_BLOCKED_BY_PREFERENCE":
+                raise DomainError(
+                    "TOPIC_BLOCKED_BY_PREFERENCE",
+                    "这位家人已选择不再聊这个话题。",
+                    409,
+                ) from exc
+            raise
+        db.flush()
+        assignment = InterviewAssignment(
+            family_invite_id=invitation.id,
+            family_id=family_id,
+            elder_id=elder.id,
+            narrator_person_id=narrator.id,
+            life_stage=life_stage,
+            status="pending",
+        )
+        db.add(assignment)
     db.commit()
     db.refresh(invitation)
     return InvitationCreated(
@@ -251,6 +430,10 @@ def create_invitation(payload: InvitationCreate, db: Session = Depends(get_db)) 
         invitation_code=code,
         expires_at=invitation.expires_at,
         max_uses=invitation.max_uses,
+        purpose="interview" if assignment else "family_access",
+        elder_id=assignment.elder_id if assignment else None,
+        narrator_person_id=assignment.narrator_person_id if assignment else None,
+        life_stage=assignment.life_stage if assignment else None,
     )
 
 
@@ -267,6 +450,12 @@ def list_invitations(db: Session = Depends(get_db)) -> list[InvitationRead]:
     ).all()
     result = []
     for item in invitations:
+        assignment = assignment_for_invite(db, item.id)
+        interview_session = (
+            db.get(MemorySession, assignment.session_id)
+            if assignment and assignment.session_id
+            else None
+        )
         if item.revoked_at is not None:
             status = "revoked"
         elif item.use_count >= item.max_uses:
@@ -283,6 +472,16 @@ def list_invitations(db: Session = Depends(get_db)) -> list[InvitationRead]:
                 use_count=item.use_count,
                 revoked=item.revoked_at is not None,
                 status=status,
+                purpose="interview" if assignment else "family_access",
+                elder_id=assignment.elder_id if assignment else None,
+                narrator_person_id=assignment.narrator_person_id if assignment else None,
+                life_stage=assignment.life_stage if assignment else None,
+                session_id=assignment.session_id if assignment else None,
+                interview_status=(
+                    interview_session.status
+                    if interview_session
+                    else assignment.status if assignment else None
+                ),
             )
         )
     return result
@@ -297,6 +496,9 @@ def revoke_invitation(invitation_id: str, response: Response, db: Session = Depe
         raise DomainError("INVITATION_NOT_FOUND", "没有找到这个邀请码。", 404)
     if invitation.revoked_at is None:
         invitation.revoked_at = datetime.now(UTC).replace(tzinfo=None)
+        assignment = assignment_for_invite(db, invitation.id)
+        if assignment is not None and assignment.session_id is None:
+            assignment.status = "revoked"
         db.commit()
     response.status_code = 204
     return response

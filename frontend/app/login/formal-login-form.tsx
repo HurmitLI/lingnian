@@ -5,7 +5,10 @@ import { ArrowRight, KeyRound, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 type Mode = "login" | "register";
-type ApiResult = { error?: { message?: string } };
+type ApiResult = {
+  error?: { message?: string };
+  next_path?: string | null;
+};
 
 export function FormalLoginForm() {
   const router = useRouter();
@@ -38,7 +41,10 @@ export function FormalLoginForm() {
         setMessage(result.error?.message || "暂时无法进入，请稍后重试。");
         return;
       }
-      router.replace("/");
+      const nextPath = result.next_path?.startsWith("/record?")
+        ? result.next_path
+        : "/";
+      router.replace(nextPath);
       router.refresh();
     } catch {
       setMessage("网络连接不稳定，请重试。");

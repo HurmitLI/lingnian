@@ -193,6 +193,20 @@ h1 { font-size: clamp(42px, 7vw, 68px); line-height: 1; font-weight: 600; letter
 .invitation-list small { color: var(--muted); font-size: 10px; }
 .invitation-list button { width: 36px; height: 36px; display: grid; place-items: center; color: var(--muted); border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
 .invitation-list button:hover { color: var(--red); background: #faece8; }
+.interview-invite-card { display: grid; gap: 16px; margin: 18px 0; padding: 18px; border: 1px solid #d9ccb7; border-radius: 16px; background: #fbf6ec; }
+.interview-invite-card h3 { margin: 0 0 5px; font-size: 16px; }
+.interview-invite-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.interview-invite-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.interview-invite-form label { display: grid; gap: 6px; }
+.interview-invite-form label span { color: var(--muted); font-size: 11px; }
+.interview-invite-form select { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink); font: inherit; }
+.interview-invite-form .button { grid-column: 1 / -1; justify-self: start; }
+.access-invite-divider { display: flex; align-items: center; gap: 12px; margin: 18px 0 12px; color: var(--muted); font-size: 11px; }
+.access-invite-divider::before, .access-invite-divider::after { height: 1px; flex: 1; background: var(--line); content: ""; }
+@media (max-width: 720px) {
+  .interview-invite-form { grid-template-columns: 1fr; }
+  .interview-invite-form .button { grid-column: auto; width: 100%; }
+}
 .formal-member-list { display: grid; gap: 0; margin-top: 22px; border-top: 1px solid var(--line); }
 .formal-member-list h3 { margin: 18px 0 8px; font-size: 16px; }
 .formal-member-list > div { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); }
