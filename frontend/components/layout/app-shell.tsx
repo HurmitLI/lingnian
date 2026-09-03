@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { BookHeart, Home, LibraryBig, Mic2, ShieldCheck, Users } from "lucide-react";
+import { BookHeart, Home, LibraryBig, LogOut, Mic2, ShieldCheck, Users } from "lucide-react";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
@@ -23,6 +23,12 @@ const DESKTOP_NAV_ITEMS = [
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const formalCloudMode = process.env.NEXT_PUBLIC_FORMAL_AUTH_REQUIRED === "true";
+
+  async function logout() {
+    await fetch("/api/v1/auth/logout", { method: "POST" }).catch(() => undefined);
+    window.location.replace("/login");
+  }
 
   return (
     <div className="app-shell">
@@ -43,7 +49,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
-        <div className="sidebar-note"><ShieldCheck size={20} strokeWidth={1.8} aria-hidden="true" /><span><strong>家庭私密空间</strong><small>资料保存在这台 Mac</small></span></div>
+        <div className="sidebar-note"><ShieldCheck size={20} strokeWidth={1.8} aria-hidden="true" /><span><strong>家庭私密空间</strong><small>{formalCloudMode ? "加密连接 · 受邀家人可见" : "资料保存在这台 Mac"}</small></span></div>
+        {formalCloudMode && <button className="sidebar-logout" type="button" onClick={logout}><LogOut size={17} aria-hidden="true" />退出登录</button>}
       </aside>
 
       <div className="app-content">{children}</div>

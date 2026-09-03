@@ -21,8 +21,10 @@ from app.services.security.backup import (
 )
 from app.services.security.key_store import (
     InMemorySecretStore,
+    EnvironmentSecretStore,
     MacOSKeychainStore,
     MasterKeyManager,
+    SecretStore,
     SecretStoreError,
 )
 from app.services.security.media_crypto import (
@@ -59,12 +61,14 @@ __all__ = [
     "BackupVerificationResult",
     "RecoveryRehearsalResult",
     "InMemorySecretStore",
+    "EnvironmentSecretStore",
     "MacOSKeychainStore",
     "MasterKeyManager",
     "MediaEncryptionError",
     "MediaEncryptionResult",
     "RecoveryPackageError",
     "SecretStoreError",
+    "SecretStore",
     "TEXT_PLACEHOLDER",
     "activate_archive_encryption",
     "build_recovery_package",

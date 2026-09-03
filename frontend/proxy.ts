@@ -28,7 +28,24 @@ function redirectTo(path: string, request: NextRequest): NextResponse {
 }
 
 export async function proxy(request: NextRequest): Promise<NextResponse> {
-  if (!isDemoModeEnabled()) return NextResponse.next();
+  const formalAuthEnabled = process.env.FORMAL_AUTH_REQUIRED === "true";
+  if (!isDemoModeEnabled() && !formalAuthEnabled) return NextResponse.next();
+
+  if (formalAuthEnabled && !isDemoModeEnabled()) {
+    const path = request.nextUrl.pathname;
+    const cookieName = process.env.AUTH_COOKIE_NAME || "lingnian_session";
+    const hasSession = Boolean(request.cookies.get(cookieName)?.value);
+    const publicPaths = new Set(["/login", "/api/v1/auth/login", "/api/v1/auth/register"]);
+    if (publicPaths.has(path)) return secureDemoResponse(NextResponse.next());
+    if (hasSession) return secureDemoResponse(NextResponse.next());
+    if (path.startsWith("/api/v1/")) {
+      return secureDemoResponse(NextResponse.json(
+        { error: { code: "AUTH_REQUIRED", message: "请先登录。" } },
+        { status: 401 },
+      ));
+    }
+    return redirectTo("/login", request);
+  }
 
   const path = request.nextUrl.pathname;
   const secret = getDemoSessionSecret();

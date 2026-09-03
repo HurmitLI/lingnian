@@ -46,6 +46,63 @@ class FamilyArchive(TimestampMixin, Base):
     backup_manifests: Mapped[list[BackupManifest]] = relationship(
         back_populates="family", cascade="all, delete-orphan"
     )
+    memberships: Mapped[list[FamilyMembership]] = relationship(
+        back_populates="family", cascade="all, delete-orphan"
+    )
+
+
+class UserAccount(TimestampMixin, Base):
+    __tablename__ = "user_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(80))
+    password_salt: Mapped[str] = mapped_column(String(64))
+    password_hash: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(24), default="active")
+    last_login_at: Mapped[datetime | None] = mapped_column()
+
+    memberships: Mapped[list[FamilyMembership]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    sessions: Mapped[list[AuthSession]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class FamilyMembership(TimestampMixin, Base):
+    __tablename__ = "family_memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", "family_id", name="uq_user_family_membership"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), index=True
+    )
+    family_id: Mapped[str] = mapped_column(
+        ForeignKey("family_archives.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(24), default="member")
+    status: Mapped[str] = mapped_column(String(24), default="active")
+
+    user: Mapped[UserAccount] = relationship(back_populates="memberships")
+    family: Mapped[FamilyArchive] = relationship(back_populates="memberships")
+
+
+class AuthSession(TimestampMixin, Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(default=now_utc)
+    revoked_at: Mapped[datetime | None] = mapped_column()
+
+    user: Mapped[UserAccount] = relationship(back_populates="sessions")
 
 
 class Person(TimestampMixin, Base):

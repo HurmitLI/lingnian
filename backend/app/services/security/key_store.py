@@ -33,6 +33,20 @@ class InMemorySecretStore:
         self.values[(service, account)] = secret
 
 
+@dataclass
+class EnvironmentSecretStore:
+    """Read one deployment-scoped archive key from the managed secret environment."""
+
+    encoded_master_key: str
+
+    def get_secret(self, service: str, account: str) -> str | None:
+        return self.encoded_master_key
+
+    def set_secret(self, service: str, account: str, secret: str) -> None:
+        if secret != self.encoded_master_key:
+            raise SecretStoreError("云端主密钥只能通过部署环境的加密变量轮换。")
+
+
 class MacOSKeychainStore:
     """Store small secrets in the current macOS user's Keychain via keyring."""
 

@@ -1,11 +1,13 @@
 from app.models.entities import (
     ArchiveSecurity,
+    AuthSession,
     Base,
     BackupManifest,
     ConsentEvent,
     ElderProfile,
     EncryptedField,
     FamilyArchive,
+    FamilyMembership,
     Keepsake,
     KeepsakeAuthorization,
     LegacyPlan,
@@ -30,13 +32,16 @@ from app.models.entities import (
     TopicPreference,
     Transcript,
     WorkflowTask,
+    UserAccount,
 )
 
 __all__ = [
     "Base",
     "BackupManifest",
     "ArchiveSecurity",
+    "AuthSession",
     "FamilyArchive",
+    "FamilyMembership",
     "Keepsake",
     "KeepsakeAuthorization",
     "LegacyPlan",
@@ -63,5 +68,6 @@ __all__ = [
     "TimelineEvent",
     "TopicPreference",
     "WorkflowTask",
+    "UserAccount",
     "ConsentEvent",
 ]

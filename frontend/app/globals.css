@@ -53,6 +53,8 @@ a { color: inherit; }
 .sidebar-note span { display: grid; gap: 3px; }
 .sidebar-note strong { font-size: 12px; font-weight: 650; }
 .sidebar-note small { color: #999087; font-size: 10px; line-height: 1.5; }
+.sidebar-logout { min-height: 42px; display: flex; align-items: center; gap: 9px; margin: 8px 3px 0; padding: 0 12px; color: #bdb4ab; border: 0; border-radius: 10px; background: transparent; font-size: 12px; cursor: pointer; }
+.sidebar-logout:hover { color: white; background: rgba(255,255,255,.07); }
 .app-content { min-width: 0; }
 .mobile-nav { display: none; }
 .workspace-main { width: min(1160px, calc(100% - 56px)); padding: 32px 0 96px; }
@@ -701,6 +703,13 @@ blockquote { margin: 9px 0 0; padding: 2px 0 2px 19px; border-left: 3px solid va
 .demo-login-trust strong { color: var(--ink); font-size: 11px; }
 .demo-login-trust small { color: var(--muted); font-size: 9px; }
 .demo-login-footnote { margin: 24px 0 0; color: #9b938b; font-size: 9px; text-align: center; }
+.formal-login-card { min-height: 710px; }
+.formal-login-visual { min-height: 710px; }
+.formal-login-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 0 0 22px; padding: 4px; border-radius: 12px; background: #eee9e1; }
+.formal-login-tabs button { min-height: 40px; color: var(--muted); border: 0; border-radius: 9px; background: transparent; font-size: 13px; cursor: pointer; }
+.formal-login-tabs button[aria-selected="true"] { color: var(--ink); background: white; box-shadow: 0 3px 12px rgba(53,43,35,.08); font-weight: 700; }
+.formal-login-form { gap: 6px; }
+.formal-login-form .demo-code-field { margin-bottom: 5px; }
 
 .demo-app-shell { --demo-ink: #292623; --demo-muted: #746e68; min-height: 100dvh; display: grid; grid-template-columns: 220px minmax(0, 1fr); background: #f2f0ec; }
 .demo-app-sidebar { position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column; padding: 24px 14px 18px; color: #f8f3ed; background: #292725; border-right: 1px solid rgba(0,0,0,.16); }

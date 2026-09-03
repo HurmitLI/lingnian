@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import base64
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +26,14 @@ class Settings(BaseSettings):
     max_audio_bytes: int = Field(default=200 * 1024 * 1024, ge=1024)
     max_image_bytes: int = Field(default=25 * 1024 * 1024, ge=1024)
     max_video_bytes: int = Field(default=500 * 1024 * 1024, ge=1024)
+
+    formal_auth_required: bool = False
+    formal_invite_code: SecretStr | None = None
+    formal_family_id: str | None = None
+    formal_archive_master_key: SecretStr | None = None
+    auth_cookie_name: str = "lingnian_session"
+    auth_session_days: int = Field(default=30, ge=1, le=180)
+    auth_cookie_secure: bool = False
 
     asr_provider: str = "mock"
     asr_model_id: str = "paraformer-zh"
@@ -75,6 +84,24 @@ class Settings(BaseSettings):
         if not root.is_absolute():
             root = PROJECT_ROOT / root
         return root.resolve()
+
+    def validate_formal_runtime(self) -> None:
+        if not self.formal_auth_required:
+            return
+        code = self.formal_invite_code.get_secret_value() if self.formal_invite_code else ""
+        if len(code.strip()) < 8:
+            raise RuntimeError("FORMAL_INVITE_CODE must contain at least 8 characters")
+        encoded_key = (
+            self.formal_archive_master_key.get_secret_value()
+            if self.formal_archive_master_key
+            else ""
+        )
+        try:
+            decoded_key = base64.urlsafe_b64decode(encoded_key.encode("ascii"))
+        except (ValueError, UnicodeError) as exc:
+            raise RuntimeError("FORMAL_ARCHIVE_MASTER_KEY must be valid base64") from exc
+        if len(decoded_key) != 32:
+            raise RuntimeError("FORMAL_ARCHIVE_MASTER_KEY must encode exactly 32 bytes")
 
 
 @lru_cache

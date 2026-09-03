@@ -46,6 +46,14 @@ async function request(path: string, options: ApiOptions = {}): Promise<Response
 
 async function responseError(response: Response, fallback: string): Promise<ApiError> {
   const payload = await response.json().catch(() => null);
+  if (
+    response.status === 401
+    && typeof window !== "undefined"
+    && process.env.NEXT_PUBLIC_FORMAL_AUTH_REQUIRED === "true"
+    && window.location.pathname !== "/login"
+  ) {
+    window.location.replace("/login");
+  }
   return new ApiError(
     payload?.error?.code ?? "REQUEST_FAILED",
     payload?.error?.message ?? fallback,

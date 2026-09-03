@@ -161,6 +161,7 @@ from app.services.llm import (
     get_llm_provider,
 )
 from app.services.tts import get_tts_provider
+from app.services.auth import current_auth
 from app.services.keepsake import (
     build_keepsake_manifest,
     manifest_sha256 as keepsake_manifest_sha256,
@@ -204,7 +205,48 @@ def require(db: Session, model, object_id: str, code: str, message: str):
     item = db.get(model, object_id)
     if not item:
         raise DomainError(code, message, 404)
+    context = current_auth.get()
+    family_id = resource_family_id(db, item)
+    if context is not None and family_id is not None and family_id != context.family_id:
+        raise DomainError(code, message, 404)
     return item
+
+
+def resource_family_id(db: Session, item) -> str | None:
+    direct_family_id = getattr(item, "family_id", None)
+    if direct_family_id:
+        return direct_family_id
+    if isinstance(item, ElderProfile):
+        return item.person.family_id
+    if isinstance(item, MemorySession):
+        return item.elder.person.family_id
+    if isinstance(item, (InterviewTurn, Transcript, StoryDraft, WorkflowTask, MediaAsset)):
+        return item.session.elder.person.family_id
+    if isinstance(item, Story):
+        return item.elder.person.family_id
+    if isinstance(item, (TimelineEvent, StoryDetail, StoryContribution)):
+        return item.story.elder.person.family_id
+    if isinstance(
+        item,
+        (
+            TopicPreference,
+            MemoryFact,
+            Reminder,
+            MemoryBook,
+            KeepsakeAuthorization,
+            Keepsake,
+            GenerativeMediaRequest,
+        ),
+    ):
+        return item.elder.person.family_id
+    if isinstance(item, MediaLink):
+        elder = db.get(ElderProfile, item.elder_id)
+        return elder.person.family_id if elder else None
+    if isinstance(item, BackupManifest):
+        return item.family_id or "unscoped-local-backup"
+    if isinstance(item, FamilyArchive):
+        return item.id
+    return None
 
 
 def family_master_key(family: FamilyArchive, store: SecretStore) -> bytes | None:
@@ -907,6 +949,12 @@ def create_family(
     db: Session = Depends(get_db),
     secret_store: SecretStore = Depends(get_secret_store),
 ) -> FamilyRead:
+    if get_settings().formal_auth_required:
+        raise DomainError(
+            "FORMAL_FAMILY_CREATION_LOCKED",
+            "正式空间不能在工作台里新建其他家庭。",
+            403,
+        )
     if payload.data_classification != "test":
         raise DomainError(
             "REAL_DATA_MODE_LOCKED",
@@ -1193,8 +1241,12 @@ def create_local_backup(
     payload: BackupCreate,
     db: Session = Depends(get_db),
 ) -> BackupManifest:
+    context = current_auth.get()
     unsafe_families = db.scalars(
-        select(FamilyArchive).where(FamilyArchive.data_classification != "test")
+        select(FamilyArchive).where(
+            FamilyArchive.data_classification != "test",
+            *([FamilyArchive.id == context.family_id] if context else []),
+        )
     ).all()
     for family in unsafe_families:
         if (
@@ -1217,7 +1269,7 @@ def create_local_backup(
         raise DomainError("BACKUP_CREATE_FAILED", str(exc), 409) from exc
     backup = BackupManifest(
         id=backup_id,
-        family_id=None,
+        family_id=context.family_id if context else None,
         backup_version=1,
         relative_path=relative_path,
         archive_sha256=result.archive_sha256,
@@ -1234,9 +1286,13 @@ def create_local_backup(
 
 @router.get("/backups", response_model=list[BackupRead])
 def list_local_backups(db: Session = Depends(get_db)) -> list[BackupManifest]:
+    context = current_auth.get()
+    query = select(BackupManifest)
+    if context is not None:
+        query = query.where(BackupManifest.family_id == context.family_id)
     return list(
         db.scalars(
-            select(BackupManifest).order_by(BackupManifest.created_at.desc())
+            query.order_by(BackupManifest.created_at.desc())
         ).all()
     )
 
@@ -1303,6 +1359,7 @@ async def rehearse_backup_recovery(
     recovery_passphrase: str = Form(..., min_length=12, max_length=200),
     db: Session = Depends(get_db),
 ) -> BackupManifest:
+    require(db, FamilyArchive, family_id, "FAMILY_NOT_FOUND", "没有找到这个家庭档案。")
     backup = require(
         db, BackupManifest, backup_id, "BACKUP_NOT_FOUND", "没有找到这份本机备份。"
     )
@@ -1615,7 +1672,11 @@ def list_elder_profiles(
     db: Session = Depends(get_db),
     secret_store: SecretStore = Depends(get_secret_store),
 ) -> list[ElderProfileRead]:
-    profiles = db.scalars(select(ElderProfile).order_by(ElderProfile.created_at.desc())).all()
+    query = select(ElderProfile)
+    context = current_auth.get()
+    if context is not None:
+        query = query.join(Person).where(Person.family_id == context.family_id)
+    profiles = db.scalars(query.order_by(ElderProfile.created_at.desc())).all()
     return [elder_read(db, profile, secret_store) for profile in profiles]
 
 
@@ -3619,7 +3680,17 @@ def reserve_model_consent(
         get_settings().llm_provider, family.data_classification
     ):
         return None
-    consent = db.get(ModelConsentEvent, consent_event_id) if consent_event_id else None
+    consent = (
+        require(
+            db,
+            ModelConsentEvent,
+            consent_event_id,
+            "MODEL_CONSENT_NOT_FOUND",
+            "没有找到这次模型发送授权。",
+        )
+        if consent_event_id
+        else None
+    )
     corrected_text = (
         secure_value(
             db, family, session.transcript, "corrected_text", store
