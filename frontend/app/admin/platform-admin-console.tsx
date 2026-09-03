@@ -223,8 +223,10 @@ export function PlatformAdminConsole() {
 
   async function copyNodeSetup() {
     if (!createdNode) return;
+    const configuredWorkerApiBase = process.env.NEXT_PUBLIC_LINGNIAN_WORKER_API_BASE?.trim();
+    const workerApiBase = (configuredWorkerApiBase || window.location.origin).replace(/\/+$/, "");
     const text = [
-      `LINGNIAN_API_BASE=${window.location.origin}`,
+      `LINGNIAN_API_BASE=${workerApiBase}`,
       `LINGNIAN_NODE_TOKEN=${createdNode.connection_token}`,
       `LINGNIAN_NODE_ID=${createdNode.id}`,
     ].join("\n");

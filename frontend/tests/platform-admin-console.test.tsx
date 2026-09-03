@@ -18,6 +18,7 @@ vi.mock("next/navigation", () => ({
 
 describe("平台管理后台", () => {
   beforeEach(() => {
+    process.env.NEXT_PUBLIC_LINGNIAN_WORKER_API_BASE = "https://formal-api.example.com/";
     apiMock.mockImplementation((path: string, options?: RequestInit) => {
       if (path === "/api/v1/auth/me") return Promise.resolve({
         user_id: "admin-1",
@@ -76,6 +77,7 @@ describe("平台管理后台", () => {
   });
 
   afterEach(() => {
+    delete process.env.NEXT_PUBLIC_LINGNIAN_WORKER_API_BASE;
     cleanup();
     apiMock.mockReset();
     replace.mockReset();
@@ -97,6 +99,11 @@ describe("平台管理后台", () => {
   });
 
   it("可以在网页生成家用节点的一次性连接密钥", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     render(<PlatformAdminConsole />);
 
     expect(await screen.findByText("家用生成节点")).toBeVisible();
@@ -104,5 +111,9 @@ describe("平台管理后台", () => {
 
     expect(await screen.findByText("ln_node_once-only-token")).toBeVisible();
     expect(screen.getByText("连接密钥只完整显示这一次")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "复制家用电脑连接配置" }));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining(
+      "LINGNIAN_API_BASE=https://formal-api.example.com",
+    ));
   });
 });
