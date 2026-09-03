@@ -519,6 +519,24 @@
 }
 .app-shell .subject-card { box-shadow: 4px 4px 0 rgba(255, 111, 30, .15); }
 .app-shell .interview-topic-heading { padding-top: 24px; border-top: 1px solid var(--formal-line); }
+.app-shell .interview-assist-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 15px 17px;
+  border: 1.5px solid rgba(23, 23, 23, .34);
+  border-radius: 11px;
+  background: #fff8ef;
+  cursor: pointer;
+}
+.app-shell .interview-assist-choice input {
+  width: 19px;
+  height: 19px;
+  margin-top: 2px;
+  accent-color: var(--formal-orange-deep);
+}
+.app-shell .interview-assist-choice > span { display: grid; gap: 4px; }
+.app-shell .interview-assist-choice small { color: var(--formal-muted); line-height: 1.55; }
 .app-shell .guided-interview-card {
   display: grid;
   gap: 20px;
@@ -542,6 +560,13 @@
 .app-shell .interview-provenance small { color: var(--formal-muted); }
 .app-shell .interview-provenance strong { font-size: 17px; }
 .app-shell .interview-provenance > span { color: var(--formal-orange-deep); font-size: 20px; }
+.app-shell .interview-auto-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #4f6644;
+  font-size: 13px;
+}
 .app-shell .guided-trigger { display: grid; grid-template-columns: 180px minmax(0, 1fr); align-items: center; gap: 18px; padding: 12px; border: 1px solid var(--formal-line); border-radius: 10px; }
 .app-shell .guided-trigger img { width: 180px; height: 125px; object-fit: cover; }
 .app-shell .guided-trigger p { margin: 0; color: var(--formal-muted); font-size: 13px; line-height: 1.7; }

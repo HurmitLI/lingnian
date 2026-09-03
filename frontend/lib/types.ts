@@ -54,6 +54,8 @@ export type InterviewTurn = {
   answer_version: number;
   audio_asset_id: string | null;
   audio_url: string | null;
+  question_audio_asset_id: string | null;
+  question_audio_url: string | null;
   asr_provider: string;
   asr_model: string;
   asr_metadata: Record<string, unknown>;

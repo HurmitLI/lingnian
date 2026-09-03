@@ -9,7 +9,12 @@ from typing import Protocol
 from openai import OpenAI
 
 from app.core.config import PROJECT_ROOT, get_settings
-from app.schemas.api import InterviewFollowupOutput, QuestionOutput, StoryOrganizationOutput
+from app.schemas.api import (
+    InterviewCleanupOutput,
+    InterviewFollowupOutput,
+    QuestionOutput,
+    StoryOrganizationOutput,
+)
 
 
 QUESTION_BANK = {
@@ -97,6 +102,25 @@ def generate_local_interview_followup(
     )
 
 
+def clean_local_interview_transcript(text: str) -> InterviewCleanupOutput:
+    cleaned = re.sub(r"\s+", "", text.strip())
+    cleaned = re.sub(
+        r"(^|[，。！？；])(?:(?:嗯+|呃+|额+|啊+|这个|那个)[，、 ]*)+",
+        r"\1",
+        cleaned,
+    )
+    cleaned = re.sub(r"(?:嗯+|呃+|额+)(?=[，。！？；]|$)", "", cleaned)
+    cleaned = re.sub(r"([，。！？；])\1+", r"\1", cleaned)
+    cleaned = cleaned.lstrip("，、； ")
+    if cleaned and cleaned[-1] not in "。！？!?":
+        cleaned += "。"
+    uncertainties = ["原转写含有听不清内容，请在整场采访结束后核对。"] if "[听不清]" in cleaned else []
+    return InterviewCleanupOutput(
+        polished_text=cleaned or text.strip(),
+        uncertainties=uncertainties,
+    )
+
+
 class LLMProvider(Protocol):
     provider_name: str
     model_name: str
@@ -110,6 +134,8 @@ class LLMProvider(Protocol):
         life_stage: str,
         turns: list[dict[str, str]],
     ) -> InterviewFollowupOutput: ...
+
+    def clean_interview_transcript(self, text: str) -> InterviewCleanupOutput: ...
 
     def organize_story(self, corrected_text: str, question: str) -> StoryOrganizationOutput: ...
 
@@ -137,6 +163,9 @@ class MockLLMProvider:
             uncertainties=uncertainties,
             source_coverage=1.0,
         )
+
+    def clean_interview_transcript(self, text: str) -> InterviewCleanupOutput:
+        return clean_local_interview_transcript(text)
 
     def generate_interview_followup(
         self,
@@ -193,6 +222,7 @@ class QwenLLMProvider:
         prompt_root = PROJECT_ROOT / "backend/app/prompts"
         self.question_prompt = (prompt_root / "memory_question_v1.md").read_text("utf-8")
         self.interview_prompt = (prompt_root / "interview_followup_v1.md").read_text("utf-8")
+        self.cleanup_prompt = (prompt_root / "interview_cleanup_v1.md").read_text("utf-8")
         self.story_prompt = (prompt_root / "story_organizer_v1.md").read_text("utf-8")
 
     def _complete(self, system_prompt: str, user_content: str) -> str:
@@ -231,6 +261,13 @@ class QwenLLMProvider:
         if not str(payload.get("body", "")).strip():
             raise RuntimeError("INSUFFICIENT_STORY_CONTENT")
         return StoryOrganizationOutput.model_validate(payload)
+
+    def clean_interview_transcript(self, text: str) -> InterviewCleanupOutput:
+        raw = self._complete(
+            self.cleanup_prompt,
+            json.dumps({"raw_transcript": text}, ensure_ascii=False),
+        )
+        return InterviewCleanupOutput.model_validate(parse_json_object(raw))
 
     def generate_interview_followup(
         self,

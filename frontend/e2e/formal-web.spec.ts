@@ -185,6 +185,7 @@ test("语音采访明确区分回忆对象与讲述人", async ({ page }) => {
   await expect(page.getByText("本次讲述人")).toBeVisible();
   await expect(page.getByText("测试女儿", { exact: true })).toBeVisible();
   await expect(page.getByText(guidedSession.question_text)).toBeVisible();
+  await expect(page.getByText(/自动流程已开启/)).toBeVisible();
   await expect(page.getByRole("button", { name: /开始回答/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /再听一遍/ })).toBeVisible();
   const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);

@@ -61,11 +61,9 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
     buffer: silentWavBuffer(),
   });
   await expect(page.getByText("第三阶段测试.wav", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "保存回答并转文字" }).click();
-  const turnInput = page.getByRole("textbox", { name: "校对本轮回答" });
-  await expect(turnInput).toBeVisible();
-  await turnInput.fill(correctedStory);
-  await page.getByRole("button", { name: "今天先到这里" }).click();
+  await page.getByRole("button", { name: "保存回答，自动继续" }).click();
+  await expect(page.getByText(/正在采访 · 第 2 轮/)).toBeVisible();
+  await page.getByRole("button", { name: "结束这次采访，查看完整整理稿" }).click();
 
   const correctedInput = page.getByRole("textbox", { name: "人工校对稿" });
   await expect(correctedInput).toBeVisible();

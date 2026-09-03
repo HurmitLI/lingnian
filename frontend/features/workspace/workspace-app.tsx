@@ -92,6 +92,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
+  const questionAudioBlobRef = useRef<Blob | null>(null);
+  const questionAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const questionAudioUrlRef = useRef<string | null>(null);
 
   const selectedProfile = profiles.find((item) => item.id === selectedProfileId) ?? null;
   const effectiveNarratorPersonId = familyPeople.some(
@@ -186,6 +189,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       (turn) => turn.status === "answer_review",
     );
     setInterviewAnswerText(pendingTurn?.corrected_answer_text ?? "");
+    const storedAssist = window.localStorage.getItem(`lingnian.interviewAssist.${sessionId}`);
+    if (storedAssist !== null) setInterviewCloudConsentChecked(storedAssist === "true");
     return result;
   }, []);
 
@@ -314,6 +319,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       window.speechSynthesis?.cancel();
+      questionAudioPlayerRef.current?.pause();
+      if (questionAudioUrlRef.current) URL.revokeObjectURL(questionAudioUrlRef.current);
     };
   }, [audioPreview]);
 
@@ -536,13 +543,17 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           topic_confirmed: needsConfirmation,
         }),
       });
+      window.localStorage.setItem(
+        `lingnian.interviewAssist.${session.id}`,
+        String(interviewCloudConsentChecked),
+      );
       rememberActiveSession(session.id, selectedProfileId);
       await loadSession(session.id);
       await loadMemoryContext(selectedProfileId);
       await loadRecentSessions(selectedProfileId);
       setAudioFile(null);
       setNotice("采访已经准备好。聆年一次只问一个问题，随时可以结束。 ");
-      speakQuestion(session.question_text);
+      speakQuestion(session.question_text, session.id);
     } catch (value) {
       showError(value);
     } finally {
@@ -575,6 +586,10 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           topic_confirmed: needsConfirmation,
         }),
       });
+      window.localStorage.setItem(
+        `lingnian.interviewAssist.${session.id}`,
+        String(interviewCloudConsentChecked),
+      );
       const upload = new FormData();
       upload.append("image", file);
       upload.append("trigger_kind", triggerKind);
@@ -590,7 +605,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       if (triggerPreview) URL.revokeObjectURL(triggerPreview);
       setTriggerPreview(null);
       setNotice("图片已保存在本机。问题只邀请讲述，不会猜测图片中的人物、地点或年代。");
-      speakQuestion(session.question_text);
+      speakQuestion(session.question_text, session.id);
     } catch (value) {
       showError(value);
     } finally {
@@ -686,7 +701,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     setIsRecording(false);
   }
 
-  function speakQuestion(text: string) {
+  function speakQuestionFallback(text: string) {
     if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
       setNotice("当前浏览器不能朗读问题，您仍然可以看着文字继续采访。");
       return;
@@ -694,10 +709,14 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "zh-CN";
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
+    utterance.rate = 0.88;
+    utterance.pitch = 0.98;
     const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find((voice) => voice.lang.toLowerCase() === "zh-cn")
+    const preferredNames = ["Flo", "Sandy", "Tingting", "Meijia"];
+    const preferredVoice = voices.find(
+      (voice) => voice.lang.toLowerCase().startsWith("zh")
+        && preferredNames.some((name) => voice.name.includes(name)),
+    ) ?? voices.find((voice) => voice.lang.toLowerCase() === "zh-cn")
       ?? voices.find((voice) => voice.lang.toLowerCase().startsWith("zh"));
     if (preferredVoice) utterance.voice = preferredVoice;
     utterance.onstart = () => setIsSpeaking(true);
@@ -707,6 +726,36 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       setNotice("这次没有成功朗读，问题文字仍然可以正常使用。");
     };
     window.speechSynthesis.speak(utterance);
+  }
+
+  async function speakQuestion(text: string, sessionId = detail?.session.id) {
+    questionAudioPlayerRef.current?.pause();
+    if (questionAudioUrlRef.current) URL.revokeObjectURL(questionAudioUrlRef.current);
+    questionAudioUrlRef.current = null;
+    if (!sessionId) {
+      speakQuestionFallback(text);
+      return;
+    }
+    setIsSpeaking(true);
+    try {
+      const download = await apiDownload(
+        `/api/v1/memory-sessions/${sessionId}/interview-question-audio`,
+      );
+      questionAudioBlobRef.current = download.blob;
+      const url = URL.createObjectURL(download.blob);
+      questionAudioUrlRef.current = url;
+      const player = new Audio(url);
+      questionAudioPlayerRef.current = player;
+      player.onended = () => setIsSpeaking(false);
+      player.onerror = () => {
+        setIsSpeaking(false);
+        speakQuestionFallback(text);
+      };
+      await player.play();
+    } catch {
+      setIsSpeaking(false);
+      speakQuestionFallback(text);
+    }
   }
 
   function discardAudio() {
@@ -725,25 +774,48 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     form.append("audio", audioFile);
     try {
       if (detail.session.interview_mode === "guided_voice" && detail.session.status === "INTERVIEWING") {
+        if (questionAudioBlobRef.current) {
+          form.append(
+            "question_audio",
+            new File([questionAudioBlobRef.current], "聆年提问.wav", { type: "audio/wav" }),
+          );
+        }
         const turn = await api<InterviewTurn>(
           `/api/v1/memory-sessions/${detail.session.id}/interview-turns/audio`,
           { method: "POST", body: form },
         );
-        setInterviewAnswerText(turn.corrected_answer_text);
+        const result = await api<InterviewContinueResult>(
+          `/api/v1/memory-sessions/${detail.session.id}/interview-turns/${turn.id}/continue`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              corrected_answer_text: turn.corrected_answer_text,
+              allow_cloud_followup: interviewCloudConsentChecked,
+              actor_label: "本机家庭管理员",
+            }),
+          },
+        );
+        questionAudioBlobRef.current = null;
+        setInterviewShouldEnd(result.should_end);
+        await loadSession(detail.session.id);
+        setInterviewAnswerText("");
+        speakQuestion(result.next_question, detail.session.id);
       } else {
         await api(`/api/v1/memory-sessions/${detail.session.id}/audio`, {
           method: "POST",
           body: form,
         });
       }
-      await loadSession(detail.session.id);
+      if (!(detail.session.interview_mode === "guided_voice" && detail.session.status === "INTERVIEWING")) {
+        await loadSession(detail.session.id);
+      }
       if (audioPreview) URL.revokeObjectURL(audioPreview);
       setAudioPreview(null);
       setAudioFile(null);
       setRecordingSeconds(0);
       setNotice(
         detail.session.interview_mode === "guided_voice"
-          ? "回答已经在本机转成文字，请先看一眼是否准确。"
+          ? "回答已经保存并自动进入下一问。"
           : "原始音频已安全保留，可以开始转写。 ",
       );
     } catch (value) {
@@ -771,12 +843,11 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       );
       await loadSession(detail.session.id);
       setInterviewAnswerText("");
-      setInterviewCloudConsentChecked(false);
       setInterviewShouldEnd(result.should_end);
       setAudioFile(null);
       setAudioPreview(null);
       setNotice(`${result.acknowledgement} 已准备好下一问。`);
-      speakQuestion(result.next_question);
+      speakQuestion(result.next_question, detail.session.id);
     } catch (value) {
       showError(value);
     } finally {
@@ -795,7 +866,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       );
       await loadSession(detail.session.id);
       setNotice("已经换成一个更容易回答的问题。");
-      speakQuestion(session.question_text);
+      speakQuestion(session.question_text, detail.session.id);
     } catch (value) {
       showError(value);
     } finally {
@@ -829,7 +900,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       setSavedCorrectedText(result.transcript?.corrected_text ?? "");
       setInterviewAnswerText("");
       setInterviewCloudConsentChecked(false);
-      setNotice("采访已结束，所有回答和完整原声都已汇总。请最后校对，再整理成故事。");
+      setNotice("采访已结束，提问和回答已经合并，AI 整理稿也已生成。需要时再修改，然后整理成故事。");
     } catch (value) {
       showError(value);
     } finally {
@@ -1163,7 +1234,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     record: {
       eyebrow: "开始记录",
       title: "一次，只聊一个回忆",
-      subtitle: "先选择一个愿意谈的话题，再录音、校对并由家人确认。",
+      subtitle: "先选一个愿意谈的话题，再由聆年提问、自动整理，最后由家人确认。",
     },
     archive: {
       eyebrow: "回忆档案",
@@ -1225,7 +1296,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 <p>
                   {activeSession
                     ? `已经进行到“${sessionStatusLabel(activeSession.status)}”。不用重新开始，从上次停下的地方继续就好。`
-                    : "聆年会先在本机保存录音和转写，只有家人校对、确认后，故事才会进入档案。"}
+                    : "聆年会先保存原声并自动整理文字，家人最后确认后，故事才会进入档案。"}
                 </p>
                 <div className="home-primary-actions">
                   <Link
@@ -1242,7 +1313,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 </div>
                 <ul className="home-trust-list" aria-label="内容保存原则">
                   <li><strong>先留原声</strong><span>录音先保存在这台 Mac</span></li>
-                  <li><strong>再校对</strong><span>由家人确认转写和故事</span></li>
+                  <li><strong>先整理</strong><span>AI 处理语气词、错字和标点</span></li>
                   <li><strong>后归档</strong><span>未经确认的内容不进档案</span></li>
                 </ul>
               </article>
@@ -1443,6 +1514,16 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           </div>
         )}
         <div className="section-heading interview-topic-heading"><span>02</span><div><h2>今天从哪一段聊起？</h2><p>聆年会用声音一次问一个问题，并根据回答继续追问。</p></div></div>
+        {requiresCloudConsent && (
+          <label className="interview-assist-choice">
+            <input
+              type="checkbox"
+              checked={interviewCloudConsentChecked}
+              onChange={(event) => setInterviewCloudConsentChecked(event.target.checked)}
+            />
+            <span><strong>开启 AI 自动整理与自然追问</strong><small>整场只选择一次。每段回答会先在本机转写，再把转写文字发送给千问去掉语气词、补标点并生成下一问；原始录音不会发送。</small></span>
+          </label>
+        )}
         <MemoryWorkflowStepper currentStep={0} />
         <div className="stage-grid">
           {LIFE_STAGES.map((stage) => {
@@ -1491,6 +1572,10 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
             <span aria-hidden="true">←</span>
             <div><small>本次讲述人</small><strong>{sessionNarrator?.display_name ?? selectedProfile?.preferred_name ?? "家人"}</strong></div>
           </div>
+          <div className="interview-auto-status">
+            <CheckCircle2 size={17} aria-hidden="true" />
+            <span>{interviewCloudConsentChecked ? "AI 自动整理已开启：说完后直接进入下一问" : "自动流程已开启：本机整理后直接进入下一问"}</span>
+          </div>
 
           {existingTrigger && (
             <div className="guided-trigger">
@@ -1531,31 +1616,25 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               </div>
               {isRecording && <div className="recording-live" role="status" aria-live="polite"><span aria-hidden="true" /><strong>正在录音 {formatRecordingDuration(recordingSeconds)}</strong><small>讲完后请点“停止录音”</small></div>}
               {audioPreview && <audio controls src={audioPreview} className="audio-player" />}
-              {audioFile && <div className="file-line"><span>{audioFile.name}</span><div className="button-row compact-row"><button type="button" className="button quiet danger" disabled={busy} onClick={discardAudio}>重新录</button><button type="button" className="button primary" disabled={busy || isRecording} onClick={uploadAudio}>保存回答并转文字</button></div></div>}
+              {audioFile && <div className="file-line"><span>{audioFile.name}</span><div className="button-row compact-row"><button type="button" className="button quiet danger" disabled={busy} onClick={discardAudio}>重新录</button><button type="button" className="button primary" disabled={busy || isRecording} onClick={uploadAudio}>保存回答，自动继续</button></div></div>}
             </div>
           ) : (
             <div className="interview-review-panel">
-              <div className="review-title"><CheckCircle2 size={21} /><div><strong>听写完成，先看一眼</strong><p>有错字可以直接修改。确认以后，聆年才会继续问。</p></div></div>
+              <div className="review-title"><CheckCircle2 size={21} /><div><strong>自动处理暂时停在这里</strong><p>录音已经安全保存。只需修正明显错误，就能继续下一问。</p></div></div>
               <label>
                 <span className="sr-only">校对本轮回答</span>
-                <textarea rows={6} value={interviewAnswerText} onChange={(event) => { setInterviewAnswerText(event.target.value); setInterviewCloudConsentChecked(false); }} />
+                <textarea rows={6} value={interviewAnswerText} onChange={(event) => setInterviewAnswerText(event.target.value)} />
               </label>
               <audio controls preload="metadata" src={mediaUrl(activeInterviewTurn.audio_url) ?? undefined} className="audio-player" />
-              {requiresCloudConsent && (
-                <div className="interview-cloud-choice">
-                  <label><input type="checkbox" checked={interviewCloudConsentChecked} onChange={(event) => setInterviewCloudConsentChecked(event.target.checked)} />本轮允许把上面的文字发送给千问，生成更贴合内容的追问</label>
-                  <p>原始录音永不发送。不勾选也能继续，聆年会在本机从安全题库中选择下一问。</p>
-                </div>
-              )}
               <div className="button-row interview-next-actions">
-                <button type="button" className="button primary" disabled={busy || !interviewAnswerText.trim()} onClick={continueInterview}>确认回答，继续追问</button>
+                <button type="button" className="button primary" disabled={busy || !interviewAnswerText.trim()} onClick={continueInterview}>修正后继续</button>
                 <button type="button" className="button secondary" disabled={busy || !interviewAnswerText.trim()} onClick={finalizeInterview}>今天先到这里</button>
               </div>
             </div>
           )}
 
           {(interviewShouldEnd || detail.interview_turns.length >= 7) && <p className="interview-rest-note">已经聊了不少内容。现在结束也完全可以，记忆以后还能接着补。</p>}
-          {detail.interview_turns.length > 0 && !activeInterviewTurn && <button type="button" className="button quiet finish-interview" disabled={busy || isRecording} onClick={finalizeInterview}>结束这次采访，去统一校对</button>}
+          {detail.interview_turns.length > 0 && !activeInterviewTurn && <button type="button" className="button quiet finish-interview" disabled={busy || isRecording} onClick={finalizeInterview}>结束这次采访，查看完整整理稿</button>}
           <button type="button" className="button quiet danger interview-skip" disabled={busy || isRecording} onClick={skipSession}>放弃整次采访并清理临时内容</button>
         </section>
       )}
@@ -1594,10 +1673,10 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
 
           {detail.transcript && (
             <div className="workflow-block" data-state={currentWorkflowStep === 2 ? "current" : currentWorkflowStep > 2 ? "complete" : "upcoming"}>
-              <div className="block-title"><h3>人工校对</h3><span>版本 {detail.transcript.version}</span></div>
+              <div className="block-title"><h3>{detail.session.interview_mode === "guided_voice" ? "AI 整理稿（可选修改）" : "人工校对"}</h3><span>版本 {detail.transcript.version}</span></div>
               <div className="evidence-grid">
                 <div><h4>ASR 原始转写</h4><p className="evidence-text">{detail.transcript.raw_text}</p></div>
-                <label><h4>人工校对稿</h4><textarea value={correctedText} onChange={(event) => { setCorrectedText(event.target.value); setCloudConsentChecked(false); setOrganizationError(""); }} rows={8} /></label>
+                <label><h4>{detail.session.interview_mode === "guided_voice" ? "整场采访整理稿" : "人工校对稿"}</h4><textarea aria-label="人工校对稿" value={correctedText} onChange={(event) => { setCorrectedText(event.target.value); setCloudConsentChecked(false); setOrganizationError(""); }} rows={8} /></label>
               </div>
               {unsaved && <p className="unsaved">有尚未保存的修改</p>}
               <div className="button-row">

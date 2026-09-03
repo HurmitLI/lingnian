@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=60, gt=0)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
 
+    tts_provider: str = "auto"
+    tts_model: str = "cosyvoice-v3-flash"
+    tts_voice: str = "longyuan_v3"
+    tts_rate: float = Field(default=0.92, ge=0.5, le=2.0)
+
     keepsake_max_stories: int = Field(default=10, ge=1, le=30)
     keepsake_max_source_seconds: int = Field(default=1800, ge=30, le=10_800)
     keepsake_width: int = Field(default=1280, ge=640, le=3840)

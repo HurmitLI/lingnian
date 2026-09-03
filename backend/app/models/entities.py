@@ -152,6 +152,9 @@ class InterviewTurn(TimestampMixin, Base):
     audio_asset_id: Mapped[str | None] = mapped_column(
         ForeignKey("media_assets.id", ondelete="SET NULL"), unique=True
     )
+    question_audio_asset_id: Mapped[str | None] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="SET NULL"), unique=True
+    )
     asr_provider: Mapped[str] = mapped_column(String(80))
     asr_model: Mapped[str] = mapped_column(String(160))
     asr_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -160,6 +163,9 @@ class InterviewTurn(TimestampMixin, Base):
 
     session: Mapped[MemorySession] = relationship(back_populates="interview_turns")
     audio_asset: Mapped[MediaAsset | None] = relationship(foreign_keys=[audio_asset_id])
+    question_audio_asset: Mapped[MediaAsset | None] = relationship(
+        foreign_keys=[question_audio_asset_id]
+    )
 
 
 class MediaAsset(TimestampMixin, Base):

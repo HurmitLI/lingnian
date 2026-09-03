@@ -65,16 +65,18 @@ def test_guided_interview_keeps_subject_and_narrator_separate(client):
     assert turn["status"] == "answer_review"
     assert turn["raw_answer_text"]
     assert turn["audio_url"].startswith("/api/v1/media-assets/")
+    assert turn["question_audio_url"].startswith("/api/v1/media-assets/")
 
     continued = client.post(
         f"/api/v1/memory-sessions/{session['id']}/interview-turns/{turn['id']}/continue",
         json={
-            "corrected_answer_text": "这是妈妈根据亲身经历讲述的一段测试回忆。",
+            "corrected_answer_text": "嗯，呃，这是妈妈根据亲身经历讲述的一段测试回忆",
             "allow_cloud_followup": False,
         },
     )
     assert continued.status_code == 200, continued.text
     assert continued.json()["next_question"]
+    assert continued.json()["turn"]["corrected_answer_text"] == "这是妈妈根据亲身经历讲述的一段测试回忆。"
     assert continued.json()["followup_mode"] == "test_or_local_model"
 
     finalized = client.post(
@@ -85,6 +87,10 @@ def test_guided_interview_keeps_subject_and_narrator_separate(client):
     assert detail["session"]["status"] == "TRANSCRIPT_REVIEW"
     assert "妈妈：这是妈妈根据亲身经历讲述的一段测试回忆。" in detail["transcript"]["corrected_text"]
     assert any(asset["kind"] == "audio_original" for asset in detail["media_assets"])
+    merged = next(asset for asset in detail["media_assets"] if asset["kind"] == "audio_original")
+    merged_response = client.get(merged["content_url"])
+    with wave.open(io.BytesIO(merged_response.content), "rb") as audio:
+        assert audio.getnframes() / audio.getframerate() >= 0.3
 
 
 def test_family_recollection_keeps_narrator_provenance_in_archive_and_book(client):
@@ -237,6 +243,8 @@ def test_guided_interview_remains_encrypted_for_real_family_data(client, db):
         ).all()
         turn_audio = db.get(MediaAsset, turn.audio_asset_id)
         assert turn_audio.encryption_version == 1
+        question_audio = db.get(MediaAsset, turn.question_audio_asset_id)
+        assert question_audio.encryption_version == 1
         merged_audio = db.scalar(
             select(MediaAsset).where(
                 MediaAsset.session_id == session["id"],

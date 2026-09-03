@@ -175,6 +175,8 @@ class InterviewTurnRead(ORMModel):
     answer_version: int
     audio_asset_id: str | None
     audio_url: str | None = None
+    question_audio_asset_id: str | None
+    question_audio_url: str | None = None
     asr_provider: str
     asr_model: str
     asr_metadata: dict
@@ -728,6 +730,18 @@ class InterviewFollowupOutput(BaseModel):
     @field_validator("uncertainties")
     @classmethod
     def cap_uncertainty_length(cls, values: list[str]) -> list[str]:
+        if any(len(value) > 300 for value in values):
+            raise ValueError("待核实信息过长")
+        return values
+
+
+class InterviewCleanupOutput(BaseModel):
+    polished_text: str = Field(min_length=1, max_length=20_000)
+    uncertainties: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("uncertainties")
+    @classmethod
+    def cap_cleanup_uncertainty_length(cls, values: list[str]) -> list[str]:
         if any(len(value) > 300 for value in values):
             raise ValueError("待核实信息过长")
         return values

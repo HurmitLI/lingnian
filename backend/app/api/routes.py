@@ -155,7 +155,12 @@ from app.services.memory import (
 from app.services.generative_media import capability_catalog, estimate_request
 from app.services.asr import get_asr_provider
 from app.services.asr.audio import get_ffmpeg_binary, normalize_audio
-from app.services.llm import generate_local_interview_followup, get_llm_provider
+from app.services.llm import (
+    clean_local_interview_transcript,
+    generate_local_interview_followup,
+    get_llm_provider,
+)
+from app.services.tts import get_tts_provider
 from app.services.keepsake import (
     build_keepsake_manifest,
     manifest_sha256 as keepsake_manifest_sha256,
@@ -440,6 +445,12 @@ def interview_turn_read(
         audio_url=(
             f"/api/v1/media-assets/{turn.audio_asset_id}/content"
             if turn.audio_asset_id
+            else None
+        ),
+        question_audio_asset_id=turn.question_audio_asset_id,
+        question_audio_url=(
+            f"/api/v1/media-assets/{turn.question_audio_asset_id}/content"
+            if turn.question_audio_asset_id
             else None
         ),
         asr_provider=turn.asr_provider,
@@ -2732,6 +2743,87 @@ def _interview_history(
     ]
 
 
+@router.get("/memory-sessions/{session_id}/interview-question-audio")
+def get_interview_question_audio(
+    session_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> Response:
+    session = require(
+        db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次采访。"
+    )
+    if session.interview_mode != "guided_voice" or session.status != "INTERVIEWING":
+        raise DomainError("SESSION_NOT_INTERVIEWING", "当前记录不在语音采访中。", 409)
+    question_text = secure_value(
+        db, session.elder.person.family, session, "question_text", secret_store
+    )
+    try:
+        result = get_tts_provider().synthesize(question_text)
+    except Exception as exc:
+        raise DomainError(
+            "INTERVIEW_SPEECH_FAILED",
+            "自然语音暂时不可用，可以继续查看文字问题。",
+            503,
+        ) from exc
+    return Response(
+        content=result.audio,
+        media_type="audio/wav",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'inline; filename="lingnian-question.wav"',
+            "X-Lingnian-Speech-Provider": result.provider,
+            "X-Lingnian-Speech-Model": result.model,
+            "X-Lingnian-Speech-Voice": result.voice,
+        },
+    )
+
+
+async def _persist_interview_question_audio(
+    db: Session,
+    session: MemorySession,
+    question_text: str,
+    secret_store: SecretStore,
+    upload: UploadFile | None,
+) -> MediaAsset:
+    settings = get_settings()
+    family = session.elder.person.family
+    if upload is not None:
+        stored = await store_audio_upload(upload, session.id, settings)
+    else:
+        speech = get_tts_provider().synthesize(question_text)
+        asset_id = str(uuid4())
+        relative_path = f"assets/generated/{session.id}/{asset_id}.wav"
+        path = resolve_controlled_path(settings.resolved_asset_root, relative_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(speech.audio)
+        path.chmod(0o600)
+        stored = {
+            "relative_path": relative_path,
+            "original_filename": f"聆年提问-{len(session.interview_turns) + 1}.wav",
+            "mime_type": "audio/wav",
+            "size_bytes": path.stat().st_size,
+            "sha256": calculate_sha256(path),
+        }
+    asset = MediaAsset(
+        session_id=session.id,
+        kind="interview_question_audio",
+        status="ready",
+        is_original=False,
+        **stored,
+    )
+    db.add(asset)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        asset,
+        {"original_filename": asset.original_filename},
+        secret_store,
+    )
+    encrypt_asset_if_needed(db, asset, family, secret_store)
+    return asset
+
+
 @router.post(
     "/memory-sessions/{session_id}/interview-turns/audio",
     response_model=InterviewTurnRead,
@@ -2740,6 +2832,7 @@ def _interview_history(
 async def upload_interview_turn_audio(
     session_id: str,
     audio: UploadFile = File(...),
+    question_audio: UploadFile | None = File(default=None),
     db: Session = Depends(get_db),
     secret_store: SecretStore = Depends(get_secret_store),
 ) -> InterviewTurnRead:
@@ -2757,6 +2850,7 @@ async def upload_interview_turn_audio(
     asset_path = resolve_controlled_path(
         get_settings().resolved_asset_root, stored["relative_path"]
     )
+    question_asset_path: Path | None = None
     try:
         asset = MediaAsset(
             session_id=session.id,
@@ -2803,6 +2897,16 @@ async def upload_interview_turn_audio(
         question_text = secure_value(
             db, family, session, "question_text", secret_store
         )
+        question_asset = await _persist_interview_question_audio(
+            db,
+            session,
+            question_text,
+            secret_store,
+            question_audio,
+        )
+        question_asset_path = resolve_controlled_path(
+            get_settings().resolved_asset_root, question_asset.relative_path
+        )
         turn = InterviewTurn(
             session_id=session.id,
             turn_index=len(session.interview_turns) + 1,
@@ -2811,6 +2915,7 @@ async def upload_interview_turn_audio(
             corrected_answer_text=result.text,
             answer_version=1,
             audio_asset_id=asset.id,
+            question_audio_asset_id=question_asset.id,
             asr_provider=result.provider,
             asr_model=result.model,
             asr_metadata=result.metadata,
@@ -2837,10 +2942,14 @@ async def upload_interview_turn_audio(
     except DomainError:
         db.rollback()
         asset_path.unlink(missing_ok=True)
+        if question_asset_path:
+            question_asset_path.unlink(missing_ok=True)
         raise
     except Exception as exc:
         db.rollback()
         asset_path.unlink(missing_ok=True)
+        if question_asset_path:
+            question_asset_path.unlink(missing_ok=True)
         raise DomainError(
             "INTERVIEW_TRANSCRIPTION_FAILED",
             "这段回答暂时没有转写成功，请保留原录音并重试。",
@@ -2900,11 +3009,8 @@ def continue_guided_interview(
         raise DomainError("SESSION_NOT_INTERVIEWING", "当前记录不在语音采访中。", 409)
 
     family = session.elder.person.family
-    corrected = payload.corrected_answer_text.strip()
-    turn.corrected_answer_text = corrected
-    turn.answer_version += 1
+    source_text = payload.corrected_answer_text.strip()
     history = _interview_history(db, session, secret_store)
-    history[-1]["answer"] = corrected
     subject_name = secure_value(
         db, family, session.elder, "preferred_name", secret_store
     )
@@ -2914,68 +3020,102 @@ def continue_guided_interview(
     )
     settings = get_settings()
     followup_mode = "local_private"
-    try:
-        if settings.llm_provider == "qwen" and family.data_classification != "test":
-            if payload.allow_cloud_followup:
-                consent_input = json.dumps(
-                    {
-                        "memory_subject": subject_name,
-                        "narrator": narrator_name,
-                        "life_stage": session.life_stage,
-                        "turns": history[-6:],
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                )
-                consent = ModelConsentEvent(
-                    family_id=family.id,
-                    session_id=session.id,
-                    actor_label=payload.actor_label.strip(),
-                    purpose="interview_followup",
-                    data_classification=family.data_classification,
-                    decision="granted",
-                    one_time=True,
-                    input_sha256=hashlib.sha256(consent_input.encode("utf-8")).hexdigest(),
-                    used_at=now_utc(),
-                )
-                db.add(consent)
-                db.flush()
-                protect_values(
-                    db,
-                    family,
-                    consent,
-                    {"actor_label": payload.actor_label.strip()},
-                    secret_store,
-                )
-                followup = get_llm_provider().generate_interview_followup(
-                    subject_name, narrator_name, session.life_stage, history
-                )
-                followup_mode = "qwen_one_time"
-            else:
-                followup = generate_local_interview_followup(
-                    subject_name, narrator_name, session.life_stage, history
-                )
-        else:
+    cloud_succeeded = False
+    if (
+        settings.llm_provider == "qwen"
+        and family.data_classification != "test"
+        and payload.allow_cloud_followup
+    ):
+        try:
+            cleanup = get_llm_provider().clean_interview_transcript(source_text)
+            corrected = cleanup.polished_text
+            history[-1]["answer"] = corrected
             followup = get_llm_provider().generate_interview_followup(
                 subject_name, narrator_name, session.life_stage, history
             )
-            followup_mode = "test_or_local_model"
-    except Exception as exc:
-        db.rollback()
-        raise DomainError(
-            "INTERVIEW_FOLLOWUP_FAILED",
-            "下一问暂时没有生成成功；这段回答仍可重新确认。",
-            503,
-        ) from exc
+            cloud_succeeded = True
+            followup_mode = "qwen_auto_polish_and_followup"
+        except Exception:
+            cleanup = clean_local_interview_transcript(source_text)
+            corrected = cleanup.polished_text
+            history[-1]["answer"] = corrected
+            followup = generate_local_interview_followup(
+                subject_name, narrator_name, session.life_stage, history
+            )
+            followup_mode = "local_fallback"
+    else:
+        cleanup = (
+            get_llm_provider().clean_interview_transcript(source_text)
+            if family.data_classification == "test"
+            else clean_local_interview_transcript(source_text)
+        )
+        corrected = cleanup.polished_text
+        history[-1]["answer"] = corrected
+        followup = (
+            get_llm_provider().generate_interview_followup(
+                subject_name, narrator_name, session.life_stage, history
+            )
+            if family.data_classification == "test"
+            else generate_local_interview_followup(
+                subject_name, narrator_name, session.life_stage, history
+            )
+        )
+        followup_mode = "test_or_local_model"
 
+    if cloud_succeeded:
+        consent_input = json.dumps(
+            {
+                "raw_transcript": source_text,
+                "memory_subject": subject_name,
+                "narrator": narrator_name,
+                "life_stage": session.life_stage,
+                "turns": history[-6:],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        consent = ModelConsentEvent(
+            family_id=family.id,
+            session_id=session.id,
+            actor_label=payload.actor_label.strip(),
+            purpose="interview_auto_polish_and_followup",
+            data_classification=family.data_classification,
+            decision="granted",
+            one_time=True,
+            input_sha256=hashlib.sha256(consent_input.encode("utf-8")).hexdigest(),
+            used_at=now_utc(),
+        )
+        db.add(consent)
+        db.flush()
+        protect_values(
+            db,
+            family,
+            consent,
+            {"actor_label": payload.actor_label.strip()},
+            secret_store,
+        )
+
+    turn.corrected_answer_text = corrected
+    turn.answer_version += 1
     turn.followup_mode = followup_mode
     turn.status = "complete"
+    current_metadata = secure_value(
+        db, family, turn, "asr_metadata", secret_store
+    )
+    turn.asr_metadata = {
+        **(current_metadata if isinstance(current_metadata, dict) else {}),
+        "cleanup_mode": followup_mode,
+        "cleanup_uncertainties": cleanup.uncertainties,
+    }
     session.question_text = followup.next_question.strip()
     protect_values(
         db,
         family,
         turn,
-        {"corrected_answer_text": corrected},
+        {
+            "corrected_answer_text": corrected,
+            "asr_metadata": turn.asr_metadata,
+        },
         secret_store,
     )
     protect_values(
@@ -3069,31 +3209,35 @@ def _create_complete_interview_audio(
             temp_dir = Path(temp_name)
             normalized_paths: list[Path] = []
             for index, turn in enumerate(turns):
-                source_asset = turn.audio_asset
-                if source_asset is None:
-                    continue
-                stored_path = resolve_controlled_path(
-                    settings.resolved_asset_root, source_asset.relative_path
+                sequence = (
+                    ("question", turn.question_audio_asset),
+                    ("answer", turn.audio_asset),
                 )
-                source_path = stored_path
-                if source_asset.encryption_version == 1:
-                    if key is None:
-                        raise RuntimeError("MASTER_KEY_MISSING")
-                    source_path = temp_dir / f"source-{index}"
-                    decrypted = decrypt_media_file(
-                        stored_path,
-                        source_path,
-                        key,
-                        associated_data=media_context(family.id, source_asset.id),
+                for segment, source_asset in sequence:
+                    if source_asset is None:
+                        continue
+                    stored_path = resolve_controlled_path(
+                        settings.resolved_asset_root, source_asset.relative_path
                     )
-                    if (
-                        decrypted.plaintext_size != source_asset.plaintext_size_bytes
-                        or decrypted.plaintext_sha256 != source_asset.plaintext_sha256
-                    ):
-                        raise RuntimeError("ASSET_PLAINTEXT_INTEGRITY_FAILED")
-                normalized = temp_dir / f"turn-{index}.wav"
-                normalize_audio(source_path, normalized)
-                normalized_paths.append(normalized)
+                    source_path = stored_path
+                    if source_asset.encryption_version == 1:
+                        if key is None:
+                            raise RuntimeError("MASTER_KEY_MISSING")
+                        source_path = temp_dir / f"source-{index}-{segment}"
+                        decrypted = decrypt_media_file(
+                            stored_path,
+                            source_path,
+                            key,
+                            associated_data=media_context(family.id, source_asset.id),
+                        )
+                        if (
+                            decrypted.plaintext_size != source_asset.plaintext_size_bytes
+                            or decrypted.plaintext_sha256 != source_asset.plaintext_sha256
+                        ):
+                            raise RuntimeError("ASSET_PLAINTEXT_INTEGRITY_FAILED")
+                    normalized = temp_dir / f"turn-{index}-{segment}.wav"
+                    normalize_audio(source_path, normalized)
+                    normalized_paths.append(normalized)
             if not normalized_paths:
                 return None
             concat_file = temp_dir / "inputs.txt"
