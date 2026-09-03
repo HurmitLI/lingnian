@@ -883,8 +883,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "zh-CN";
-    utterance.rate = 0.88;
-    utterance.pitch = 0.98;
+    utterance.rate = 1;
+    utterance.pitch = 0.92;
     const voices = window.speechSynthesis.getVoices();
     const preferredNames = ["Flo", "Sandy", "Tingting", "Meijia"];
     const preferredVoice = voices.find(

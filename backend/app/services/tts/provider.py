@@ -48,6 +48,8 @@ class DashScopeTTSProvider:
         self.model = settings.tts_model
         self.voice = settings.tts_voice
         self.rate = settings.tts_rate
+        self.pitch = settings.tts_pitch
+        self.volume = settings.tts_volume
 
     def synthesize(self, text: str) -> SpeechResult:
         from dashscope.audio.http_tts.http_speech_synthesizer import (
@@ -58,12 +60,13 @@ class DashScopeTTSProvider:
             model=self.model,
             text=text.strip(),
             voice=self.voice,
-            format="wav",
+            audio_format="wav",
             sample_rate=24_000,
-            volume=55,
+            volume=self.volume,
             rate=self.rate,
-            pitch=0.98,
+            pitch=self.pitch,
             language_hints=["zh"],
+            seed=20260903,
             stream=False,
             api_key=self.api_key,
         )

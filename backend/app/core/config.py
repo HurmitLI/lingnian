@@ -40,8 +40,10 @@ class Settings(BaseSettings):
 
     tts_provider: str = "auto"
     tts_model: str = "cosyvoice-v3-flash"
-    tts_voice: str = "longyuan_v3"
-    tts_rate: float = Field(default=0.92, ge=0.5, le=2.0)
+    tts_voice: str = "longyan_v3"
+    tts_rate: float = Field(default=1.0, ge=0.5, le=2.0)
+    tts_pitch: float = Field(default=0.9, ge=0.5, le=2.0)
+    tts_volume: int = Field(default=62, ge=0, le=100)
 
     keepsake_max_stories: int = Field(default=10, ge=1, le=30)
     keepsake_max_source_seconds: int = Field(default=1800, ge=30, le=10_800)
