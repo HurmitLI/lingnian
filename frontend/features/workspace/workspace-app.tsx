@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { CalendarClock, CheckCircle2, ImageIcon, Mic, RotateCcw, Search, Volume2 } from "lucide-react";
 
 import SecurityPanel from "@/app/security-panel";
+import FormalAccessPanel from "@/app/formal-access-panel";
 import AppShell from "@/components/layout/app-shell";
 import MemoryWorkflowStepper from "@/components/ui/memory-workflow-stepper";
 import { api, ApiError, apiDownload, mediaUrl } from "@/lib/api";
@@ -1991,7 +1992,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         </section>
       )}
 
-      {!initialLoading && view === "family" && <SecurityPanel key={selectedProfile?.family_id ?? "no-family"} familyId={selectedProfile?.family_id ?? null} />}
+      {!initialLoading && view === "family" && process.env.NEXT_PUBLIC_FORMAL_AUTH_REQUIRED === "true" && <FormalAccessPanel />}
+      {!initialLoading && view === "family" && process.env.NEXT_PUBLIC_FORMAL_AUTH_REQUIRED !== "true" && <SecurityPanel key={selectedProfile?.family_id ?? "no-family"} familyId={selectedProfile?.family_id ?? null} />}
 
       {!initialLoading && view === "record" && !detail && <section className="card entry-card">
         <div className="section-heading"><span>01</span><div><h2>先确定讲谁的故事</h2><p>记忆中的人和今天开口讲述的人，可以不是同一个人。</p></div></div>

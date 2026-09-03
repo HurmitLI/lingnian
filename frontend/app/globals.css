@@ -176,6 +176,23 @@ h1 { font-size: clamp(42px, 7vw, 68px); line-height: 1; font-weight: 600; letter
 .security-status span { color: var(--muted); font-family: ui-sans-serif, system-ui; font-size: 12px; }
 .security-status strong { color: var(--green); font-size: 16px; }
 .security-action { display: grid; justify-items: start; gap: 14px; border-top: 1px dashed var(--line); padding-top: 18px; }
+.formal-access-card > .button { display: inline-flex; gap: 8px; }
+.cloud-security-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: start; margin: 0 0 16px; padding: 16px; color: var(--green); border: 1px solid rgba(79,113,95,.24); border-radius: 14px; background: rgba(230,240,231,.55); }
+.cloud-security-summary > div { display: grid; gap: 3px; }
+.cloud-security-summary strong { color: #34523a; font-size: 14px; }
+.cloud-security-summary span { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.formal-current-user { display: flex; align-items: center; gap: 8px; margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+.created-invitation { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 9px 12px; align-items: center; margin-top: 16px; padding: 16px; border: 1px solid #d9ccb7; border-radius: 14px; background: #fbf6ec; }
+.created-invitation > span { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
+.created-invitation code { min-width: 0; overflow-wrap: anywhere; font-size: 15px; }
+.created-invitation .button { min-height: 38px; display: inline-flex; gap: 6px; padding: 0 12px; }
+.invitation-list { display: grid; gap: 0; margin-top: 16px; border-top: 1px solid var(--line); }
+.invitation-list > div { min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); }
+.invitation-list span { display: grid; gap: 3px; }
+.invitation-list strong { font-size: 13px; }
+.invitation-list small { color: var(--muted); font-size: 10px; }
+.invitation-list button { width: 36px; height: 36px; display: grid; place-items: center; color: var(--muted); border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
+.invitation-list button:hover { color: var(--red); background: #faece8; }
 .recovery-form { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; align-items: end; border-top: 1px dashed var(--line); padding-top: 20px; }
 .recovery-form > div { grid-column: 1 / -1; }
 .recovery-form h3 { margin: 0 0 5px; font-size: 20px; }

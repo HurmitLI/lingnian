@@ -49,6 +49,9 @@ class FamilyArchive(TimestampMixin, Base):
     memberships: Mapped[list[FamilyMembership]] = relationship(
         back_populates="family", cascade="all, delete-orphan"
     )
+    invitations: Mapped[list[FamilyInvite]] = relationship(
+        back_populates="family", cascade="all, delete-orphan"
+    )
 
 
 class UserAccount(TimestampMixin, Base):
@@ -103,6 +106,26 @@ class AuthSession(TimestampMixin, Base):
     revoked_at: Mapped[datetime | None] = mapped_column()
 
     user: Mapped[UserAccount] = relationship(back_populates="sessions")
+
+
+class FamilyInvite(TimestampMixin, Base):
+    __tablename__ = "family_invites"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(
+        ForeignKey("family_archives.id", ondelete="CASCADE"), index=True
+    )
+    created_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    role: Mapped[str] = mapped_column(String(24), default="member")
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    use_count: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime] = mapped_column(index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column()
+
+    family: Mapped[FamilyArchive] = relationship(back_populates="invitations")
 
 
 class Person(TimestampMixin, Base):

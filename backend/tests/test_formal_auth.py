@@ -140,3 +140,60 @@ def test_formal_session_cannot_read_another_family(client, db, monkeypatch):
     )
     assert create_second_family.status_code == 403
     assert db.get(FamilyArchive, own_family_id) is not None
+
+
+def test_owner_creates_one_time_invitation_for_a_member(client, monkeypatch):
+    enable_formal_auth(monkeypatch)
+    owner = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": "family-invite-2026",
+            "username": "owner.account",
+            "display_name": "管理员",
+            "password": "owner-secure-password",
+            "family_name": "我们的家",
+        },
+    )
+    assert owner.status_code == 201
+
+    created = client.post("/api/v1/auth/invitations", json={"expires_in_days": 3})
+    assert created.status_code == 201
+    invitation_code = created.json()["invitation_code"]
+    assert invitation_code.startswith("LN-")
+    invitation_id = created.json()["id"]
+    assert all("invitation_code" not in item for item in client.get("/api/v1/auth/invitations").json())
+
+    client.post("/api/v1/auth/logout")
+    member = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": invitation_code,
+            "username": "member.account",
+            "display_name": "受邀家人",
+            "password": "member-secure-password",
+            "family_name": "不会另建家庭",
+        },
+    )
+    assert member.status_code == 201
+    assert member.json()["family_id"] == owner.json()["family_id"]
+    assert member.json()["role"] == "member"
+    assert client.post("/api/v1/auth/invitations", json={}).status_code == 403
+
+    client.post("/api/v1/auth/logout")
+    reused = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": invitation_code,
+            "username": "another.member",
+            "display_name": "另一位家人",
+            "password": "another-secure-password",
+        },
+    )
+    assert reused.status_code == 403
+
+    logged_in = client.post(
+        "/api/v1/auth/login",
+        json={"username": "owner.account", "password": "owner-secure-password"},
+    )
+    assert logged_in.status_code == 200
+    assert client.delete(f"/api/v1/auth/invitations/{invitation_id}").status_code == 204
