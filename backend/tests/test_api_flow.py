@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import wave
 
+from PIL import Image
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -16,6 +17,12 @@ def wav_bytes(seconds: float = 0.15) -> bytes:
         output.setsampwidth(2)
         output.setframerate(16000)
         output.writeframes(b"\x00\x00" * int(16000 * seconds))
+    return buffer.getvalue()
+
+
+def png_bytes() -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (640, 360), color=(176, 142, 104)).save(buffer, format="PNG")
     return buffer.getvalue()
 
 
@@ -139,6 +146,34 @@ def test_complete_vertical_slice(client, db):
     assert timeline_item["audio_url"].startswith("/api/v1/media-assets/")
     assert timeline_item["image_url"] is None
     assert timeline_item["image_annotation"] is None
+
+    photo = client.post(
+        f"/api/v1/stories/{confirm.json()['id']}/photo",
+        data={"user_annotation": "虚构的旧照片，只用于自动化测试"},
+        files={"image": ("memory.png", png_bytes(), "image/png")},
+    )
+    assert photo.status_code == 201, photo.text
+    timeline_item = client.get(
+        f"/api/v1/elder-profiles/{profile['id']}/timeline"
+    ).json()[0]
+    assert timeline_item["image_asset_id"] == photo.json()["media_asset_id"]
+    assert timeline_item["image_annotation"] == "虚构的旧照片，只用于自动化测试"
+
+    duplicate = client.post(
+        f"/api/v1/stories/{confirm.json()['id']}/photo",
+        files={"image": ("second.png", png_bytes(), "image/png")},
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "STORY_PHOTO_ALREADY_EXISTS"
+
+    removed = client.delete(
+        f"/api/v1/stories/{confirm.json()['id']}/photo/{photo.json()['media_asset_id']}"
+    )
+    assert removed.status_code == 204
+    timeline_item = client.get(
+        f"/api/v1/elder-profiles/{profile['id']}/timeline"
+    ).json()[0]
+    assert timeline_item["image_url"] is None
 
 
 def test_health_notes_require_sensitive_encrypted_mode(client):

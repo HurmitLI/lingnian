@@ -3459,6 +3459,105 @@ async def upload_trigger_image(
     return media_link_read(db, link, secret_store)
 
 
+@router.post(
+    "/stories/{story_id}/photo",
+    response_model=MediaLinkRead,
+    status_code=201,
+)
+async def add_story_photo(
+    story_id: str,
+    image: UploadFile = File(...),
+    user_annotation: str | None = Form(default=None),
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> MediaLinkRead:
+    story = require(db, Story, story_id, "STORY_NOT_FOUND", "没有找到这篇故事。")
+    session = story.source_draft.session
+    existing = db.scalar(
+        select(MediaAsset).where(
+            MediaAsset.session_id == session.id,
+            MediaAsset.kind.in_(["photo_original", "old_object_original"]),
+            MediaAsset.is_original.is_(True),
+        )
+    )
+    if existing:
+        raise DomainError(
+            "STORY_PHOTO_ALREADY_EXISTS",
+            "这篇故事已经有一张照片；如需更换，请先删除当前照片。",
+            409,
+        )
+    stored = await store_image_upload(image, session.id, get_settings())
+    width = stored.pop("width")
+    height = stored.pop("height")
+    asset = MediaAsset(
+        session_id=session.id,
+        kind="photo_original",
+        status="ready",
+        is_original=True,
+        **stored,
+    )
+    db.add(asset)
+    db.flush()
+    family = session.elder.person.family
+    protect_values(
+        db,
+        family,
+        asset,
+        {"original_filename": asset.original_filename},
+        secret_store,
+    )
+    encrypt_asset_if_needed(db, asset, family, secret_store)
+    link = MediaLink(
+        media_asset_id=asset.id,
+        elder_id=story.elder_id,
+        trigger_kind="photo",
+        user_annotation=user_annotation.strip()[:1000] if user_annotation else None,
+        width=width,
+        height=height,
+        model_inference=None,
+    )
+    db.add(link)
+    db.flush()
+    protect_values(
+        db,
+        family,
+        link,
+        {
+            "user_annotation": user_annotation.strip()[:1000] if user_annotation else None,
+            "model_inference": None,
+        },
+        secret_store,
+    )
+    db.commit()
+    db.refresh(link)
+    return media_link_read(db, link, secret_store)
+
+
+@router.delete("/stories/{story_id}/photo/{asset_id}", status_code=204)
+def remove_story_photo(
+    story_id: str,
+    asset_id: str,
+    db: Session = Depends(get_db),
+) -> Response:
+    story = require(db, Story, story_id, "STORY_NOT_FOUND", "没有找到这篇故事。")
+    asset = require(db, MediaAsset, asset_id, "MEDIA_NOT_FOUND", "没有找到这张照片。")
+    if (
+        asset.session_id != story.source_draft.session_id
+        or asset.kind not in {"photo_original", "old_object_original"}
+    ):
+        raise DomainError("STORY_PHOTO_MISMATCH", "这张照片不属于当前故事。", 409)
+    path = resolve_controlled_path(get_settings().resolved_asset_root, asset.relative_path)
+    delete_secure_fields(
+        db,
+        family_id=story.elder.person.family_id,
+        object_ids=[asset.id, *[link.id for link in asset.links]],
+    )
+    path.unlink(missing_ok=True)
+    db.delete(asset)
+    db.commit()
+    return Response(status_code=204)
+
+
 @router.delete("/media-assets/{asset_id}", status_code=204)
 def delete_trigger_image(asset_id: str, db: Session = Depends(get_db)) -> Response:
     asset = require(

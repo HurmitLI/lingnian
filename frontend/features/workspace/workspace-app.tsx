@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { CalendarClock, CheckCircle2, ImageIcon, Mic, RotateCcw, Search, Volume2 } from "lucide-react";
 
 import SecurityPanel from "@/app/security-panel";
@@ -65,6 +66,7 @@ const RELATIONSHIP_LABELS: Record<string, string> = {
 };
 
 export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
+  const router = useRouter();
   const [health, setHealth] = useState<Health | null>(null);
   const [profiles, setProfiles] = useState<ElderProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
@@ -334,6 +336,23 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     });
     return () => { cancelled = true; };
   }, [selectedProfile?.family_id, showError]);
+
+  useEffect(() => {
+    if (
+      view !== "archive"
+      || !selectedProfileId
+      || !recentSessions.some((session) => ["TRANSCRIBING", "ORGANIZING"].includes(session.status))
+    ) return;
+    const timer = window.setInterval(() => {
+      void Promise.all([
+        loadRecentSessions(selectedProfileId),
+        loadTimeline(selectedProfileId),
+      ]).catch(() => {
+        // The next interval will retry; the active record page carries detailed errors.
+      });
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [loadRecentSessions, loadTimeline, recentSessions, selectedProfileId, view]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -1448,12 +1467,13 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     try {
       await api(`/api/v1/story-drafts/${detail.story_draft.id}/confirm`, {
         method: "POST",
-        body: JSON.stringify({ confirmed_by: "测试子女" }),
+        body: JSON.stringify({ confirmed_by: "本机家庭管理员" }),
       });
       await loadTimeline(selectedProfile.id);
       await loadMemoryContext(selectedProfile.id);
       await loadRecentSessions(selectedProfile.id);
-      clearActiveSession("这段故事已由人工确认并归档，可以到“回忆档案”查看。");
+      clearActiveSession();
+      router.push(`/archive?elder=${encodeURIComponent(selectedProfile.id)}`);
     } catch (value) {
       showError(value);
     } finally {
@@ -1609,6 +1629,58 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     }
   }
 
+  async function addArchivedStoryPhoto(
+    event: FormEvent<HTMLFormElement>,
+    item: TimelineItem,
+  ) {
+    event.preventDefault();
+    if (!selectedProfile) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const file = form.get("storyPhoto");
+    if (!(file instanceof File) || !file.size) {
+      setError("请先选择一张照片。");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const upload = new FormData();
+      upload.append("image", file);
+      upload.append("user_annotation", String(form.get("photoAnnotation") ?? ""));
+      await api<MediaLink>(`/api/v1/stories/${item.story.id}/photo`, {
+        method: "POST",
+        body: upload,
+      });
+      formElement.reset();
+      await loadTimeline(selectedProfile.id);
+      setNotice("照片已经与这篇故事放在一起，只保存在家庭档案中。");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeArchivedStoryPhoto(item: TimelineItem) {
+    if (!selectedProfile || !item.image_asset_id) return;
+    if (!window.confirm("确认移除这张照片吗？故事正文和采访录音不会受到影响。")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api<void>(
+        `/api/v1/stories/${item.story.id}/photo/${item.image_asset_id}`,
+        { method: "DELETE" },
+      );
+      await loadTimeline(selectedProfile.id);
+      setNotice("照片已经移除，故事正文和采访录音仍然保留。 ");
+    } catch (value) {
+      showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const latestFailedTask = detail?.tasks.find((task) => task.status === "failed_retryable");
   const latestOrganizationFailure = detail?.tasks.find(
     (task) => task.task_type === "organization" && ["failed_retryable", "failed_final"].includes(task.status),
@@ -1655,8 +1727,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     },
     archive: {
       eyebrow: "回忆档案",
-      title: selectedProfile ? `${selectedProfileLabel}的故事` : "家人的故事",
-      subtitle: "这里只收录经过人工确认的内容，也可以生成长期保存的回忆录。",
+      title: selectedProfile ? `${selectedProfileLabel}的回忆` : "家人的回忆",
+      subtitle: "采访一保存就能找回；确认后的故事、原声和照片会长期放在一起。",
     },
     family: {
       eyebrow: "家庭管理",
@@ -2245,6 +2317,19 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                     )}
                     <div className="archive-story-content"><h3>{item.story.title}</h3><p>{item.story.body}</p></div>
                   </div>
+                  <details className="archive-photo-tools">
+                    <summary>{item.image_url ? "维护这篇故事的照片" : "为这篇故事补一张照片（可选）"}</summary>
+                    {item.image_url ? (
+                      <div className="archive-photo-existing"><p>照片只作为记忆线索，不会改变故事内容。</p><button type="button" className="button quiet danger" disabled={busy} onClick={() => removeArchivedStoryPhoto(item)}>移除当前照片</button></div>
+                    ) : (
+                      <form onSubmit={(event) => addArchivedStoryPhoto(event, item)}>
+                        <label className="field"><span>选择家庭照片</span><input name="storyPhoto" type="file" accept="image/jpeg,image/png,image/webp" required /></label>
+                        <label className="field"><span>照片说明（可选）</span><input name="photoAnnotation" maxLength={1000} placeholder="例如：爸爸年轻时在旧党校门口" /></label>
+                        <button className="button secondary" disabled={busy}>保存到这篇故事</button>
+                        <p>不需要有很多照片，一张也可以；没有照片也不影响保存故事。</p>
+                      </form>
+                    )}
+                  </details>
                   {mediaUrl(item.audio_url) && (
                     <div className="archive-story-audio"><span>{item.interview_mode === "guided_voice" ? "完整采访录音 · 含提问与回答" : item.narration_kind === "family_recollection" ? `${item.narrator_label ?? "家人"}的回忆` : "亲口讲述"}</span><audio controls preload="metadata" src={mediaUrl(item.audio_url) ?? undefined} /></div>
                   )}

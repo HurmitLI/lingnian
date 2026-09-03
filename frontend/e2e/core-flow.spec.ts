@@ -73,10 +73,7 @@ test("隔离数据完成记录、校对、整理和归档", async ({ page, isMob
   await expect(page.getByRole("heading", { name: "一段愿意留给家人的回忆" })).toBeVisible();
   await expect(page.locator("p.story-body")).toHaveText(correctedStory);
   await page.getByRole("button", { name: "人工确认并归档" }).click();
-  await expect(page.getByText("这段故事已由人工确认并归档，可以到“回忆档案”查看。", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "先确定讲谁的故事" })).toBeVisible();
-
-  await navigation.getByRole("link", { name: "回忆档案" }).click();
+  await expect(page).toHaveURL(/\/archive\?elder=[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: "一段愿意留给家人的回忆" })).toBeVisible();
   await expect(page.getByRole("paragraph").filter({ hasText: correctedStory })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);

@@ -44,6 +44,51 @@ const guidedSession = {
   status: "INTERVIEWING",
 };
 
+const archivedSession = {
+  ...session,
+  id: "session-archived",
+  narrator_person_id: "person-test",
+  interview_mode: "guided_voice",
+  status: "ARCHIVED",
+};
+
+const archivedTurns = [
+  {
+    id: "archived-turn-1",
+    session_id: archivedSession.id,
+    turn_index: 1,
+    question_text: "那时候你最常和谁一起去河边？",
+    raw_answer_text: "我常和姐姐一起去。",
+    corrected_answer_text: "我常和姐姐一起去。",
+    answer_version: 1,
+    audio_asset_id: "archived-audio-1",
+    audio_url: null,
+    question_audio_asset_id: "archived-question-audio-1",
+    question_audio_url: null,
+    asr_provider: "mock",
+    asr_model: "mock",
+    followup_mode: "local_private",
+    status: "complete",
+  },
+  {
+    id: "archived-turn-2",
+    session_id: archivedSession.id,
+    turn_index: 2,
+    question_text: "那段回忆里，你最记得什么？",
+    raw_answer_text: "最记得夏天河边的风。",
+    corrected_answer_text: "最记得夏天河边的风。",
+    answer_version: 1,
+    audio_asset_id: "archived-audio-2",
+    audio_url: null,
+    question_audio_asset_id: "archived-question-audio-2",
+    question_audio_url: null,
+    asr_provider: "mock",
+    asr_model: "mock",
+    followup_mode: "local_private",
+    status: "complete",
+  },
+];
+
 const timelineItem = {
   story: {
     id: "story-test",
@@ -52,7 +97,13 @@ const timelineItem = {
     confirmed_by: "测试家人",
     confirmed_at: "2026-08-29T09:00:00Z",
   },
+  source_session_id: archivedSession.id,
+  interview_mode: "guided_voice",
+  interview_turn_count: archivedTurns.length,
   life_stage: "童年",
+  narrator_person_id: "person-test",
+  narrator_label: "测试女儿",
+  narration_kind: "family_recollection",
   events: [],
   audio_url: null,
   image_url: null,
@@ -126,6 +177,8 @@ async function mockLocalApi(page: Page) {
       body = { session, media_assets: [], interview_turns: [], transcript: null, story_draft: null, tasks: [] };
     } else if (path === `/api/v1/memory-sessions/${guidedSession.id}`) {
       body = { session: guidedSession, media_assets: [], interview_turns: guidedTurns, transcript: null, story_draft: null, tasks: [] };
+    } else if (path === `/api/v1/memory-sessions/${archivedSession.id}`) {
+      body = { session: archivedSession, media_assets: [], interview_turns: archivedTurns, transcript: null, story_draft: null, tasks: [] };
     } else if (path === `/api/v1/memory-sessions/${guidedSession.id}/interview-turns/audio`) {
       body = {
         id: "guided-turn-uploaded",
@@ -203,7 +256,7 @@ test("首页可导航且没有横向溢出", async ({ page, isMobile }) => {
   await expect(navigation).toBeVisible();
   await navigation.getByRole("link", { name: "回忆档案" }).click();
   await expect(page).toHaveURL(/\/archive$/);
-  await expect(page.getByRole("heading", { level: 1, name: "奶奶的故事" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "奶奶的回忆" })).toBeVisible();
   await expect(navigation.getByRole("link", { name: "回忆档案" })).toHaveAttribute("aria-current", "page");
 
   const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
@@ -321,6 +374,16 @@ test("回忆档案可以搜索并清除筛选", async ({ page }) => {
   await expect(page.getByRole("heading", { name: timelineItem.story.title })).toBeVisible();
 });
 
+test("回忆档案能找回未完成记录并展开完整采访", async ({ page }) => {
+  await page.goto("/archive");
+  await expect(page.getByText("2 条待完成", { exact: false })).toBeVisible();
+  await expect(page.getByRole("link", { name: "继续采访" }).first()).toBeVisible();
+  await page.getByRole("button", { name: "查看完整采访 · 2轮" }).click();
+  await expect(page.getByText("那时候你最常和谁一起去河边？")).toBeVisible();
+  await expect(page.getByText("最记得夏天河边的风。")).toBeVisible();
+  await expect(page.getByText("为这篇故事补一张照片（可选）")).toBeVisible();
+});
+
 test("家族记忆可以溯源回答并浏览人生轨迹", async ({ page }) => {
   await page.goto("/memory");
   await expect(page.getByRole("heading", { level: 1, name: "让后来的人，不只看到一份文件" })).toBeVisible();
@@ -374,7 +437,7 @@ test("手机记录页一次只突出一个开始动作", async ({ page, isMobile
 test("手机档案先看故事，低频工具默认收起", async ({ page, isMobile }) => {
   test.skip(!isMobile, "手机项目覆盖简化后的档案页");
   await page.goto("/archive");
-  const storyHeading = page.getByRole("heading", { level: 2, name: "奶奶的故事" });
+  const storyHeading = page.getByRole("heading", { level: 2, name: "奶奶的回忆档案" });
   const toolsHeading = page.getByRole("heading", { name: "保存与维护" });
   await expect(storyHeading).toBeVisible();
   await expect(toolsHeading).toBeVisible();

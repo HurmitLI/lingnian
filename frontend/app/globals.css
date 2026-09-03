@@ -325,6 +325,14 @@ blockquote { margin: 9px 0 0; padding: 2px 0 2px 19px; border-left: 3px solid va
 .archive-story-audio { display: grid; gap: 9px; padding: 15px 18px 17px; border-top: 1px solid rgba(93,76,61,.1); background: rgba(243,238,229,.62); }
 .archive-story-audio > span { color: var(--green); font-family: var(--sans); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
 .archive-story-audio audio { width: 100%; height: 40px; }
+.archive-photo-tools { border-top: 1px solid rgba(93,76,61,.1); padding: 0 18px; background: #fffdf8; }
+.archive-photo-tools summary { min-height: 48px; display: flex; align-items: center; color: var(--red-deep); cursor: pointer; font-family: var(--sans); font-size: 12px; font-weight: 650; }
+.archive-photo-tools form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 2px 0 18px; }
+.archive-photo-tools form .button, .archive-photo-tools form > p { grid-column: 1 / -1; }
+.archive-photo-tools form .button { justify-self: start; }
+.archive-photo-tools form > p, .archive-photo-existing p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.archive-photo-existing { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 0 16px; }
+.archive-photo-existing .button { flex: 0 0 auto; min-height: 38px; padding: 5px 0; }
 .archive-interview-entry { display: grid; gap: 12px; padding: 0 18px 17px; background: rgba(243,238,229,.62); }
 .archive-interview-entry > .button { justify-self: start; min-height: 38px; padding: 5px 0; color: var(--red-deep); }
 .archive-interview-detail { overflow: hidden; border: 1px solid rgba(93,76,61,.13); border-radius: 14px; background: #fffdf8; }
@@ -497,6 +505,8 @@ blockquote { margin: 9px 0 0; padding: 2px 0 2px 19px; border-left: 3px solid va
   .archive-progress { padding: 16px 13px; }
   .archive-progress-heading, .archive-progress-list article { align-items: flex-start; flex-direction: column; }
   .archive-progress-list .button { width: 100%; }
+  .archive-photo-tools form { grid-template-columns: 1fr; }
+  .archive-photo-existing { align-items: flex-start; flex-direction: column; }
   .archive-story-content { padding: 20px 18px 18px; }
   .archive-story-content h3 { font-size: 23px; }
   .archive-keepsake-entry { padding: 25px 20px; }
