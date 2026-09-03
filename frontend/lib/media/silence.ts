@@ -1,7 +1,8 @@
-export const SPEECH_RMS_THRESHOLD = 0.018;
-export const SILENCE_TO_SUBMIT_MS = 2_600;
-export const MIN_RECORDING_MS = 1_200;
-export const THINKING_EXTENSION_MS = 15_000;
+// 老年人说话音量可能偏轻、句间停顿也更长，因此这里宁可多等一会儿。
+export const SPEECH_RMS_THRESHOLD = 0.01;
+export const SILENCE_TO_SUBMIT_MS = 6_000;
+export const MIN_RECORDING_MS = 4_000;
+export const THINKING_EXTENSION_MS = 20_000;
 
 export function audioRms(samples: Float32Array): number {
   if (!samples.length) return 0;

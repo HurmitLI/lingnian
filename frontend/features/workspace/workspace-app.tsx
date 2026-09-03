@@ -110,6 +110,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const [continuousInterviewActive, setContinuousInterviewActive] = useState(false);
   const [continuousInterviewPhase, setContinuousInterviewPhase] = useState<ContinuousInterviewPhase>("idle");
   const [interviewHeardVoice, setInterviewHeardVoice] = useState(false);
+  const [audioNeedsRetry, setAudioNeedsRetry] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -533,6 +534,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     window.localStorage.removeItem("niannian.sessionId");
     setDetail(null);
     setAudioFile(null);
+    setAudioNeedsRetry(false);
     if (audioPreviewUrlRef.current) URL.revokeObjectURL(audioPreviewUrlRef.current);
     audioPreviewUrlRef.current = null;
     setAudioPreview(null);
@@ -661,6 +663,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       await loadMemoryContext(selectedProfileId);
       await loadRecentSessions(selectedProfileId);
       setAudioFile(null);
+      setAudioNeedsRetry(false);
       setNotice("采访已经准备好。点击一次“开始连续采访”，后面只需要慢慢回答。 ");
     } catch (value) {
       showError(value);
@@ -741,6 +744,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     audioPreviewUrlRef.current = previewUrl;
     setAudioFile(file);
     setAudioPreview(previewUrl);
+    setAudioNeedsRetry(false);
   }
 
   function stopSilenceMonitoring() {
@@ -1056,7 +1060,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       sessionId,
       preparedStream,
     });
-    if (started) setNotice("正在听你讲。自然停顿没关系，说完后会自动保存并继续提问。");
+    if (started) setNotice("正在听你讲。句间停顿没关系，连续安静约 6 秒后才会自动保存并继续提问。");
   }
 
   async function startContinuousInterview() {
@@ -1099,7 +1103,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       silenceExtensionUntilRef.current = 0;
       thinkingExtensionTimerRef.current = null;
     }, THINKING_EXTENSION_MS);
-    setNotice("好的，慢慢想。接下来 15 秒不会因为停顿自动结束回答。");
+    setNotice(`好的，慢慢想。接下来 ${THINKING_EXTENSION_MS / 1000} 秒不会因为停顿自动结束回答。`);
   }
 
   async function replaceInterviewQuestionAndResume(sessionId: string) {
@@ -1198,10 +1202,23 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       );
     }
     try {
-      const turn = await api<InterviewTurn>(
+      let turn: InterviewTurn;
+      try {
+        turn = await api<InterviewTurn>(
         `/api/v1/memory-sessions/${sessionId}/interview-turns/audio`,
         { method: "POST", body: form },
-      );
+        );
+      } catch (value) {
+        continuousInterviewRef.current = false;
+        setContinuousInterviewActive(false);
+        setContinuousInterviewPhase("idle");
+        setPreviewFile(file);
+        setAudioNeedsRetry(true);
+        const reason = value instanceof Error ? value.message : "这段回答暂时没有识别成功。";
+        setError(`${reason} 录音仍保留在当前页面，不用重说。`);
+        return;
+      }
+      setAudioNeedsRetry(false);
       const result = await api<InterviewContinueResult>(
         `/api/v1/memory-sessions/${sessionId}/interview-turns/${turn.id}/continue`,
         {
@@ -1262,7 +1279,10 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       continuousInterviewRef.current = false;
       setContinuousInterviewActive(false);
       setContinuousInterviewPhase("idle");
-      showError(value);
+      await loadSession(sessionId).catch(() => undefined);
+      showError(value instanceof Error
+        ? new Error(`${value.message} 录音和转写已保存，可在当前页面继续处理。`)
+        : value);
     } finally {
       setBusy(false);
     }
@@ -1273,6 +1293,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     audioPreviewUrlRef.current = null;
     setAudioPreview(null);
     setAudioFile(null);
+    setAudioNeedsRetry(false);
     setRecordingSeconds(0);
     setNotice("这段待上传音频已移除，服务器中已保存的内容没有变化。");
   }
@@ -1280,6 +1301,10 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   async function uploadAudio() {
     if (!detail || !audioFile) return;
     if (detail.session.interview_mode === "guided_voice" && detail.session.status === "INTERVIEWING") {
+      if (audioNeedsRetry) {
+        continuousInterviewRef.current = true;
+        setContinuousInterviewActive(true);
+      }
       await uploadGuidedAudioFile(audioFile, detail.session.id, false);
       return;
     }
@@ -1297,6 +1322,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       audioPreviewUrlRef.current = null;
       setAudioPreview(null);
       setAudioFile(null);
+      setAudioNeedsRetry(false);
       setRecordingSeconds(0);
       setNotice("原始音频已安全保留，可以开始转写。 ");
     } catch (value) {
@@ -2214,7 +2240,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                           ? "正在听你讲"
                           : "可以开始说了"}</strong>
                     <p>{continuousInterviewPhase === "listening"
-                      ? `录音 ${formatRecordingDuration(recordingSeconds)} · 自然停顿没关系`
+                      ? `录音 ${formatRecordingDuration(recordingSeconds)} · 安静约 6 秒才会自动结束`
                       : continuousInterviewPhase === "processing"
                         ? "处理完成后会自动继续下一问"
                         : "问题说完后会自动开始录音"}</p>
@@ -2229,8 +2255,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 </div>
               )}
               {isRecording && !continuousInterviewActive && <div className="recording-live" role="status" aria-live="polite"><span aria-hidden="true" /><strong>正在录音 {formatRecordingDuration(recordingSeconds)}</strong><small>讲完后请点“停止录音”</small></div>}
+              {audioNeedsRetry && <div className="interview-auto-status" role="status"><RotateCcw size={17} aria-hidden="true" /><span>刚才的录音还在这个页面里，可以先试听，然后直接重新识别，不用重说。</span></div>}
               {audioPreview && <audio controls src={audioPreview} className="audio-player" />}
-              {audioFile && <div className="file-line"><span>{audioFile.name}</span><div className="button-row compact-row"><button type="button" className="button quiet danger" disabled={busy} onClick={discardAudio}>重新录</button><button type="button" className="button primary" disabled={busy || isRecording} onClick={uploadAudio}>保存回答，自动继续</button></div></div>}
+              {audioFile && <div className="file-line"><span>{audioFile.name}</span><div className="button-row compact-row"><button type="button" className="button quiet danger" disabled={busy} onClick={discardAudio}>重新录</button><button type="button" className="button primary" disabled={busy || isRecording} onClick={uploadAudio}>{audioNeedsRetry ? "重新识别并继续" : "保存回答，自动继续"}</button></div></div>}
             </div>
           ) : (
             <div className="interview-review-panel">

@@ -27,6 +27,16 @@ describe("连续采访静音检测", () => {
     })).toBe(true);
   });
 
+  it("句间停顿三秒不会误以为已经说完", () => {
+    expect(shouldSubmitAfterSilence({
+      heardSpeech: true,
+      recordingStartedAt: 0,
+      lastVoiceAt: 2_000,
+      holdUntil: 0,
+      now: 5_000,
+    })).toBe(false);
+  });
+
   it("点击还在想时延后静音提交", () => {
     expect(shouldSubmitAfterSilence({
       heardSpeech: true,

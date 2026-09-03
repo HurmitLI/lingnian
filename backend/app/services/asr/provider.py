@@ -91,6 +91,7 @@ class DashScopeASRProvider:
         dashscope.api_key = self.api_key
         recognition = Recognition(
             model=self.model_id,
+            callback=None,
             format="wav",
             sample_rate=16_000,
             semantic_punctuation_enabled=True,
