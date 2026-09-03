@@ -41,4 +41,22 @@ describe("正式版邀请建账", () => {
     });
     expect(refresh).toHaveBeenCalled();
   });
+
+  it("平台管理员从登录页进入独立管理后台", async () => {
+    window.history.pushState({}, "", "/login?next=/admin");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      platform_role: "admin",
+      next_path: null,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
+
+    render(<FormalLoginForm />);
+    fireEvent.change(screen.getByLabelText("登录名"), { target: { value: "platform.admin" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "secure-password" } });
+    fireEvent.click(screen.getByRole("button", { name: /进入家庭空间/ }));
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/admin"));
+  });
 });

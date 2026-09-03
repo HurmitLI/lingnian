@@ -164,6 +164,89 @@ def test_platform_admin_can_invite_a_new_isolated_family(client, monkeypatch):
     assert reused.status_code == 403
 
 
+def test_platform_admin_console_lists_and_controls_member_accounts(client, db, monkeypatch):
+    enable_formal_auth(monkeypatch)
+    admin = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": "family-invite-2026",
+            "username": "platform.admin",
+            "display_name": "平台管理员",
+            "password": "platform-secure-password",
+            "family_name": "运营家庭",
+        },
+    )
+    assert admin.status_code == 201
+    family_invite = client.post("/api/v1/auth/invitations", json={}).json()
+    client.post("/api/v1/auth/logout")
+    member = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": family_invite["invitation_code"],
+            "username": "managed.member",
+            "display_name": "受管理成员",
+            "password": "member-secure-password",
+        },
+    )
+    assert member.status_code == 201
+    member_id = member.json()["user_id"]
+
+    client.post("/api/v1/auth/logout")
+    assert client.post(
+        "/api/v1/auth/login",
+        json={"username": "platform.admin", "password": "platform-secure-password"},
+    ).status_code == 200
+
+    overview = client.get("/api/v1/auth/platform/overview")
+    assert overview.status_code == 200
+    assert overview.json() == {
+        "admin_username": "platform.admin",
+        "admin_display_name": "平台管理员",
+        "family_count": 1,
+        "account_count": 2,
+        "active_account_count": 2,
+        "active_invitation_count": 0,
+    }
+    accounts = client.get("/api/v1/auth/platform/accounts")
+    assert accounts.status_code == 200
+    listed_member = next(item for item in accounts.json() if item["user_id"] == member_id)
+    assert listed_member["family_name"] == "运营家庭"
+    assert listed_member["family_role"] == "member"
+    assert listed_member["status"] == "active"
+
+    protected = client.patch(
+        f"/api/v1/auth/platform/accounts/{admin.json()['user_id']}/status",
+        json={"status": "disabled"},
+    )
+    assert protected.status_code == 409
+    assert protected.json()["error"]["code"] == "PLATFORM_ADMIN_PROTECTED"
+
+    disabled = client.patch(
+        f"/api/v1/auth/platform/accounts/{member_id}/status",
+        json={"status": "disabled"},
+    )
+    assert disabled.status_code == 204
+    db.expire_all()
+    assert db.get(UserAccount, member_id).status == "disabled"
+
+    client.post("/api/v1/auth/logout")
+    rejected = client.post(
+        "/api/v1/auth/login",
+        json={"username": "managed.member", "password": "member-secure-password"},
+    )
+    assert rejected.status_code == 403
+
+    assert client.post(
+        "/api/v1/auth/login",
+        json={"username": "platform.admin", "password": "platform-secure-password"},
+    ).status_code == 200
+    restored = client.patch(
+        f"/api/v1/auth/platform/accounts/{member_id}/status",
+        json={"status": "active"},
+    )
+    assert restored.status_code == 204
+
+
 def test_duplicate_username_is_rejected(client, monkeypatch):
     enable_formal_auth(monkeypatch)
     request = {

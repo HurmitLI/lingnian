@@ -67,7 +67,8 @@ async function responseError(response: Response, fallback: string): Promise<ApiE
     && process.env.NEXT_PUBLIC_FORMAL_AUTH_REQUIRED === "true"
     && window.location.pathname !== "/login"
   ) {
-    window.location.replace("/login");
+    const returnToAdmin = window.location.pathname === "/admin" ? "?next=/admin" : "";
+    window.location.replace(`/login${returnToAdmin}`);
   }
   return new ApiError(
     payload?.error?.code ?? "REQUEST_FAILED",

@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { Check, Copy, KeyRound, ShieldCheck, UserPlus, X } from "lucide-react";
+import Link from "next/link";
 
 import { api, ApiError } from "@/lib/api";
 import type { ElderProfile, FamilyPerson } from "@/lib/types";
@@ -347,7 +348,9 @@ export default function FormalAccessPanel({
         <>
           {user.platform_role === "admin" && (
             <div className="interview-invite-card platform-invite-card">
-              <div><h3>邀请一个新家庭体验</h3><p>这个码会建立全新、独立加密的家庭空间，不会进入你的家庭档案。</p></div>
+              <div><h3>平台管理后台</h3><p>新家庭体验码和全部账号统一放在独立后台，不需要再从终端获取。</p></div>
+              <Link className="button primary button-link" href="/admin">进入平台管理后台</Link>
+              <div><h3>临时快速发码</h3><p>这个码会建立全新、独立加密的家庭空间，不会进入你的家庭档案。</p></div>
               <button className="button secondary" type="button" disabled={busy} onClick={createPlatformInvitation}><UserPlus size={18} aria-hidden="true" />生成新家庭体验码</button>
               {createdPlatform && (
                 <div className="created-invitation" aria-live="polite">

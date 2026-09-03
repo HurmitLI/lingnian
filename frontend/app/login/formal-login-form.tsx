@@ -8,6 +8,7 @@ type Mode = "login" | "register";
 type ApiResult = {
   error?: { message?: string };
   next_path?: string | null;
+  platform_role?: "admin" | "user";
 };
 
 export function FormalLoginForm() {
@@ -41,9 +42,14 @@ export function FormalLoginForm() {
         setMessage(result.error?.message || "暂时无法进入，请稍后重试。");
         return;
       }
+      const requestedPath = typeof window === "undefined"
+        ? null
+        : new URLSearchParams(window.location.search).get("next");
       const nextPath = result.next_path?.startsWith("/record?")
         ? result.next_path
-        : "/";
+        : requestedPath === "/admin" && result.platform_role === "admin"
+          ? "/admin"
+          : "/";
       router.replace(nextPath);
       router.refresh();
     } catch {

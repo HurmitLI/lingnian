@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
@@ -144,6 +145,32 @@ class PlatformInvitationRead(BaseModel):
     max_uses: int
     use_count: int
     status: str
+
+
+class PlatformOverviewRead(BaseModel):
+    admin_username: str
+    admin_display_name: str
+    family_count: int
+    account_count: int
+    active_account_count: int
+    active_invitation_count: int
+
+
+class PlatformAccountRead(BaseModel):
+    user_id: str
+    username: str
+    display_name: str
+    family_id: str
+    family_name: str
+    family_role: str
+    platform_role: str
+    status: str
+    created_at: datetime
+    last_login_at: datetime | None
+
+
+class PlatformAccountStatusUpdate(BaseModel):
+    status: Literal["active", "disabled"]
 
 
 def require_formal_mode() -> None:
@@ -450,6 +477,112 @@ def create_platform_invitation(
     )
 
 
+@router.get("/platform/overview", response_model=PlatformOverviewRead)
+def platform_overview(db: Session = Depends(get_db)) -> PlatformOverviewRead:
+    require_formal_mode()
+    admin = current_platform_admin(db)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    return PlatformOverviewRead(
+        admin_username=admin.username,
+        admin_display_name=admin.display_name,
+        family_count=db.scalar(select(func.count()).select_from(FamilyArchive)) or 0,
+        account_count=db.scalar(select(func.count()).select_from(UserAccount)) or 0,
+        active_account_count=(
+            db.scalar(
+                select(func.count())
+                .select_from(UserAccount)
+                .where(UserAccount.status == "active")
+            )
+            or 0
+        ),
+        active_invitation_count=(
+            db.scalar(
+                select(func.count())
+                .select_from(PlatformFamilyInvite)
+                .where(
+                    PlatformFamilyInvite.revoked_at.is_(None),
+                    PlatformFamilyInvite.expires_at > now,
+                    PlatformFamilyInvite.use_count < PlatformFamilyInvite.max_uses,
+                )
+            )
+            or 0
+        ),
+    )
+
+
+@router.get("/platform/accounts", response_model=list[PlatformAccountRead])
+def list_platform_accounts(db: Session = Depends(get_db)) -> list[PlatformAccountRead]:
+    require_formal_mode()
+    current_platform_admin(db)
+    rows = db.execute(
+        select(UserAccount, FamilyMembership, FamilyArchive)
+        .join(FamilyMembership, FamilyMembership.user_id == UserAccount.id)
+        .join(FamilyArchive, FamilyArchive.id == FamilyMembership.family_id)
+        .order_by(UserAccount.created_at.desc())
+        .limit(500)
+    ).all()
+    return [
+        PlatformAccountRead(
+            user_id=user.id,
+            username=user.username,
+            display_name=user.display_name,
+            family_id=family.id,
+            family_name=family.display_name,
+            family_role=membership.role,
+            platform_role=user.platform_role,
+            status=user.status,
+            created_at=user.created_at,
+            last_login_at=user.last_login_at,
+        )
+        for user, membership, family in rows
+    ]
+
+
+@router.patch("/platform/accounts/{user_id}/status", status_code=204)
+def update_platform_account_status(
+    user_id: str,
+    payload: PlatformAccountStatusUpdate,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> Response:
+    require_formal_mode()
+    admin = current_platform_admin(db)
+    user = db.get(UserAccount, user_id)
+    if user is None:
+        raise DomainError("ACCOUNT_NOT_FOUND", "没有找到这个账号。", 404)
+    membership = db.scalar(
+        select(FamilyMembership).where(
+            FamilyMembership.user_id == user.id,
+            FamilyMembership.status == "active",
+        )
+    )
+    if user.id == admin.id or user.platform_role == "admin":
+        raise DomainError(
+            "PLATFORM_ADMIN_PROTECTED",
+            "平台管理员账号不能在这里停用。",
+            409,
+        )
+    if payload.status == "disabled" and membership is not None and membership.role == "owner":
+        raise DomainError(
+            "FAMILY_OWNER_PROTECTED",
+            "请先让这位家庭管理员把管理权交给家人，再停用账号。",
+            409,
+        )
+    user.status = payload.status
+    if payload.status == "disabled":
+        now = datetime.now(UTC).replace(tzinfo=None)
+        for auth_session in db.scalars(
+            select(AuthSession).where(
+                AuthSession.user_id == user.id,
+                AuthSession.revoked_at.is_(None),
+            )
+        ):
+            auth_session.revoked_at = now
+    db.commit()
+    response.status_code = 204
+    return response
+
+
 @router.get(
     "/platform-invitations",
     response_model=list[PlatformInvitationRead],
@@ -753,6 +886,8 @@ def login(
     )
     if membership is None:
         raise DomainError("MEMBERSHIP_MISSING", "账号尚未加入家庭空间。", 403)
+    user.last_login_at = datetime.now(UTC).replace(tzinfo=None)
+    db.commit()
     settings = get_settings()
     token = create_session(db, user, days=settings.auth_session_days)
     auth_attempt_limiter.reset(attempt_key)

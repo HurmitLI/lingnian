@@ -4,6 +4,8 @@
 
 正式私密内测：<https://snj9mfcngm6tv8vlfvj2c.apigateway-cn-beijing.volceapi.com/>
 
+平台管理后台：<https://snj9mfcngm6tv8vlfvj2c.apigateway-cn-beijing.volceapi.com/admin>。平台管理员可在网页查看账号与家庭归属、停用或恢复普通成员账号，并随时生成、复制和撤销新家庭体验码，无需通过终端取码。
+
 - 首次使用在登录页选择“邀请码建账”，自己设置登录名和密码。
 - 初始家庭邀请码不写入仓库，部署者可在当前 Mac 执行 `security find-generic-password -s com.lingnian.formal.invite -a hurmit -w | pbcopy` 复制。
 - 第一个账号同时是平台管理员，可发放一次性“新家庭体验码”；新家庭用该码建立独立加密空间，不会加入现有家庭。

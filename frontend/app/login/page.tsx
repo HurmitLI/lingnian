@@ -38,6 +38,7 @@ export default function LoginPage() {
           <h1 id="formal-login-title">回到家里的记忆</h1>
           <p className="demo-login-lead">已有账号可直接登录；第一次使用，请用家人给你的邀请码建立账号。</p>
           <FormalLoginForm />
+          <Link className="formal-admin-entry" href="/login?next=/admin">平台运营人员进入管理后台</Link>
           <p className="formal-legal-links">建立账号即表示你已阅读 <Link href="/terms">使用约定</Link> 和 <Link href="/privacy">隐私与数据说明</Link>。</p>
           <ul className="demo-login-trust" aria-label="正式空间说明">
             <li><LockKeyhole size={17} aria-hidden="true" /><span><strong>登录后可见</strong><small>未受邀的人无法打开档案</small></span></li>
