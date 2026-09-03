@@ -69,3 +69,51 @@ export function memoryWorkflowStep(status: string): number {
   }
   return 0;
 }
+
+export type ArchiveSessionState = {
+  label: string;
+  description: string;
+  action: string;
+  tone: "recording" | "processing" | "review" | "attention";
+};
+
+export function archiveSessionState(status: string): ArchiveSessionState {
+  if (status === "DRAFT_REVIEW") {
+    return {
+      label: "故事草稿待确认",
+      description: "故事已经整理好，确认无误后就会进入正式档案。",
+      action: "核对并归档",
+      tone: "review",
+    };
+  }
+  if (status === "TRANSCRIPT_REVIEW") {
+    return {
+      label: "采访稿已保存",
+      description: "录音和文字都在，下一步生成故事草稿。",
+      action: "继续生成故事",
+      tone: "review",
+    };
+  }
+  if (["TRANSCRIBING", "ORGANIZING"].includes(status)) {
+    return {
+      label: "正在自动整理",
+      description: "任务仍在后台处理，可以稍后回来查看。",
+      action: "查看进度",
+      tone: "processing",
+    };
+  }
+  if (status === "FAILED_RETRYABLE") {
+    return {
+      label: "需要继续处理",
+      description: "内容已经保存，打开后可以从失败处继续。",
+      action: "打开并处理",
+      tone: "attention",
+    };
+  }
+  return {
+    label: "采访尚未完成",
+    description: "已经留下的内容会保留，可以从上次停下的位置继续。",
+    action: "继续采访",
+    tone: "recording",
+  };
+}

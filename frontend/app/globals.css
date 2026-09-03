@@ -301,6 +301,20 @@ blockquote { margin: 9px 0 0; padding: 2px 0 2px 19px; border-left: 3px solid va
 .archive-library { padding: clamp(24px, 3.8vw, 44px); }
 .archive-heading { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; }
 .archive-story-count { align-self: start; display: inline-flex; min-height: 34px; align-items: center; padding: 0 13px; color: var(--red-deep); border-radius: 999px; background: #f5ebe5; font-family: var(--sans); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.archive-progress { display: grid; gap: 14px; margin-bottom: 24px; padding: 20px; border: 1px solid rgba(155,63,54,.14); border-radius: 18px; background: linear-gradient(145deg, #fffaf5, #f8f2e8); }
+.archive-progress-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.archive-progress-heading h3 { margin: 4px 0 0; font-size: 22px; }
+.archive-progress-heading small { color: var(--green); font-family: var(--sans); font-weight: 650; }
+.archive-progress-list { display: grid; gap: 10px; }
+.archive-progress-list article { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 18px; border: 1px solid var(--line); border-left: 4px solid var(--gold); border-radius: 14px; background: rgba(255,255,255,.76); }
+.archive-progress-list article[data-tone="processing"] { border-left-color: var(--green); }
+.archive-progress-list article[data-tone="attention"] { border-left-color: var(--red); }
+.archive-progress-copy { min-width: 0; display: grid; gap: 5px; }
+.archive-progress-copy > div { display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--muted); font-family: var(--sans); font-size: 11px; }
+.archive-progress-copy > div span { color: var(--red-deep); font-weight: 700; }
+.archive-progress-copy > strong { font-size: 18px; }
+.archive-progress-copy p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.archive-progress-list .button { flex: 0 0 auto; }
 .archive-story-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .archive-story-grid article { min-width: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(160deg, #fffefa, #faf6ef); box-shadow: 0 10px 24px rgba(65,55,36,.045); }
 .archive-story-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 18px; border-bottom: 1px solid rgba(93,76,61,.1); color: var(--muted); font-family: var(--sans); font-size: 11px; }
@@ -311,6 +325,20 @@ blockquote { margin: 9px 0 0; padding: 2px 0 2px 19px; border-left: 3px solid va
 .archive-story-audio { display: grid; gap: 9px; padding: 15px 18px 17px; border-top: 1px solid rgba(93,76,61,.1); background: rgba(243,238,229,.62); }
 .archive-story-audio > span { color: var(--green); font-family: var(--sans); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
 .archive-story-audio audio { width: 100%; height: 40px; }
+.archive-interview-entry { display: grid; gap: 12px; padding: 0 18px 17px; background: rgba(243,238,229,.62); }
+.archive-interview-entry > .button { justify-self: start; min-height: 38px; padding: 5px 0; color: var(--red-deep); }
+.archive-interview-detail { overflow: hidden; border: 1px solid rgba(93,76,61,.13); border-radius: 14px; background: #fffdf8; }
+.archive-interview-intro { display: grid; gap: 3px; padding: 15px 16px; border-bottom: 1px solid rgba(93,76,61,.1); }
+.archive-interview-intro strong { font-size: 16px; }
+.archive-interview-intro span { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.archive-turn-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.archive-turn-list li { display: grid; gap: 10px; padding: 17px 16px; border-bottom: 1px solid rgba(93,76,61,.09); }
+.archive-turn-list li:last-child { border-bottom: 0; }
+.archive-turn-question, .archive-turn-answer { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 10px; align-items: start; }
+.archive-turn-question span, .archive-turn-answer span { padding-top: 2px; color: var(--gold); font-family: var(--sans); font-size: 11px; font-weight: 700; }
+.archive-turn-answer span { color: var(--green); }
+.archive-turn-question p, .archive-turn-answer p, .archive-transcript-text { margin: 0; line-height: 1.75; white-space: pre-wrap; }
+.archive-transcript-text { padding: 17px 16px; color: #4e4843; }
 .archive-empty-state { min-height: 220px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 20px; padding: 28px; border: 1px dashed #d6cabc; border-radius: 18px; background: #faf6ef; }
 .archive-empty-state > span { width: 58px; height: 58px; display: grid; place-items: center; color: white; border-radius: 18px; background: linear-gradient(145deg, var(--red), var(--red-deep)); font-family: var(--serif); font-size: 24px; }
 .archive-empty-state h3 { margin: 0 0 7px; font-size: 23px; }
@@ -466,6 +494,9 @@ blockquote { margin: 9px 0 0; padding: 2px 0 2px 19px; border-left: 3px solid va
   .mobile-nav { left: 7px; right: 7px; }
   .archive-heading { grid-template-columns: auto minmax(0, 1fr); }
   .archive-story-count { grid-column: 2; justify-self: start; margin-top: 10px; }
+  .archive-progress { padding: 16px 13px; }
+  .archive-progress-heading, .archive-progress-list article { align-items: flex-start; flex-direction: column; }
+  .archive-progress-list .button { width: 100%; }
   .archive-story-content { padding: 20px 18px 18px; }
   .archive-story-content h3 { font-size: 23px; }
   .archive-keepsake-entry { padding: 25px 20px; }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  archiveSessionState,
   hasMeaningfulStoryContent,
   isSessionTerminal,
   memoryWorkflowStep,
@@ -14,6 +15,18 @@ describe("工作流状态文案", () => {
     expect(sessionStatusLabel("TRANSCRIPT_REVIEW")).toBe("等待家人校对");
     expect(taskStatusLabel("running")).toBe("正在处理");
     expect(taskStatusLabel("failed_retryable")).toBe("处理遇到问题，可以重试");
+  });
+
+  it("为尚未归档的采访给出明确的下一步", () => {
+    expect(archiveSessionState("TRANSCRIPT_REVIEW")).toMatchObject({
+      label: "采访稿已保存",
+      action: "继续生成故事",
+    });
+    expect(archiveSessionState("DRAFT_REVIEW")).toMatchObject({
+      label: "故事草稿待确认",
+      action: "核对并归档",
+    });
+    expect(archiveSessionState("INTERVIEWING").action).toBe("继续采访");
   });
 
   it("未知状态不会直接暴露技术枚举", () => {

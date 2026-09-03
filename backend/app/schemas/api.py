@@ -692,6 +692,9 @@ class TimelineEventRead(ORMModel):
 
 class TimelineItem(BaseModel):
     story: StoryRead
+    source_session_id: str
+    interview_mode: str = "single"
+    interview_turn_count: int = 0
     life_stage: str
     narrator_person_id: str | None = None
     narrator_label: str | None = None

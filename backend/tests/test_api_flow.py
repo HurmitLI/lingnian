@@ -133,6 +133,9 @@ def test_complete_vertical_slice(client, db):
     assert len(timeline.json()) == 1
     timeline_item = timeline.json()[0]
     assert timeline_item["life_stage"] == "童年"
+    assert timeline_item["source_session_id"] == session["id"]
+    assert timeline_item["interview_mode"] == "single"
+    assert timeline_item["interview_turn_count"] == 0
     assert timeline_item["audio_url"].startswith("/api/v1/media-assets/")
     assert timeline_item["image_url"] is None
     assert timeline_item["image_annotation"] is None

@@ -3910,6 +3910,9 @@ def get_timeline(
         items.append(
             TimelineItem(
                 story=story_read(db, story, secret_store),
+                source_session_id=session.id,
+                interview_mode=session.interview_mode,
+                interview_turn_count=len(session.interview_turns),
                 life_stage=session.life_stage,
                 narrator_person_id=narrator.id,
                 narrator_label=narrator_label,

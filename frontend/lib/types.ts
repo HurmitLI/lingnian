@@ -276,6 +276,9 @@ export type TimelineItem = {
     confirmed_by: string;
     confirmed_at: string;
   };
+  source_session_id: string;
+  interview_mode: "single" | "guided_voice" | string;
+  interview_turn_count: number;
   life_stage: string;
   narrator_person_id: string | null;
   narrator_label: string | null;

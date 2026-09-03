@@ -23,6 +23,7 @@ import {
 } from "@/lib/media/silence";
 import { pollWorkflowTask } from "@/lib/workflow/poll-task";
 import {
+  archiveSessionState,
   hasMeaningfulStoryContent,
   isSessionTerminal,
   memoryWorkflowStep,
@@ -89,6 +90,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const [selectedLifeStage, setSelectedLifeStage] = useState(LIFE_STAGES[0]);
   const [archiveQuery, setArchiveQuery] = useState("");
   const [archiveLifeStage, setArchiveLifeStage] = useState("all");
+  const [expandedInterviewStoryId, setExpandedInterviewStoryId] = useState("");
+  const [archiveInterviewDetails, setArchiveInterviewDetails] = useState<Record<string, SessionDetail>>({});
+  const [archiveInterviewLoadingId, setArchiveInterviewLoadingId] = useState("");
   const [selectedNarratorPersonId, setSelectedNarratorPersonId] = useState("");
   const [interviewAnswerText, setInterviewAnswerText] = useState("");
   const [interviewCloudConsentChecked, setInterviewCloudConsentChecked] = useState(false);
@@ -1583,6 +1587,28 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     }
   }
 
+  async function toggleArchivedInterview(item: TimelineItem) {
+    if (expandedInterviewStoryId === item.story.id) {
+      setExpandedInterviewStoryId("");
+      return;
+    }
+    setExpandedInterviewStoryId(item.story.id);
+    if (archiveInterviewDetails[item.story.id]) return;
+    setArchiveInterviewLoadingId(item.story.id);
+    setError("");
+    try {
+      const result = await api<SessionDetail>(
+        `/api/v1/memory-sessions/${item.source_session_id}`,
+      );
+      setArchiveInterviewDetails((current) => ({ ...current, [item.story.id]: result }));
+    } catch (value) {
+      setExpandedInterviewStoryId("");
+      showError(value);
+    } finally {
+      setArchiveInterviewLoadingId("");
+    }
+  }
+
   const latestFailedTask = detail?.tasks.find((task) => task.status === "failed_retryable");
   const latestOrganizationFailure = detail?.tasks.find(
     (task) => task.task_type === "organization" && ["failed_retryable", "failed_final"].includes(task.status),
@@ -2141,14 +2167,39 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         <section className="card timeline-card archive-library">
           <div className="section-heading archive-heading">
             <span>01</span>
-            <div><h2>{selectedProfileLabel}的故事</h2><p>这里只收藏经过家人逐篇确认的内容，原声会和故事放在一起。</p></div>
-            <strong className="archive-story-count">{timeline.length} 篇故事</strong>
+            <div><h2>{selectedProfileLabel}的回忆档案</h2><p>采访从保存开始就能在这里找到；完成确认后，会进入正式故事收藏。</p></div>
+            <strong className="archive-story-count">{timeline.length} 篇已归档 · {openSessions.length} 条待完成</strong>
           </div>
+
+          {openSessions.length > 0 && (
+            <section className="archive-progress" aria-labelledby="archive-progress-title">
+              <div className="archive-progress-heading">
+                <div><span className="card-kicker">正在形成的回忆</span><h3 id="archive-progress-title">已保存，等待完成</h3></div>
+                <small>这些内容没有丢失</small>
+              </div>
+              <div className="archive-progress-list">
+                {openSessions.map((session) => {
+                  const state = archiveSessionState(session.status);
+                  return (
+                    <article key={session.id} data-tone={state.tone}>
+                      <div className="archive-progress-copy">
+                        <div><span>{session.life_stage}</span><time>{new Date(session.updated_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></div>
+                        <strong>{state.label}</strong>
+                        <p>{state.description}</p>
+                      </div>
+                      <Link className="button secondary button-link" href={`/record?elder=${selectedProfile.id}&session=${session.id}`}>{state.action}</Link>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           {timeline.length === 0 ? (
             <div className="archive-empty-state">
               <span aria-hidden="true">念</span>
-              <div><h3>第一篇故事，等你慢慢讲</h3><p className="empty">录下一段声音、校对并确认后，它就会出现在这里。</p></div>
-              <Link className="button primary button-link" href={`/record?elder=${selectedProfile.id}`}>记录第一段回忆</Link>
+              <div><h3>{openSessions.length > 0 ? "还没有完成确认的故事" : "第一篇故事，等你慢慢讲"}</h3><p className="empty">{openSessions.length > 0 ? "上面的采访完成故事生成和确认后，就会收藏在这里。" : "录下一段声音、整理并确认后，它就会出现在这里。"}</p></div>
+              <Link className="button primary button-link" href={openSessions.length > 0 ? `/record?elder=${selectedProfile.id}&session=${openSessions[0].id}` : `/record?elder=${selectedProfile.id}`}>{openSessions.length > 0 ? "继续最近记录" : "记录第一段回忆"}</Link>
             </div>
           ) : (
             <>
@@ -2195,8 +2246,30 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                     <div className="archive-story-content"><h3>{item.story.title}</h3><p>{item.story.body}</p></div>
                   </div>
                   {mediaUrl(item.audio_url) && (
-                    <div className="archive-story-audio"><span>{item.narration_kind === "family_recollection" ? `${item.narrator_label ?? "家人"}的回忆` : "亲口讲述"}</span><audio controls preload="metadata" src={mediaUrl(item.audio_url) ?? undefined} /></div>
+                    <div className="archive-story-audio"><span>{item.interview_mode === "guided_voice" ? "完整采访录音 · 含提问与回答" : item.narration_kind === "family_recollection" ? `${item.narrator_label ?? "家人"}的回忆` : "亲口讲述"}</span><audio controls preload="metadata" src={mediaUrl(item.audio_url) ?? undefined} /></div>
                   )}
+                  <div className="archive-interview-entry">
+                    <button type="button" className="button quiet" disabled={archiveInterviewLoadingId === item.story.id} onClick={() => toggleArchivedInterview(item)}>
+                      {archiveInterviewLoadingId === item.story.id ? "正在读取采访…" : expandedInterviewStoryId === item.story.id ? "收起采访原稿" : item.interview_mode === "guided_voice" ? `查看完整采访 · ${item.interview_turn_count}轮` : "查看原始记录"}
+                    </button>
+                    {expandedInterviewStoryId === item.story.id && archiveInterviewDetails[item.story.id] && (
+                      <div className="archive-interview-detail">
+                        <div className="archive-interview-intro"><strong>{item.interview_mode === "guided_voice" ? "采访原稿" : "原始转写"}</strong><span>故事正文经过整理，以下保留当时的提问和回答。</span></div>
+                        {archiveInterviewDetails[item.story.id].interview_turns.length > 0 ? (
+                          <ol className="archive-turn-list">
+                            {archiveInterviewDetails[item.story.id].interview_turns.map((turn) => (
+                              <li key={turn.id}>
+                                <div className="archive-turn-question"><span>聆年问</span><p>{turn.question_text}</p></div>
+                                <div className="archive-turn-answer"><span>{item.narrator_label ?? "家人"}答</span><p>{turn.corrected_answer_text}</p></div>
+                              </li>
+                            ))}
+                          </ol>
+                        ) : (
+                          <p className="archive-transcript-text">{archiveInterviewDetails[item.story.id].transcript?.corrected_text ?? "这篇故事暂时没有可显示的转写原稿。"}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </article>
               ))}
             </div>}
