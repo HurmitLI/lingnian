@@ -4,6 +4,7 @@ import { CheckCircle2, FileVideo2, Upload, XCircle } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import { api, mediaUrl } from "@/lib/api";
+import { IS_FORMAL_CLOUD } from "@/lib/runtime";
 import type { GenerativeMediaRequest, TimelineItem } from "@/lib/types";
 
 type Props = {
@@ -91,7 +92,7 @@ export default function GenerationReviewWorkbench({
         timeoutMs: 10 * 60 * 1000,
       });
       await refresh();
-      onNotice("成片已导入本机，但尚未通过验收，不会出现在正式展示中。");
+      onNotice(`成片已导入${IS_FORMAL_CLOUD ? "家庭私密空间" : "本机"}，但尚未通过验收，不会出现在正式展示中。`);
     } catch (error) {
       onError(error);
     } finally {
@@ -138,7 +139,7 @@ export default function GenerationReviewWorkbench({
     <section className="generation-review-workbench" aria-labelledby="generation-review-title">
       <div className="generation-review-heading">
         <div>
-          <span className="card-kicker">成片门禁 · 本机验收</span>
+          <span className="card-kicker">成片门禁 · 家庭验收</span>
           <h3 id="generation-review-title">先登记、再导入、最后逐项验收</h3>
           <p>生成成功不等于可以使用。人物讲述必须检查声音、嘴型、停顿、表情、叙事和时长；故事情景视频也必须检查声音、画面自然度、叙事和时长。</p>
         </div>
@@ -168,7 +169,7 @@ export default function GenerationReviewWorkbench({
 
             {request.status === "awaiting_provider" && (
               <form className="generation-result-form" onSubmit={(event) => importResult(event, request.id)}>
-                <p>在后台完成生成后，把 MP4 导入本机。导入只进入待验收区，不会自动发布。</p>
+                <p>在后台完成生成后，把 MP4 导入{IS_FORMAL_CLOUD ? "家庭私密空间" : "本机"}。导入只进入待验收区，不会自动发布。</p>
                 <label className="field"><span>生成方式</span><input name="provider_key" pattern="[A-Za-z0-9_.-]+" defaultValue="musetalk_manual" required /></label>
                 <label className="field"><span>本次实际费用（元）</span><input name="actualCostYuan" type="number" min="0" step="0.01" defaultValue="0" required /></label>
                 <label className="field full"><span>选择 MP4 成片</span><input name="video" type="file" accept="video/mp4,.mp4" required /></label>

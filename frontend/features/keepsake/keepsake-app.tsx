@@ -11,6 +11,7 @@ import {
   keepsakeErrorLabel,
   keepsakeStatusLabel,
 } from "@/lib/keepsake/status";
+import { IS_FORMAL_CLOUD } from "@/lib/runtime";
 import type {
   ElderProfile,
   Keepsake,
@@ -162,7 +163,7 @@ export default function KeepsakeApp() {
           await loadProfileData(profileId, params.get("keepsake"));
         }
       } catch (value) {
-        if (!cancelled) setError(value instanceof Error ? value.message : "暂时无法读取本机档案。");
+        if (!cancelled) setError(value instanceof Error ? value.message : IS_FORMAL_CLOUD ? "暂时无法读取家庭私密空间。" : "暂时无法读取本机档案。");
       } finally {
         if (!cancelled) setInitialLoading(false);
       }
@@ -262,7 +263,7 @@ export default function KeepsakeApp() {
       const retried = await api<Keepsake>(`/api/v1/keepsakes/${activeKeepsake.id}/retry`, {
         method: "POST",
       });
-      setNotice("已重新开始本机合成，原始素材没有被改动。");
+      setNotice(IS_FORMAL_CLOUD ? "已重新开始私密合成，原始素材没有被改动。" : "已重新开始本机合成，原始素材没有被改动。");
       void watchKeepsake(retried);
     } catch (value) {
       setError(value instanceof Error ? value.message : "重试没有成功，请稍后再试。");
@@ -301,7 +302,7 @@ export default function KeepsakeApp() {
           <div className="workspace-heading">
             <p className="eyebrow">原声视频念想</p>
             <h1>把亲口讲过的故事，留成一段视频</h1>
-            <p className="subtitle">使用已确认故事和原始录音，在这台 Mac 上合成，不克隆声音，也不上传第三方。</p>
+            <p className="subtitle">使用已确认故事和原始录音，{IS_FORMAL_CLOUD ? "在家庭私密空间内合成，不克隆声音，也不发送到外部生成模型。" : "在这台 Mac 上合成，不克隆声音，也不上传第三方。"}</p>
           </div>
           <div className="workspace-controls">
             {profiles.length > 0 && (
@@ -312,7 +313,7 @@ export default function KeepsakeApp() {
                 </select>
               </label>
             )}
-            <div className="privacy-badge">本机合成 · 原声留存</div>
+            <div className="privacy-badge">{IS_FORMAL_CLOUD ? "私密合成 · 原声留存" : "本机合成 · 原声留存"}</div>
           </div>
         </header>
 
@@ -320,16 +321,16 @@ export default function KeepsakeApp() {
           <ol className="keepsake-journey">
             <li data-active={!activeKeepsake ? "true" : undefined}><span>1</span><strong>选择故事</strong></li>
             <li><span>2</span><strong>确认授权</strong></li>
-            <li data-active={activeKeepsake && !hasReadyResult ? "true" : undefined}><span>3</span><strong>本机制作</strong></li>
+            <li data-active={activeKeepsake && !hasReadyResult ? "true" : undefined}><span>3</span><strong>{IS_FORMAL_CLOUD ? "私密制作" : "本机制作"}</strong></li>
             <li data-active={hasReadyResult ? "true" : undefined}><span>4</span><strong>播放保存</strong></li>
           </ol>
           <div className="keepsake-boundaries" aria-label="制作边界">
-            <span>素材不离开本机</span><span>只用原始录音</span><span>不克隆声线</span><span>新增费用 0 元</span>
+            <span>{IS_FORMAL_CLOUD ? "素材只在家庭空间处理" : "素材不离开本机"}</span><span>只用原始录音</span><span>不克隆声线</span><span>{IS_FORMAL_CLOUD ? "不调用生成式视频模型" : "新增费用 0 元"}</span>
           </div>
         </section>
         {error && <div className="message error" role="alert">{error}</div>}
         {notice && <div className="message success" role="status" aria-live="polite">{notice}</div>}
-        {temporaryConnectionIssue && <div className="message" role="status">暂时读不到进度，视频仍在本机处理，连接恢复后会继续显示。</div>}
+        {temporaryConnectionIssue && <div className="message" role="status">暂时读不到进度，视频仍在{IS_FORMAL_CLOUD ? "私密空间" : "本机"}处理，连接恢复后会继续显示。</div>}
 
         {initialLoading && (
           <section className="card loading-card" aria-busy="true" aria-live="polite">
@@ -372,7 +373,7 @@ export default function KeepsakeApp() {
             {["failed_retryable", "failed_final", "corrupt"].includes(activeKeepsake.status) && (
               <div className="keepsake-failure">
                 <p>{keepsakeErrorLabel(activeKeepsake.error_code)}</p>
-                {activeKeepsake.status === "failed_retryable" && <button className="button primary" disabled={busy} onClick={() => void retryKeepsake()}>重试本机合成</button>}
+                {activeKeepsake.status === "failed_retryable" && <button className="button primary" disabled={busy} onClick={() => void retryKeepsake()}>重试{IS_FORMAL_CLOUD ? "视频" : "本机"}合成</button>}
               </div>
             )}
           </section>
@@ -410,7 +411,7 @@ export default function KeepsakeApp() {
                   <label><input type="checkbox" checked={checks.originalAudioOnly} onChange={(event) => setChecks((current) => ({ ...current, originalAudioOnly: event.target.checked }))} /><span>本次只使用亲口说过的原始声音，不生成新语音。</span></label>
                 </fieldset>
                 <div className="keepsake-submit-row">
-                  <button className="button primary" disabled={!canSubmit}>{busy ? "正在提交……" : pendingAuthorizationId ? "继续提交本机制作" : "确认授权并开始本机制作"}</button>
+                  <button className="button primary" disabled={!canSubmit}>{busy ? "正在提交……" : pendingAuthorizationId ? `继续提交${IS_FORMAL_CLOUD ? "私密" : "本机"}制作` : `确认授权并开始${IS_FORMAL_CLOUD ? "私密" : "本机"}制作`}</button>
                   <p>合成可能需要几分钟；可以离开或刷新本页，任务不会丢失。</p>
                 </div>
               </form>

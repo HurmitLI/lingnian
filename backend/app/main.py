@@ -94,7 +94,7 @@ async def formal_database_snapshot_middleware(request: Request, call_next):
     ):
         try:
             persist_configured_database_snapshot(settings)
-        except DatabaseSnapshotError:
+        except (DatabaseSnapshotError, OSError):
             return JSONResponse(
                 status_code=503,
                 content={

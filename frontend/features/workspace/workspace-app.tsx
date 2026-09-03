@@ -24,6 +24,7 @@ import {
   shouldSubmitAfterSilence,
 } from "@/lib/media/silence";
 import { pollWorkflowTask } from "@/lib/workflow/poll-task";
+import { ARCHIVE_ACTOR_LABEL, IS_FORMAL_CLOUD, PRIVATE_STORAGE_LABEL } from "@/lib/runtime";
 import {
   archiveSessionState,
   hasMeaningfulStoryContent,
@@ -394,17 +395,21 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     setError("");
     const form = new FormData(formElement);
     try {
-      const familyId = selectedProfile
-        ? selectedProfile.family_id
-        : (
-            await api<{ id: string }>("/api/v1/families", {
-              method: "POST",
-              body: JSON.stringify({
-                display_name: form.get("familyName"),
-                idempotency_key: crypto.randomUUID(),
-              }),
-            })
-          ).id;
+      let familyId = selectedProfile?.family_id;
+      if (!familyId && IS_FORMAL_CLOUD) {
+        familyId = (await api<{ family_id: string }>("/api/v1/auth/me")).family_id;
+      }
+      if (!familyId) {
+        familyId = (
+          await api<{ id: string }>("/api/v1/families", {
+            method: "POST",
+            body: JSON.stringify({
+              display_name: form.get("familyName"),
+              idempotency_key: crypto.randomUUID(),
+            }),
+          })
+        ).id;
+      }
       const profile = await api<ElderProfile>("/api/v1/elder-profiles", {
         method: "POST",
         body: JSON.stringify({
@@ -522,7 +527,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       recordingStopReasonRef.current = "manual";
       mediaRecorderRef.current.stop();
     }
-    clearActiveSession("当前记录已经保存在本机。以后可以从首页的“继续记录”回来。");
+    clearActiveSession(`当前记录已经保存在${PRIVATE_STORAGE_LABEL}。以后可以从首页的“继续记录”回来。`);
   }
 
   async function createFamilyRelationship(event: FormEvent<HTMLFormElement>) {
@@ -541,7 +546,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           to_person_id: form.get("toPersonId"),
           relationship_type: relationshipType,
           custom_label: relationshipType === "custom" ? form.get("customRelationship") : null,
-          confirmed_by: "本机家庭管理员",
+          confirmed_by: ARCHIVE_ACTOR_LABEL,
         }),
       });
       await loadFamilyRecords(selectedProfile.family_id);
@@ -678,7 +683,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       formElement.reset();
       if (triggerPreview) URL.revokeObjectURL(triggerPreview);
       setTriggerPreview(null);
-      setNotice("图片已保存在本机。点击“开始连续采访”后，问题只邀请讲述，不会猜测图片中的信息。");
+      setNotice(`图片已保存在${PRIVATE_STORAGE_LABEL}。点击“开始连续采访”后，问题只邀请讲述，不会猜测图片中的信息。`);
     } catch (value) {
       showError(value);
     } finally {
@@ -693,7 +698,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     try {
       await api<void>(`/api/v1/media-assets/${assetId}`, { method: "DELETE" });
       if (detail) await loadSession(detail.session.id);
-      setNotice("图片已从本机档案删除。");
+      setNotice(`图片已从${PRIVATE_STORAGE_LABEL}档案删除。`);
     } catch (value) {
       showError(value);
     } finally {
@@ -1165,7 +1170,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           body: JSON.stringify({
             corrected_answer_text: turn.corrected_answer_text,
             allow_cloud_followup: interviewCloudConsentChecked,
-            actor_label: "本机家庭管理员",
+            actor_label: ARCHIVE_ACTOR_LABEL,
           }),
         },
       );
@@ -1264,7 +1269,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           body: JSON.stringify({
             corrected_answer_text: interviewAnswerText.trim(),
             allow_cloud_followup: interviewCloudConsentChecked,
-            actor_label: "本机家庭管理员",
+            actor_label: ARCHIVE_ACTOR_LABEL,
           }),
         },
       );
@@ -1381,7 +1386,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           `/api/v1/memory-sessions/${detail.session.id}/model-consents`,
           {
             method: "POST",
-            body: JSON.stringify({ actor_label: "本机家庭管理员" }),
+            body: JSON.stringify({ actor_label: ARCHIVE_ACTOR_LABEL }),
           },
         );
         body = { consent_event_id: consent.id };
@@ -1479,7 +1484,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       await api(`/api/v1/story-drafts/${detail.story_draft.id}/confirm`, {
         method: "POST",
         body: JSON.stringify({
-          confirmed_by: "本机家庭管理员",
+          confirmed_by: ARCHIVE_ACTOR_LABEL,
           title: draftTitle,
           body: draftBody,
         }),
@@ -1511,7 +1516,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           body: JSON.stringify({
             topic_key: topicKey,
             preference,
-            updated_by: "本机家庭管理员",
+            updated_by: ARCHIVE_ACTOR_LABEL,
           }),
         },
       );
@@ -1545,7 +1550,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       });
       await loadArchiveTools(selectedProfile.id);
       formElement.reset();
-      setNotice("本机提醒已保存；不会发送微信、短信或系统通知。");
+      setNotice("页面内提醒已保存；不会发送微信、短信或系统通知。");
     } catch (value) {
       showError(value);
     } finally {
@@ -1576,7 +1581,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     try {
       await api(`/api/v1/reminders/${reminderId}/dismiss`, { method: "POST" });
       if (selectedProfile) await loadArchiveTools(selectedProfile.id);
-      setNotice("这条本机提醒已关闭。");
+      setNotice("这条页面内提醒已关闭。");
     } catch (value) {
       showError(value);
     } finally {
@@ -1591,7 +1596,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     try {
       await api(`/api/v1/elder-profiles/${selectedProfile.id}/memory-books`, {
         method: "POST",
-        body: JSON.stringify({ created_by: "本机家庭管理员" }),
+        body: JSON.stringify({ created_by: ARCHIVE_ACTOR_LABEL }),
       });
       await loadArchiveTools(selectedProfile.id);
       setNotice("新的文字回忆录版本已生成，只包含人工确认的故事。");
@@ -1770,7 +1775,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               </select>
             </label>
           )}
-          <div className="privacy-badge">本机加密 · 仅家人可见</div>
+          <div className="privacy-badge">{IS_FORMAL_CLOUD ? "云端加密 · 受邀家人可见" : "本机加密 · 仅家人可见"}</div>
         </div>
       </header>
 
@@ -1786,7 +1791,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         <section className="card loading-card" aria-busy="true" aria-live="polite">
           <div className="loading-line" />
           <div className="loading-line short" />
-          <p>正在读取本机家庭档案……</p>
+          <p>正在读取{IS_FORMAL_CLOUD ? "家庭私密空间" : "本机家庭档案"}……</p>
         </section>
       )}
 
@@ -1816,7 +1821,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                   )}
                 </div>
                 <ul className="home-trust-list" aria-label="内容保存原则">
-                  <li><strong>先留原声</strong><span>录音先保存在这台 Mac</span></li>
+                  <li><strong>先留原声</strong><span>{IS_FORMAL_CLOUD ? "录音加密保存在家庭空间" : "录音先保存在这台 Mac"}</span></li>
                   <li><strong>先整理</strong><span>AI 处理语气词、错字和标点</span></li>
                   <li><strong>后归档</strong><span>未经确认的内容不进档案</span></li>
                 </ul>
@@ -1899,7 +1904,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                       <label className="field"><span>籍贯（可选）</span><input name="nativePlace" defaultValue={profile.native_place ?? ""} /></label>
                       <label className="field"><span>职业摘要（可选）</span><input name="occupation" defaultValue={profile.occupation_summary ?? ""} /></label>
                       {profile.data_classification === "authorized_sensitive" ? (
-                        <label className="field profile-health-field"><span>健康与照护备注（可选，仅本机加密）</span><textarea name="healthNotes" rows={4} maxLength={2000} defaultValue={profile.health_notes ?? ""} placeholder="只记录本人愿意由家人保存的信息；不会发送给云模型" /></label>
+                        <label className="field profile-health-field"><span>健康与照护备注（可选，仅{IS_FORMAL_CLOUD ? "家庭空间" : "本机"}加密）</span><textarea name="healthNotes" rows={4} maxLength={2000} defaultValue={profile.health_notes ?? ""} placeholder="只记录本人愿意由家人保存的信息；不会发送给云模型" /></label>
                       ) : (
                         <p className="profile-health-lock">健康资料属于敏感信息。完成恢复演练并启用“授权敏感资料”加密后，才会开放记录入口。</p>
                       )}
@@ -1914,7 +1919,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         <details className="create-panel" open={profiles.length === 0}>
           <summary>{profiles.length ? "添加一位家人档案" : "创建第一位家人档案"}</summary>
           <form onSubmit={createProfile} className="form-grid">
-            {!selectedProfile && <label className="field"><span>家庭档案名称</span><input name="familyName" required placeholder="例如：林家的回忆" /></label>}
+            {!selectedProfile && !IS_FORMAL_CLOUD && <label className="field"><span>家庭档案名称</span><input name="familyName" required placeholder="例如：林家的回忆" /></label>}
             <label className="field"><span>这位家人的显示名称</span><input name="displayName" required placeholder="例如：林奶奶" /></label>
             <label className="field"><span>家里怎么称呼这位家人</span><input name="preferredName" required placeholder="例如：奶奶" /></label>
             <label className="field"><span>出生年份（可选）</span><input name="birthYear" type="number" min="1900" max="2100" /></label>
@@ -2026,7 +2031,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               checked={interviewCloudConsentChecked}
               onChange={(event) => setInterviewCloudConsentChecked(event.target.checked)}
             />
-            <span><strong>开启 AI 自动整理与自然追问</strong><small>整场只选择一次。每段回答会先在本机转写，再把转写文字发送给千问去掉语气词、补标点并生成下一问；原始录音不会发送。</small></span>
+            <span><strong>开启 AI 自动整理与自然追问</strong><small>整场只选择一次。每段回答会先{IS_FORMAL_CLOUD ? "在家庭私密空间" : "在本机"}转写，再把转写文字发送给千问去掉语气词、补标点并生成下一问；原始录音不会发送给千问。</small></span>
           </label>
         )}
         <MemoryWorkflowStepper currentStep={0} />
@@ -2055,7 +2060,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           <details className="secondary-entry">
             <summary>也可以用一张照片或老物件开始</summary>
             <form className="media-trigger-form" onSubmit={startMediaTrigger}>
-              <div><h3>用照片或老物件触发回忆</h3><p className="hint">图片只保存在本机；系统不会识别人脸，也不会推断人物、地点、年代或事件。</p></div>
+              <div><h3>用照片或老物件触发回忆</h3><p className="hint">图片只保存在{IS_FORMAL_CLOUD ? "家庭私密空间" : "本机"}；系统不会识别人脸，也不会推断人物、地点、年代或事件。</p></div>
               <label className="field"><span>触发类型</span><select name="triggerKind"><option value="photo">照片</option><option value="old_object">老物件</option></select></label>
               <label className="field"><span>选择图片</span><input name="triggerImage" type="file" accept="image/jpeg,image/png,image/webp" required onChange={(event) => { const file = event.target.files?.[0]; if (triggerPreview) URL.revokeObjectURL(triggerPreview); setTriggerPreview(file ? URL.createObjectURL(file) : null); }} /></label>
               <label className="field"><span>家人明确知道的信息（可选）</span><input name="annotation" maxLength={1000} placeholder="例如：这是外婆明确说过的旧院子" /></label>
@@ -2083,7 +2088,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
               ? "连续采访进行中：聆年会自动提问、收音、整理并继续"
               : interviewCloudConsentChecked
                 ? "AI 自动整理已开启：开始后不用逐段确认"
-                : "本机自动整理已开启：开始后不用逐段确认"}</span>
+                : `${IS_FORMAL_CLOUD ? "云端" : "本机"}自动整理已开启：开始后不用逐段确认`}</span>
           </div>
 
           {existingTrigger && (
@@ -2200,14 +2205,14 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           {detail.session.interview_mode === "single" && !(["SKIPPED", "ARCHIVED"].includes(detail.session.status)) && (
             <div className="workflow-block" data-state={currentWorkflowStep === 1 ? "current" : currentWorkflowStep > 1 ? "complete" : "upcoming"}>
               <h3>留下声音</h3>
-              <p className="hint">开始后请慢慢讲。录音停止前只暂存在当前浏览器，点击“确认上传”后才会保存到本机档案。</p>
+              <p className="hint">开始后请慢慢讲。录音停止前只暂存在当前浏览器，点击“确认上传”后才会保存到{IS_FORMAL_CLOUD ? "家庭私密空间" : "本机档案"}。</p>
               <div className="button-row">
                 {!isRecording ? <button type="button" className="button secondary" onClick={() => startRecording()} disabled={busy}>开始录音</button> : <button type="button" className="button recording" onClick={stopRecording}>停止录音</button>}
                 <label className={`button secondary file-button${isRecording ? " disabled" : ""}`}>选择已有音频<input aria-label="选择已有音频" type="file" accept="audio/*" disabled={busy || isRecording} onChange={(event) => event.target.files?.[0] && setPreviewFile(event.target.files[0])} /></label>
               </div>
               {isRecording && <div className="recording-live" role="status" aria-live="polite"><span aria-hidden="true" /><strong>正在录音 {formatRecordingDuration(recordingSeconds)}</strong><small>讲完后请点“停止录音”</small></div>}
               {audioPreview && <audio controls src={audioPreview} className="audio-player" />}
-              {audioFile && <div className="file-line"><span>{audioFile.name}</span><div className="button-row compact-row"><button type="button" className="button quiet danger" disabled={busy} onClick={discardAudio}>移除这段音频</button><button type="button" className="button primary" disabled={busy || isRecording} onClick={uploadAudio}>确认上传到本机档案</button></div></div>}
+              {audioFile && <div className="file-line"><span>{audioFile.name}</span><div className="button-row compact-row"><button type="button" className="button quiet danger" disabled={busy} onClick={discardAudio}>移除这段音频</button><button type="button" className="button primary" disabled={busy || isRecording} onClick={uploadAudio}>确认上传到{IS_FORMAL_CLOUD ? "家庭空间" : "本机档案"}</button></div></div>}
               {existingAudio && <p className="hint">已保留原始音频：{existingAudio.original_filename}</p>}
               {processingTask && <div className="task-progress" role="status" aria-live="polite"><div><strong>{taskStatusLabel(processingTask.status)}</strong><span>{Math.max(0, Math.min(100, processingTask.progress))}%</span></div><progress max="100" value={Math.max(0, Math.min(100, processingTask.progress))} /><p>可以留在当前页面等待；如果刷新或离开，任务仍会继续。</p><button type="button" className="button secondary" disabled={busy} onClick={refreshCurrentSession}>刷新处理状态</button></div>}
               {detail.session.status === "AUDIO_UPLOADED" && !processingTask && <button type="button" className="button primary" disabled={busy} onClick={() => runTask("transcription")}>开始本地转写</button>}
@@ -2397,7 +2402,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           <div className="section-heading"><span>02</span><div><h2>保存与维护</h2><p>提醒和导出都是低频工具，需要时再展开，不会打扰日常记录。</p></div></div>
           {dueReminders.map((item) => (
             <div className="due-reminder" role="status" key={item.id}>
-              <div><strong>可以温和问一次“{item.topic_key}”了</strong><p>这是你之前设定的本机提醒，不会自动联系任何人。</p></div>
+              <div><strong>可以温和问一次“{item.topic_key}”了</strong><p>这是你之前设定的页面内提醒，不会自动联系任何人。</p></div>
               <button className="button secondary" disabled={busy} onClick={() => acknowledgeReminder(item.id)}>我知道了，不再重复提醒</button>
             </div>
           ))}
@@ -2408,9 +2413,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 <h3>添加应用内提醒</h3>
                 <label className="field"><span>话题</span><select name="topicKey">{LIFE_STAGES.map((stage) => <option key={stage} value={stage} disabled={topicPreference(stage) === "avoid"}>{stage}{topicPreference(stage) === "avoid" ? "（不要再问）" : ""}</option>)}</select></label>
                 <label className="field"><span>提醒时间</span><input name="remindAt" type="datetime-local" required /></label>
-                <button className="button secondary" disabled={busy}>保存本机提醒</button>
+                <button className="button secondary" disabled={busy}>保存页面内提醒</button>
                 <p className="hint">不使用微信、短信、邮件或 macOS 系统通知。</p>
-                <div className="reminder-list" aria-label="现有本机提醒">
+                <div className="reminder-list" aria-label="现有页面内提醒">
                   <h4><CalendarClock size={17} aria-hidden="true" />现有提醒</h4>
                   {activeReminders.length === 0 ? <p className="empty">还没有待处理的提醒。</p> : activeReminders.map((item) => (
                     <div key={item.id}>

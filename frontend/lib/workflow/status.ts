@@ -1,9 +1,11 @@
+import { IS_FORMAL_CLOUD } from "@/lib/runtime";
+
 const SESSION_STATUS_LABELS: Record<string, string> = {
   PROMPT_READY: "问题已准备",
   INTERVIEWING: "正在语音采访",
   RECORDING_PENDING: "等待留下声音",
   AUDIO_UPLOADED: "音频已保存",
-  TRANSCRIBING: "正在本机转写",
+  TRANSCRIBING: IS_FORMAL_CLOUD ? "正在云端转写" : "正在本机转写",
   TRANSCRIPT_REVIEW: "等待家人校对",
   ORGANIZING: "正在整理故事",
   DRAFT_REVIEW: "等待家人确认",
