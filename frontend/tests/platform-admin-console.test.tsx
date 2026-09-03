@@ -54,6 +54,23 @@ describe("平台管理后台", () => {
         max_uses: 1,
       });
       if (path === "/api/v1/auth/platform-invitations") return Promise.resolve([]);
+      if (path === "/api/v1/generation-control/overview") return Promise.resolve({
+        node_count: 0,
+        online_node_count: 0,
+        queued_request_count: 0,
+        processing_request_count: 0,
+        review_request_count: 0,
+        failed_request_count: 0,
+      });
+      if (path === "/api/v1/generation-control/nodes" && options?.method === "POST") return Promise.resolve({
+        id: "node-1",
+        display_name: "家用 RTX 5080 生成节点",
+        connection_token: "ln_node_once-only-token",
+        capabilities: ["photo_restore", "portrait_video", "scene_video"],
+        created_at: "2026-09-04T02:00:00Z",
+      });
+      if (path === "/api/v1/generation-control/nodes") return Promise.resolve([]);
+      if (path === "/api/v1/generation-control/requests") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected ${path}`));
     });
   });
@@ -77,5 +94,15 @@ describe("平台管理后台", () => {
       "/api/v1/auth/platform-invitations",
       expect.objectContaining({ method: "POST" }),
     ));
+  });
+
+  it("可以在网页生成家用节点的一次性连接密钥", async () => {
+    render(<PlatformAdminConsole />);
+
+    expect(await screen.findByText("家用生成节点")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "生成一次性连接密钥" }));
+
+    expect(await screen.findByText("ln_node_once-only-token")).toBeVisible();
+    expect(screen.getByText("连接密钥只完整显示这一次")).toBeVisible();
   });
 });

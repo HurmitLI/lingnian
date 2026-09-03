@@ -6,7 +6,7 @@ import { PlatformAdminConsole } from "./platform-admin-console";
 
 export const metadata: Metadata = {
   title: "平台管理后台",
-  description: "管理聆年内测账号与新家庭体验码。",
+  description: "管理聆年内测账号、邀请码与家用生成节点。",
   robots: { index: false, follow: false },
 };
 

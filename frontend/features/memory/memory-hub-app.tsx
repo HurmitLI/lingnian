@@ -192,6 +192,21 @@ export default function MemoryHubApp() {
     return () => { cancelled = true; };
   }, [selectedProfile, showError]);
 
+  useEffect(() => {
+    if (!selectedProfileId || !generationRequests.some((item) => ["queued", "processing"].includes(item.status))) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      void api<GenerativeMediaRequest[]>(`/api/v1/elder-profiles/${selectedProfileId}/generative-media-requests`)
+        .then((items) => { if (!cancelled) setGenerationRequests(items); })
+        .catch(() => undefined);
+    }, 8_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [generationRequests, selectedProfileId]);
+
   async function askArchive(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedProfile || !question.trim()) return;
@@ -519,7 +534,7 @@ export default function MemoryHubApp() {
             <div className="section-heading"><span>06</span><div><h2>影像与声音实验室</h2><p>生成式能力独立于家庭档案；未选择服务、预算和真人授权前，不会上传任何素材。</p></div></div>
             <form className="production-package-form" onSubmit={downloadProductionPackage}><div><span className="card-kicker">生成前准备 · 不自动提交</span><h3>先把修复或生成需要的材料整理好</h3><p>下载包内含原始素材、故事原文、素材校验值，以及待人工复核的修复计划或逐句分镜，不会直接调用生成服务。</p></div><label className="field"><span>制作方向</span><select name="generationType" value={productionType} onChange={(event) => setProductionType(event.target.value as typeof productionType)}><option value="photo_restore">老照片修复制作包</option><option value="portrait_video">人物讲述视频制作包</option><option value="scene_video">故事情景视频制作包</option></select></label><label className="field"><span>选择故事</span><select name="storyId" required>{timeline.map((item) => <option key={item.story.id} value={item.story.id}>{item.story.title}{item.image_url ? " · 有照片" : " · 无照片"}</option>)}</select></label><label className="field"><span>确认人</span><input name="actorLabel" required defaultValue="家庭管理员" /></label><fieldset><legend>本次材料整理确认</legend>{productionType === "photo_restore" ? <label><input type="checkbox" name="subjectConsent" />如照片人物仍健在，已经取得其修复和家庭展示同意</label> : <label><input type="checkbox" name="subjectConsent" required />讲述者本人同意将这段故事用于家庭影像演绎</label>}<label><input type="checkbox" name="rightsConfirmed" required />我确认有权使用所选原声与照片</label><label><input type="checkbox" name="noImpersonation" required />不会用于冒充本人或误导公众</label></fieldset><button className="button primary" disabled={busy || timeline.length === 0}><Download size={17} aria-hidden="true" />下载制作包</button><small>这里只整理文件，不代表已经允许上传第三方。修复永远保留原图，人物讲述必须使用本人授权照片。</small></form>
             <GenerationReviewWorkbench profileId={selectedProfile.id} timeline={timeline} requests={generationRequests} onRequestsChange={setGenerationRequests} onNotice={(message) => { setError(""); setNotice(message); }} onError={showError} />
-            <div className="generation-capabilities">{capabilities.map((item) => <article key={item.generation_type}><div><span className="generation-status">{item.available ? "可使用" : "尚未启用"}</span><h3>{item.label}</h3></div><p>{item.unavailable_reason}</p><dl><div><dt>真人授权</dt><dd>{item.requires_subject_consent ? "必须" : "按素材判断"}</dd></div><div><dt>外部上传</dt><dd>{item.requires_external_upload ? "启用前逐次确认" : "不需要"}</dd></div><div><dt>预计费用</dt><dd>{item.estimated_cost_cents === null ? "选择供应商后显示" : `¥${(item.estimated_cost_cents / 100).toFixed(2)}`}</dd></div></dl><button className="button secondary" disabled>等待配置与预算确认</button></article>)}</div>
+            <div className="generation-capabilities">{capabilities.map((item) => <article key={item.generation_type}><div><span className="generation-status">{item.available ? "家用节点在线" : item.provider_key === "home_comfyui" ? "可以先排队" : "尚未启用"}</span><h3>{item.label}</h3></div><p>{item.unavailable_reason}</p><dl><div><dt>真人授权</dt><dd>{item.requires_subject_consent ? "必须" : "按素材判断"}</dd></div><div><dt>素材发送</dt><dd>{item.requires_external_upload ? "每项任务单独确认" : "不需要"}</dd></div><div><dt>平台费用</dt><dd>{item.estimated_cost_cents === null ? "选择供应商后显示" : `¥${(item.estimated_cost_cents / 100).toFixed(2)}`}</dd></div></dl><button className="button secondary" disabled>{item.available ? "在下方登记任务" : item.provider_key === "home_comfyui" ? "节点上线后自动执行" : "等待配置"}</button></article>)}</div>
             <div className="generation-current"><NotebookTabs size={23} aria-hidden="true" /><div><strong>现在仍可使用零费用的快速影像导出</strong><p>它只把原始录音、照片和文字合成 MP4，不是人物视频，已经从主导航降级为辅助工具。</p></div><Link className="button quiet button-link" href={`/keepsake?elder=${selectedProfile.id}`}>打开快速影像导出</Link></div>
           </section>
         )}

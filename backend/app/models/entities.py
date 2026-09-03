@@ -787,6 +787,20 @@ class MediaPersonTag(TimestampMixin, Base):
     note: Mapped[str | None] = mapped_column(Text)
 
 
+class GenerationNode(TimestampMixin, Base):
+    __tablename__ = "generation_nodes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    display_name: Mapped[str] = mapped_column(String(80))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="active", index=True)
+    capabilities: Mapped[list] = mapped_column(JSON, default=list)
+    software_version: Mapped[str | None] = mapped_column(String(80))
+    device_summary: Mapped[str | None] = mapped_column(String(240))
+    last_seen_at: Mapped[datetime | None] = mapped_column(index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column()
+
+
 class GenerativeMediaRequest(TimestampMixin, Base):
     __tablename__ = "generative_media_requests"
 
@@ -800,6 +814,9 @@ class GenerativeMediaRequest(TimestampMixin, Base):
     result_asset_id: Mapped[str | None] = mapped_column(
         ForeignKey("media_assets.id", ondelete="SET NULL")
     )
+    assigned_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("generation_nodes.id", ondelete="SET NULL"), index=True
+    )
     generation_type: Mapped[str] = mapped_column(String(40))
     provider_key: Mapped[str] = mapped_column(String(80), default="not_configured")
     status: Mapped[str] = mapped_column(String(32), default="awaiting_provider")
@@ -812,6 +829,15 @@ class GenerativeMediaRequest(TimestampMixin, Base):
     actual_cost_cents: Mapped[int] = mapped_column(Integer, default=0)
     max_cost_cents: Mapped[int] = mapped_column(Integer, default=0)
     request_sha256: Mapped[str] = mapped_column(String(64))
+    lease_token_hash: Mapped[str | None] = mapped_column(String(64))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0)
+    progress_stage: Mapped[str | None] = mapped_column(String(80))
+    queued_at: Mapped[datetime | None] = mapped_column(index=True)
+    started_at: Mapped[datetime | None] = mapped_column()
+    completed_at: Mapped[datetime | None] = mapped_column()
+    last_error_message: Mapped[str | None] = mapped_column(String(500))
     error_code: Mapped[str | None] = mapped_column(String(80))
     review_checks: Mapped[dict] = mapped_column(JSON, default=dict)
     reviewed_by: Mapped[str | None] = mapped_column(String(80))

@@ -1159,6 +1159,14 @@
 .app-shell .generation-review-form p,
 .app-shell .generation-review-result p { margin: 0; color: var(--formal-muted); }
 .app-shell .generation-request-card video { display: block; width: min(100%, 860px); margin: 16px auto 0; aspect-ratio: 16 / 9; background: #181818; object-fit: contain; }
+.app-shell .generation-result-image { display: block; width: min(100%, 760px); max-height: 680px; margin: 16px auto 0; border-radius: 8px; object-fit: contain; background: #f4efe7; }
+.app-shell .generation-queue-progress { display: flex; align-items: center; gap: 12px; padding: 18px; }
+.app-shell .generation-queue-progress svg { flex: 0 0 auto; color: var(--formal-orange-deep); animation: generation-spin 1.4s linear infinite; }
+.app-shell .generation-queue-progress div { display: grid; gap: 4px; }
+.app-shell .generation-queue-progress div { flex: 1; }
+.app-shell .generation-queue-progress span { color: var(--formal-muted); font-size: 12px; }
+@keyframes generation-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .app-shell .generation-queue-progress svg { animation: none; } }
 .app-shell .generation-review-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; padding: 14px; border: 1px solid #d7b86e; border-radius: 9px; background: #fff8dc; }
 .app-shell .generation-review-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .app-shell .generation-review-actions .button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }

@@ -358,7 +358,7 @@ test("连续采访一次开始后自动进入收音和提交", async ({ page }) 
   await expect(page.getByText("可以开始说了")).toBeVisible();
   await expect(page.getByRole("button", { name: "我还在想" })).toBeVisible();
   await page.getByRole("button", { name: "我还在想" }).click();
-  await expect(page.getByText(/接下来 15 秒不会/)).toBeVisible();
+  await expect(page.getByText(/接下来 20 秒不会/)).toBeVisible();
   await page.getByRole("button", { name: "我说完了" }).click();
   await expect(page.getByText(/已经聊满 12 轮/)).toBeVisible();
   await expect(page.getByRole("button", { name: "结束这次采访，查看完整整理稿" })).toBeVisible();
@@ -400,7 +400,7 @@ test("家族记忆可以溯源回答并浏览人生轨迹", async ({ page }) => 
   await expect(page.getByText("家人核对状态已经保存。")).toBeVisible();
   await page.getByRole("button", { name: "影像实验室" }).click();
   await expect(page.getByRole("heading", { name: "先把修复或生成需要的材料整理好" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "下载本机制作包" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "下载制作包" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "先登记、再导入、最后逐项验收" })).toBeVisible();
   await expect(page.getByText("未验收不发布")).toBeVisible();
   await expect(page.getByRole("button", { name: "登记成片验收任务" })).toBeVisible();

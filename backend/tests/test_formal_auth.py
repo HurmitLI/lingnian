@@ -164,6 +164,63 @@ def test_platform_admin_can_invite_a_new_isolated_family(client, monkeypatch):
     assert reused.status_code == 403
 
 
+def test_platform_admin_manages_home_generation_node_without_exposing_token(client, monkeypatch):
+    enable_formal_auth(monkeypatch)
+    registered = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": "family-invite-2026",
+            "username": "generation.admin",
+            "display_name": "生成管理员",
+            "password": "generation-admin-password",
+            "family_name": "生成测试家庭",
+        },
+    )
+    assert registered.status_code == 201, registered.text
+
+    created = client.post(
+        "/api/v1/generation-control/nodes",
+        json={
+            "display_name": "家用 RTX 5080 生成节点",
+            "capabilities": ["photo_restore", "portrait_video", "scene_video"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    node = created.json()
+    assert node["connection_token"].startswith("ln_node_")
+
+    listed = client.get("/api/v1/generation-control/nodes")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["connection_state"] == "offline"
+    assert "connection_token" not in listed.json()[0]
+
+    worker_headers = {"Authorization": f"Bearer {node['connection_token']}"}
+    heartbeat = client.post(
+        "/api/v1/generation-worker/heartbeat",
+        headers=worker_headers,
+        json={
+            "software_version": "0.1.0",
+            "device_summary": "Windows 11 · RTX 5080 16GB",
+            "capabilities": ["photo_restore", "portrait_video", "scene_video"],
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+    assert client.get("/api/v1/generation-control/overview").json()["online_node_count"] == 1
+
+    revoked = client.delete(f"/api/v1/generation-control/nodes/{node['id']}")
+    assert revoked.status_code == 204, revoked.text
+    denied = client.post(
+        "/api/v1/generation-worker/heartbeat",
+        headers=worker_headers,
+        json={
+            "software_version": "0.1.0",
+            "device_summary": "Windows 11 · RTX 5080 16GB",
+            "capabilities": ["photo_restore"],
+        },
+    )
+    assert denied.status_code == 401
+
+
 def test_platform_admin_console_lists_and_controls_member_accounts(client, db, monkeypatch):
     enable_formal_auth(monkeypatch)
     admin = client.post(

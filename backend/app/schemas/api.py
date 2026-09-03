@@ -667,6 +667,8 @@ class GenerativeMediaReviewCreate(BaseModel):
     expression_natural: bool = False
     narrative_consistent: bool = False
     duration_appropriate: bool = False
+    source_preserved: bool = False
+    identity_preserved: bool = False
 
 
 class GenerativeMediaRequestRead(ORMModel):
@@ -678,6 +680,7 @@ class GenerativeMediaRequestRead(ORMModel):
     generation_type: str
     provider_key: str
     status: str
+    assigned_node_id: str | None
     actor_label: str
     subject_consent: bool
     rights_confirmed: bool
@@ -686,6 +689,13 @@ class GenerativeMediaRequestRead(ORMModel):
     estimated_cost_cents: int
     actual_cost_cents: int
     max_cost_cents: int
+    attempt_count: int
+    progress_percent: int
+    progress_stage: str | None
+    queued_at: datetime | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    last_error_message: str | None
     error_code: str | None
     review_checks: dict
     reviewed_by: str | None

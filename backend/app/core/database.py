@@ -44,6 +44,7 @@ def initialize_database() -> None:
         (settings.resolved_asset_root / relative).mkdir(parents=True, exist_ok=True)
     _upgrade_compatible_runtime_schema()
     Base.metadata.create_all(bind=engine)
+    _ensure_generation_queue_indexes()
     with SessionLocal() as db:
         db.execute(
             update(WorkflowTask)
@@ -82,3 +83,46 @@ def _upgrade_compatible_runtime_schema() -> None:
                     "ORDER BY created_at ASC LIMIT 1)"
                 )
             )
+
+        table_names = set(inspector.get_table_names())
+        if "generative_media_requests" not in table_names:
+            return
+        request_columns = {
+            column["name"]
+            for column in inspector.get_columns("generative_media_requests")
+        }
+        additive_columns = {
+            "assigned_node_id": "VARCHAR(36)",
+            "lease_token_hash": "VARCHAR(64)",
+            "lease_expires_at": "DATETIME",
+            "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+            "progress_percent": "INTEGER NOT NULL DEFAULT 0",
+            "progress_stage": "VARCHAR(80)",
+            "queued_at": "DATETIME",
+            "started_at": "DATETIME",
+            "completed_at": "DATETIME",
+            "last_error_message": "VARCHAR(500)",
+        }
+        for name, definition in additive_columns.items():
+            if name not in request_columns:
+                connection.execute(
+                    text(
+                        f"ALTER TABLE generative_media_requests "
+                        f"ADD COLUMN {name} {definition}"
+                    )
+                )
+
+
+def _ensure_generation_queue_indexes() -> None:
+    if not settings.resolved_database_url.startswith("sqlite:///"):
+        return
+    with engine.begin() as connection:
+        for statement in (
+            "CREATE INDEX IF NOT EXISTS ix_generation_requests_assigned_node "
+            "ON generative_media_requests (assigned_node_id)",
+            "CREATE INDEX IF NOT EXISTS ix_generation_requests_lease_expires "
+            "ON generative_media_requests (lease_expires_at)",
+            "CREATE INDEX IF NOT EXISTS ix_generation_requests_queued_at "
+            "ON generative_media_requests (queued_at)",
+        ):
+            connection.execute(text(statement))

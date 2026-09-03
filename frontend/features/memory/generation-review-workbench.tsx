@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, FileVideo2, Upload, XCircle } from "lucide-react";
+import { CheckCircle2, FileVideo2, LoaderCircle, Upload, XCircle } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 import { api, mediaUrl } from "@/lib/api";
@@ -18,6 +18,10 @@ type Props = {
 
 const STATUS_LABELS: Record<string, string> = {
   awaiting_provider: "等待生成或导入成片",
+  queued: "正在等待家用生成节点",
+  processing: "家用生成节点正在制作",
+  failed: "生成失败，等待处理",
+  cancelled: "已取消",
   pending_human_review: "等待家人逐项验收",
   accepted: "验收通过",
   rejected: "验收驳回",
@@ -26,6 +30,7 @@ const STATUS_LABELS: Record<string, string> = {
 const TYPE_LABELS: Record<string, string> = {
   portrait_video: "人物讲述视频",
   scene_video: "故事情景视频",
+  photo_restore: "老照片修复副本",
 };
 
 async function loadRequests(profileId: string) {
@@ -70,7 +75,11 @@ export default function GenerationReviewWorkbench({
       });
       await refresh();
       formElement.reset();
-      onNotice("制作任务已经登记。导入成片后仍必须逐项人工验收，不会自动进入正式展示。");
+      onNotice(
+        form.get("allowExternalUpload") === "on"
+          ? "制作任务已进入家用生成队列。生成完成后仍要由家人逐项验收。"
+          : "制作任务已经登记。导入成片后仍必须逐项人工验收，不会自动进入正式展示。",
+      );
     } catch (error) {
       onError(error);
     } finally {
@@ -120,6 +129,8 @@ export default function GenerationReviewWorkbench({
           expression_natural: form.get("expressionNatural") === "on",
           narrative_consistent: form.get("narrativeConsistent") === "on",
           duration_appropriate: form.get("durationAppropriate") === "on",
+          source_preserved: form.get("sourcePreserved") === "on",
+          identity_preserved: form.get("identityPreserved") === "on",
         }),
       });
       await refresh();
@@ -128,6 +139,20 @@ export default function GenerationReviewWorkbench({
           ? "六项检查全部通过，成片已标记为验收通过。"
           : "成片已驳回并保留问题说明，不会进入正式展示。",
       );
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusyRequestId(null);
+    }
+  }
+
+  async function cancelTask(requestId: string) {
+    if (!window.confirm("确定取消这项生成任务吗？已经完成的本地计算不会进入家庭档案。")) return;
+    setBusyRequestId(requestId);
+    try {
+      await api(`/api/v1/generative-media-requests/${requestId}/cancel`, { method: "POST" });
+      await refresh();
+      onNotice("生成任务已取消，家用节点不能再回传这项任务的结果。");
     } catch (error) {
       onError(error);
     } finally {
@@ -147,16 +172,16 @@ export default function GenerationReviewWorkbench({
       </div>
 
       <form className="generation-task-form" onSubmit={registerTask}>
-        <label className="field"><span>制作类型</span><select name="generationType"><option value="portrait_video">人物讲述视频</option><option value="scene_video">故事情景视频</option></select></label>
+        <label className="field"><span>制作类型</span><select name="generationType"><option value="photo_restore">老照片修复副本</option><option value="portrait_video">人物讲述视频</option><option value="scene_video">故事情景视频</option></select></label>
         <label className="field"><span>对应故事</span><select name="storyId" required>{timeline.map((item) => <option key={item.story.id} value={item.story.id}>{item.story.title}</option>)}</select></label>
         <label className="field"><span>确认人</span><input name="actorLabel" required defaultValue="家庭管理员" /></label>
         <label className="field"><span>单次预算上限（元）</span><input name="maxCostYuan" type="number" min="0" max="1000" step="0.01" defaultValue="1.00" required /></label>
         <fieldset>
           <legend>制作边界</legend>
-          <label><input type="checkbox" name="subjectConsent" required />讲述者本人同意制作人物或故事影像</label>
+          <label><input type="checkbox" name="subjectConsent" required />如涉及仍健在的真人，已经取得本人专项授权</label>
           <label><input type="checkbox" name="rightsConfirmed" required />确认拥有照片、原声和故事的使用权</label>
           <label><input type="checkbox" name="noImpersonation" required />不会冒充本人或误导公众</label>
-          <label><input type="checkbox" name="allowExternalUpload" />本次允许把所选素材上传到已确认的生成服务</label>
+          <label><input type="checkbox" name="allowExternalUpload" />本次允许把所选素材加密发送到家用生成节点</label>
         </fieldset>
         <button className="button secondary" disabled={busyRequestId !== null || timeline.length === 0}>登记成片验收任务</button>
       </form>
@@ -166,6 +191,18 @@ export default function GenerationReviewWorkbench({
         {requests.map((request) => (
           <article className={`generation-request-card status-${request.status}`} key={request.id}>
             <header><div><small>{TYPE_LABELS[request.generation_type] ?? request.generation_type}</small><h4>{STATUS_LABELS[request.status] ?? request.status}</h4></div><span>预算 ¥{(request.max_cost_cents / 100).toFixed(2)}</span></header>
+
+            {(request.status === "queued" || request.status === "processing") && (
+              <div className="generation-queue-progress" role="status">
+                <LoaderCircle size={18} aria-hidden="true" />
+                <div><strong>{request.progress_stage || "等待生成节点"}</strong><span>{request.status === "processing" ? `${request.progress_percent}% · 第 ${request.attempt_count} 次执行` : "家用电脑上线后会自动领取"}</span></div>
+                <button className="button quiet" type="button" disabled={busyRequestId !== null} onClick={() => void cancelTask(request.id)}>取消任务</button>
+              </div>
+            )}
+
+            {request.status === "failed" && (
+              <div className="generation-review-result"><strong>这次生成没有完成</strong><p>{request.last_error_message || "可以由平台管理员在生成控制中心重新排队。"}</p></div>
+            )}
 
             {request.status === "awaiting_provider" && (
               <form className="generation-result-form" onSubmit={(event) => importResult(event, request.id)}>
@@ -177,7 +214,12 @@ export default function GenerationReviewWorkbench({
               </form>
             )}
 
-            {request.result_content_url && (
+            {request.result_content_url && request.generation_type === "photo_restore" && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img className="generation-result-image" src={mediaUrl(request.result_content_url) ?? undefined} alt="等待家人验收的老照片修复副本" />
+            )}
+
+            {request.result_content_url && request.generation_type !== "photo_restore" && (
               <video controls preload="metadata" src={mediaUrl(request.result_content_url) ?? undefined}>浏览器无法播放这段视频。</video>
             )}
 
@@ -185,12 +227,14 @@ export default function GenerationReviewWorkbench({
               <form className="generation-review-form" onSubmit={(event) => reviewResult(event, request.id)}>
                 <p>请完整播放并在说话和停顿位置反复检查。当前类型的必检项目全部通过后，才能接受成片。</p>
                 <div className="generation-review-checks">
-                  <label><input type="checkbox" name="audioPresent" />声音完整且可以听清</label>
+                  {request.generation_type !== "photo_restore" && <label><input type="checkbox" name="audioPresent" />声音完整且可以听清</label>}
                   {request.generation_type === "portrait_video" && <label><input type="checkbox" name="lipSyncVerified" />嘴型由声音驱动并基本对齐</label>}
                   {request.generation_type === "portrait_video" && <label><input type="checkbox" name="pausesNatural" />停顿时闭嘴，不持续咀嚼</label>}
-                  <label><input type="checkbox" name="expressionNatural" />{request.generation_type === "portrait_video" ? "表情自然，没有异常抽动" : "画面运动自然，没有异常抽动"}</label>
-                  <label><input type="checkbox" name="narrativeConsistent" />人物年龄、画面和故事一致</label>
-                  <label><input type="checkbox" name="durationAppropriate" />时长足以承载当前内容</label>
+                  {request.generation_type !== "photo_restore" && <label><input type="checkbox" name="expressionNatural" />{request.generation_type === "portrait_video" ? "表情自然，没有异常抽动" : "画面运动自然，没有异常抽动"}</label>}
+                  {request.generation_type !== "photo_restore" && <label><input type="checkbox" name="narrativeConsistent" />人物年龄、画面和故事一致</label>}
+                  {request.generation_type !== "photo_restore" && <label><input type="checkbox" name="durationAppropriate" />时长足以承载当前内容</label>}
+                  {request.generation_type === "photo_restore" && <label><input type="checkbox" name="sourcePreserved" />原图已保留，修复结果是独立副本</label>}
+                  {request.generation_type === "photo_restore" && <label><input type="checkbox" name="identityPreserved" />人物身份、五官和原始构图没有被擅自改写</label>}
                 </div>
                 <label className="field"><span>验收人</span><input name="reviewedBy" required defaultValue="家庭验收人" /></label>
                 <label className="field full"><span>问题或验收说明</span><textarea name="reviewNotes" rows={3} placeholder="驳回时必须写明具体问题，例如第 3 秒停顿仍在咀嚼。" /></label>

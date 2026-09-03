@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Copy, KeyRound, LogOut, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { Activity, Check, Copy, Cpu, KeyRound, LogOut, RotateCcw, Server, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { api, ApiError } from "@/lib/api";
@@ -45,11 +45,71 @@ type Invitation = {
 
 type CreatedInvitation = Invitation & { invitation_code: string };
 
+type GenerationOverview = {
+  node_count: number;
+  online_node_count: number;
+  queued_request_count: number;
+  processing_request_count: number;
+  review_request_count: number;
+  failed_request_count: number;
+};
+
+type GenerationNode = {
+  id: string;
+  display_name: string;
+  status: string;
+  connection_state: "online" | "offline" | "revoked";
+  capabilities: string[];
+  software_version: string | null;
+  device_summary: string | null;
+  last_seen_at: string | null;
+  created_at: string;
+};
+
+type CreatedGenerationNode = {
+  id: string;
+  display_name: string;
+  connection_token: string;
+  capabilities: string[];
+  created_at: string;
+};
+
+type GenerationQueueItem = {
+  id: string;
+  generation_type: string;
+  status: string;
+  assigned_node_id: string | null;
+  progress_percent: number;
+  progress_stage: string | null;
+  attempt_count: number;
+  error_code: string | null;
+  last_error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 const invitationStatus = {
   active: "等待使用",
   used: "已使用",
   expired: "已过期",
   revoked: "已撤销",
+};
+
+const generationTypeLabel: Record<string, string> = {
+  photo_restore: "老照片修复",
+  portrait_video: "人物讲述视频",
+  scene_video: "故事情景视频",
+};
+
+const generationStatusLabel: Record<string, string> = {
+  awaiting_provider: "等待人工制作",
+  queued: "等待家用电脑",
+  processing: "正在生成",
+  pending_human_review: "等待家庭验收",
+  accepted: "验收通过",
+  rejected: "验收驳回",
+  failed: "生成失败",
+  cancelled: "已取消",
 };
 
 function localDate(value: string | null): string {
@@ -64,6 +124,10 @@ export function PlatformAdminConsole() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [created, setCreated] = useState<CreatedInvitation | null>(null);
+  const [generationOverview, setGenerationOverview] = useState<GenerationOverview | null>(null);
+  const [generationNodes, setGenerationNodes] = useState<GenerationNode[]>([]);
+  const [generationQueue, setGenerationQueue] = useState<GenerationQueueItem[]>([]);
+  const [createdNode, setCreatedNode] = useState<CreatedGenerationNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -76,14 +140,20 @@ export function PlatformAdminConsole() {
       setLoading(false);
       return;
     }
-    const [summary, accountList, invitationList] = await Promise.all([
+    const [summary, accountList, invitationList, generationSummary, nodes, queue] = await Promise.all([
       api<Overview>("/api/v1/auth/platform/overview"),
       api<Account[]>("/api/v1/auth/platform/accounts"),
       api<Invitation[]>("/api/v1/auth/platform-invitations"),
+      api<GenerationOverview>("/api/v1/generation-control/overview"),
+      api<GenerationNode[]>("/api/v1/generation-control/nodes"),
+      api<GenerationQueueItem[]>("/api/v1/generation-control/requests"),
     ]);
     setOverview(summary);
     setAccounts(accountList);
     setInvitations(invitationList);
+    setGenerationOverview(generationSummary);
+    setGenerationNodes(nodes);
+    setGenerationQueue(queue);
     setLoading(false);
   }
 
@@ -127,6 +197,72 @@ export function PlatformAdminConsole() {
       setCopied(true);
     } catch {
       setMessage("浏览器没有允许复制，请手动选中体验码复制。");
+    }
+  }
+
+  async function createGenerationNode() {
+    setBusy(true);
+    setMessage("");
+    setCopied(false);
+    try {
+      const value = await api<CreatedGenerationNode>("/api/v1/generation-control/nodes", {
+        method: "POST",
+        body: JSON.stringify({
+          display_name: "家用 RTX 5080 生成节点",
+          capabilities: ["photo_restore", "portrait_video", "scene_video"],
+        }),
+      });
+      setCreatedNode(value);
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "生成节点连接密钥创建失败，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyNodeSetup() {
+    if (!createdNode) return;
+    const text = [
+      `LINGNIAN_API_BASE=${window.location.origin}`,
+      `LINGNIAN_NODE_TOKEN=${createdNode.connection_token}`,
+      `LINGNIAN_NODE_ID=${createdNode.id}`,
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      setMessage("浏览器没有允许复制，请手动选中连接配置复制。密钥离开本页后不再完整显示。");
+    }
+  }
+
+  async function revokeGenerationNode(node: GenerationNode) {
+    if (!window.confirm(`确定断开“${node.display_name}”吗？正在运行的任务会重新排队。`)) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await api(`/api/v1/generation-control/nodes/${node.id}`, { method: "DELETE" });
+      if (createdNode?.id === node.id) setCreatedNode(null);
+      await refresh();
+      setMessage("生成节点已经断开，原连接密钥立即失效。");
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "生成节点暂时无法断开。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryGeneration(requestId: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      await api(`/api/v1/generation-control/requests/${requestId}/retry`, { method: "POST" });
+      await refresh();
+      setMessage("任务已重新排队，家用电脑上线后会自动领取。");
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "任务重新排队失败。");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -222,6 +358,54 @@ export function PlatformAdminConsole() {
               <span><strong>{invitationStatus[item.status]}</strong><small>{new Date(item.expires_at).toLocaleDateString("zh-CN")} 前有效 · 已使用 {item.use_count}/{item.max_uses}</small></span>
               {item.status === "active" && <button type="button" disabled={busy} onClick={() => void revokeInvitation(item.id)}>撤销</button>}
             </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="platform-admin-section platform-generation-center">
+        <div className="platform-admin-section-heading">
+          <div><p className="eyebrow">本地算力接入</p><h2>家用生成节点</h2><p>家用电脑主动领取任务，云端不会访问家庭网络，也不会把 ComfyUI 端口暴露到公网。</p></div>
+          <button className="button primary" type="button" disabled={busy} onClick={createGenerationNode}><Cpu size={18} />生成一次性连接密钥</button>
+        </div>
+
+        <div className="generation-admin-stats" aria-label="生成任务概况">
+          <article><Server size={18} /><span>在线节点</span><strong>{generationOverview?.online_node_count ?? 0}/{generationOverview?.node_count ?? 0}</strong></article>
+          <article><Activity size={18} /><span>排队/生成</span><strong>{(generationOverview?.queued_request_count ?? 0) + (generationOverview?.processing_request_count ?? 0)}</strong></article>
+          <article><ShieldCheck size={18} /><span>等待验收</span><strong>{generationOverview?.review_request_count ?? 0}</strong></article>
+          <article><RotateCcw size={18} /><span>需要处理</span><strong>{generationOverview?.failed_request_count ?? 0}</strong></article>
+        </div>
+
+        {createdNode && (
+          <div className="platform-node-secret" aria-live="polite">
+            <strong>连接密钥只完整显示这一次</strong>
+            <p>在家用电脑配置聆年节点时使用。它不能登录家庭账号，也不能读取没有授权给生成任务的资料。</p>
+            <code>{createdNode.connection_token}</code>
+            <button className="button secondary" type="button" onClick={copyNodeSetup}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "连接配置已复制" : "复制家用电脑连接配置"}</button>
+          </div>
+        )}
+
+        <div className="platform-node-list">
+          {generationNodes.length === 0 && <p className="platform-empty">还没有生成节点。家用电脑部署完成前，可以先生成连接密钥。</p>}
+          {generationNodes.map((node) => (
+            <article key={node.id}>
+              <span className="platform-node-state" data-state={node.connection_state}>{node.connection_state === "online" ? "在线" : node.connection_state === "revoked" ? "已断开" : "未连接"}</span>
+              <div><strong>{node.display_name}</strong><small>{node.device_summary || "等待家用电脑首次连接"}</small></div>
+              <div><small>最近连接</small><strong>{localDate(node.last_seen_at)}</strong></div>
+              {node.connection_state !== "revoked" && <button type="button" disabled={busy} onClick={() => void revokeGenerationNode(node)}>断开</button>}
+            </article>
+          ))}
+        </div>
+
+        <div className="platform-generation-queue">
+          <h3>最近的生成任务</h3>
+          {generationQueue.length === 0 && <p className="platform-empty">还没有家庭提交生成任务。</p>}
+          {generationQueue.map((item) => (
+            <article key={item.id}>
+              <div><strong>{generationTypeLabel[item.generation_type] ?? item.generation_type}</strong><small>{item.progress_stage || generationStatusLabel[item.status] || item.status}</small></div>
+              <span data-status={item.status}>{generationStatusLabel[item.status] || item.status}{item.status === "processing" ? ` · ${item.progress_percent}%` : ""}</span>
+              <small>{localDate(item.updated_at)}</small>
+              {(item.status === "failed" || item.status === "rejected") && <button className="button secondary" type="button" disabled={busy} onClick={() => void retryGeneration(item.id)}><RotateCcw size={15} />重新排队</button>}
+            </article>
           ))}
         </div>
       </section>

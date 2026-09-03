@@ -384,6 +384,7 @@ export type GenerativeMediaRequest = {
   generation_type: string;
   provider_key: string;
   status: string;
+  assigned_node_id: string | null;
   actor_label: string;
   subject_consent: boolean;
   rights_confirmed: boolean;
@@ -392,6 +393,13 @@ export type GenerativeMediaRequest = {
   estimated_cost_cents: number;
   actual_cost_cents: number;
   max_cost_cents: number;
+  attempt_count: number;
+  progress_percent: number;
+  progress_stage: string | null;
+  queued_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  last_error_message: string | null;
   error_code: string | null;
   review_checks: Record<string, boolean>;
   reviewed_by: string | null;
