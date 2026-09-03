@@ -25,28 +25,36 @@ def error_payload(code: str, message: str, request_id: str | None = None) -> dic
     }
 
 
+def request_id_for(request: Request) -> str:
+    return getattr(request.state, "request_id", None) or str(uuid4())
+
+
 async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
-    request_id = request.headers.get("x-request-id") or str(uuid4())
     return JSONResponse(
         status_code=exc.status_code,
-        content=error_payload(exc.code, exc.message, request_id),
+        content=error_payload(exc.code, exc.message, request_id_for(request)),
     )
 
 
 async def validation_error_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    request_id = request.headers.get("x-request-id") or str(uuid4())
     return JSONResponse(
         status_code=422,
-        content=error_payload("VALIDATION_ERROR", "提交的信息不完整或格式不正确。", request_id),
+        content=error_payload(
+            "VALIDATION_ERROR",
+            "提交的信息不完整或格式不正确。",
+            request_id_for(request),
+        ),
     )
 
 
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    request_id = request.headers.get("x-request-id") or str(uuid4())
     return JSONResponse(
         status_code=500,
-        content=error_payload("INTERNAL_ERROR", "处理时遇到问题，请稍后重试。", request_id),
+        content=error_payload(
+            "INTERNAL_ERROR",
+            "处理时遇到问题，请稍后重试。",
+            request_id_for(request),
+        ),
     )
-

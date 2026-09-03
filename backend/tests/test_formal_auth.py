@@ -8,13 +8,16 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.models import AuthSession, ElderProfile, FamilyArchive, Person, UserAccount
+from app.services.request_limits import auth_attempt_limiter
 from app.services.security import get_secret_store
 
 
 @pytest.fixture(autouse=True)
 def clear_secret_store_cache():
     get_secret_store.cache_clear()
+    auth_attempt_limiter.clear()
     yield
+    auth_attempt_limiter.clear()
     get_secret_store.cache_clear()
 
 
@@ -104,6 +107,23 @@ def test_duplicate_username_is_rejected(client, monkeypatch):
     duplicate = client.post("/api/v1/auth/register", json=request)
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["code"] == "USERNAME_TAKEN"
+
+
+def test_repeated_failed_login_is_rate_limited(client, monkeypatch):
+    enable_formal_auth(monkeypatch)
+    for _ in range(8):
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"username": "unknown.account", "password": "wrong-password"},
+        )
+        assert response.status_code == 401
+
+    limited = client.post(
+        "/api/v1/auth/login",
+        json={"username": "unknown.account", "password": "wrong-password"},
+    )
+    assert limited.status_code == 429
+    assert limited.json()["error"]["code"] == "TOO_MANY_ATTEMPTS"
 
 
 def test_formal_session_cannot_read_another_family(client, db, monkeypatch):
@@ -196,7 +216,76 @@ def test_owner_creates_one_time_invitation_for_a_member(client, monkeypatch):
         json={"username": "owner.account", "password": "owner-secure-password"},
     )
     assert logged_in.status_code == 200
+    members = client.get("/api/v1/auth/members")
+    assert members.status_code == 200
+    assert [item["display_name"] for item in members.json()] == ["管理员", "受邀家人"]
+    owner_membership = next(item for item in members.json() if item["role"] == "owner")
+    invited_membership = next(item for item in members.json() if item["role"] == "member")
+    cannot_remove_owner = client.delete(
+        f"/api/v1/auth/members/{owner_membership['membership_id']}"
+    )
+    assert cannot_remove_owner.status_code == 409
+    assert client.delete(
+        f"/api/v1/auth/members/{invited_membership['membership_id']}"
+    ).status_code == 204
     assert client.delete(f"/api/v1/auth/invitations/{invitation_id}").status_code == 204
+
+    client.post("/api/v1/auth/logout")
+    revoked_member = client.post(
+        "/api/v1/auth/login",
+        json={"username": "member.account", "password": "member-secure-password"},
+    )
+    assert revoked_member.status_code == 403
+
+
+def test_account_can_change_password_and_other_sessions_are_revoked(client, monkeypatch):
+    enable_formal_auth(monkeypatch)
+    registered = client.post(
+        "/api/v1/auth/register",
+        json={
+            "invitation_code": "family-invite-2026",
+            "username": "password.owner",
+            "display_name": "管理员",
+            "password": "old-secure-password",
+            "family_name": "我的家庭",
+        },
+    )
+    assert registered.status_code == 201
+
+    second_client = type(client)(client.app)
+    try:
+        assert second_client.post(
+            "/api/v1/auth/login",
+            json={"username": "password.owner", "password": "old-secure-password"},
+        ).status_code == 200
+        wrong_current = client.post(
+            "/api/v1/auth/password",
+            json={"current_password": "wrong-password", "new_password": "new-secure-password"},
+        )
+        assert wrong_current.status_code == 403
+
+        changed = client.post(
+            "/api/v1/auth/password",
+            json={
+                "current_password": "old-secure-password",
+                "new_password": "new-secure-password",
+            },
+        )
+        assert changed.status_code == 204
+        assert client.get("/api/v1/auth/me").status_code == 200
+        assert second_client.get("/api/v1/auth/me").status_code == 401
+    finally:
+        second_client.close()
+
+    client.post("/api/v1/auth/logout")
+    assert client.post(
+        "/api/v1/auth/login",
+        json={"username": "password.owner", "password": "old-secure-password"},
+    ).status_code == 401
+    assert client.post(
+        "/api/v1/auth/login",
+        json={"username": "password.owner", "password": "new-secure-password"},
+    ).status_code == 200
 
 
 def test_formal_mode_disables_local_keychain_and_whole_archive_backup(client, monkeypatch):

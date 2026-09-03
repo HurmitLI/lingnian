@@ -14,7 +14,7 @@ from uuid import uuid4
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from starlette.background import BackgroundTask
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -941,6 +941,33 @@ def health() -> HealthRead:
         asr_provider=settings.asr_provider,
         llm_provider=settings.llm_provider,
     )
+
+
+@router.get("/readiness")
+def readiness(response: Response, db: Session = Depends(get_db)) -> dict[str, str]:
+    settings = get_settings()
+    database_status = "ok"
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        database_status = "unavailable"
+
+    storage_status = "not_required"
+    if settings.formal_auth_required:
+        mount = settings.formal_persistent_storage_mount
+        storage_status = (
+            "ok"
+            if mount is not None and mount.is_dir() and os.access(mount, os.R_OK | os.W_OK)
+            else "unavailable"
+        )
+    ready = database_status == "ok" and storage_status != "unavailable"
+    if not ready:
+        response.status_code = 503
+    return {
+        "status": "ready" if ready else "not_ready",
+        "database": database_status,
+        "persistent_storage": storage_status,
+    }
 
 
 @router.post("/families", response_model=FamilyRead, status_code=201)

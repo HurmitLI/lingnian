@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Check, Copy, KeyRound, ShieldCheck, UserPlus, X } from "lucide-react";
 
 import { api, ApiError } from "@/lib/api";
@@ -27,6 +27,16 @@ type CreatedInvitation = {
   max_uses: number;
 };
 
+type FamilyMember = {
+  membership_id: string;
+  user_id: string;
+  username: string;
+  display_name: string;
+  role: "owner" | "member";
+  status: "active" | "revoked";
+  last_login_at: string | null;
+};
+
 const STATUS_TEXT: Record<Invitation["status"], string> = {
   active: "等待使用",
   used: "已使用",
@@ -37,6 +47,7 @@ const STATUS_TEXT: Record<Invitation["status"], string> = {
 export default function FormalAccessPanel() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [members, setMembers] = useState<FamilyMember[]>([]);
   const [created, setCreated] = useState<CreatedInvitation | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,7 +57,12 @@ export default function FormalAccessPanel() {
     const me = await api<AuthUser>("/api/v1/auth/me");
     setUser(me);
     if (me.role === "owner") {
-      setInvitations(await api<Invitation[]>("/api/v1/auth/invitations"));
+      const [invitationResult, memberResult] = await Promise.all([
+        api<Invitation[]>("/api/v1/auth/invitations"),
+        api<FamilyMember[]>("/api/v1/auth/members"),
+      ]);
+      setInvitations(invitationResult);
+      setMembers(memberResult);
     }
   }
 
@@ -101,6 +117,43 @@ export default function FormalAccessPanel() {
     }
   }
 
+  async function revokeMember(member: FamilyMember) {
+    setBusy(true);
+    setMessage("");
+    try {
+      await api(`/api/v1/auth/members/${member.membership_id}`, { method: "DELETE" });
+      setMessage(`已移除${member.display_name}的访问权限，其已登录设备也会失效。`);
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "移除成员失败，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setBusy(true);
+    setMessage("");
+    try {
+      await api("/api/v1/auth/password", {
+        method: "POST",
+        body: JSON.stringify({
+          current_password: data.get("currentPassword"),
+          new_password: data.get("newPassword"),
+        }),
+      });
+      form.reset();
+      setMessage("密码已更新，其他设备上的旧登录已退出。");
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "密码更新失败，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="card formal-access-card">
       <div className="section-heading">
@@ -132,10 +185,36 @@ export default function FormalAccessPanel() {
               ))}
             </div>
           )}
+          {members.length > 0 && (
+            <div className="formal-member-list">
+              <h3>已加入的家人</h3>
+              {members.map((member) => (
+                <div key={member.membership_id}>
+                  <span>
+                    <strong>{member.display_name}{member.role === "owner" ? " · 管理员" : ""}</strong>
+                    <small>{member.username}{member.status === "revoked" ? " · 已移除" : ""}</small>
+                  </span>
+                  {member.role === "member" && member.status === "active" && (
+                    <button type="button" disabled={busy} onClick={() => void revokeMember(member)}>移除访问</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
       {user?.role === "member" && <p className="hint">如需邀请其他家人，请联系家庭管理员。</p>}
-      {message && <p className="message error" role="alert">{message}</p>}
+      {user && (
+        <details className="formal-password-panel">
+          <summary>修改我的登录密码</summary>
+          <form onSubmit={changePassword}>
+            <label className="field"><span>当前密码</span><input name="currentPassword" type="password" autoComplete="current-password" required /></label>
+            <label className="field"><span>新密码</span><input name="newPassword" type="password" autoComplete="new-password" minLength={10} required /></label>
+            <button className="button secondary" disabled={busy}>更新密码</button>
+          </form>
+        </details>
+      )}
+      {message && <p className="message" role="status">{message}</p>}
     </section>
   );
 }

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+import logging
+import re
 from contextlib import asynccontextmanager
+from time import monotonic
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -24,6 +29,10 @@ from app.services.database_snapshot import (
     persist_configured_database_snapshot,
     restore_configured_database_snapshot,
 )
+
+
+logger = logging.getLogger("lingnian.requests")
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{8,80}$")
 
 
 @asynccontextmanager
@@ -55,12 +64,19 @@ app.add_middleware(
 app.add_exception_handler(DomainError, domain_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
+
+
 @app.middleware("http")
 async def formal_auth_middleware(request: Request, call_next):
     if not settings.formal_auth_required:
         return await call_next(request)
     path = request.url.path
-    if path in {"/api/v1/health", "/api/v1/auth/register", "/api/v1/auth/login"}:
+    if path in {
+        "/api/v1/health",
+        "/api/v1/readiness",
+        "/api/v1/auth/register",
+        "/api/v1/auth/login",
+    }:
         return await call_next(request)
     token = request.cookies.get(settings.auth_cookie_name)
     if not token:
@@ -104,6 +120,31 @@ async def formal_database_snapshot_middleware(request: Request, call_next):
                     }
                 },
             )
+    return response
+
+
+@app.middleware("http")
+async def request_observability_middleware(request: Request, call_next):
+    candidate = request.headers.get("x-request-id", "")
+    request_id = candidate if REQUEST_ID_PATTERN.fullmatch(candidate) else str(uuid4())
+    request.state.request_id = request_id
+    started_at = monotonic()
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "request_complete %s",
+        json.dumps(
+            {
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "duration_ms": round((monotonic() - started_at) * 1000, 2),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    )
     return response
 
 app.include_router(auth_router)

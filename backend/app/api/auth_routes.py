@@ -13,14 +13,23 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.errors import DomainError
-from app.models import ArchiveSecurity, FamilyArchive, FamilyInvite, FamilyMembership, UserAccount
+from app.models import (
+    ArchiveSecurity,
+    AuthSession,
+    FamilyArchive,
+    FamilyInvite,
+    FamilyMembership,
+    UserAccount,
+)
 from app.services.security import SecretStore, get_family_key_manager, get_secret_store
+from app.services.request_limits import auth_attempt_key, auth_attempt_limiter
 from app.services.auth import (
     create_session,
     current_auth,
     hash_password,
     normalize_username,
     revoke_session,
+    session_token_hash,
     verify_password,
 )
 
@@ -68,6 +77,21 @@ class InvitationRead(BaseModel):
     use_count: int
     revoked: bool
     status: str
+
+
+class MemberRead(BaseModel):
+    membership_id: str
+    user_id: str
+    username: str
+    display_name: str
+    role: str
+    status: str
+    last_login_at: datetime | None
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=10, max_length=200)
 
 
 def require_formal_mode() -> None:
@@ -118,6 +142,7 @@ def auth_read(db: Session, user: UserAccount, membership: FamilyMembership) -> A
 @router.post("/register", response_model=AuthRead, status_code=201)
 def register(
     payload: RegisterRequest,
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
     secret_store: SecretStore = Depends(get_secret_store),
@@ -125,6 +150,8 @@ def register(
     require_formal_mode()
     settings = get_settings()
     username = normalize_username(payload.username)
+    attempt_key = auth_attempt_key(request, "register", username)
+    auth_attempt_limiter.check(attempt_key, limit=5, window_seconds=10 * 60)
     if db.scalar(select(UserAccount).where(UserAccount.username == username)):
         raise DomainError("USERNAME_TAKEN", "这个登录名已经被使用。", 409)
 
@@ -196,6 +223,7 @@ def register(
     db.refresh(user)
     db.refresh(membership)
     token = create_session(db, user, days=settings.auth_session_days)
+    auth_attempt_limiter.reset(attempt_key)
     set_session_cookie(response, token)
     return auth_read(db, user, membership)
 
@@ -274,11 +302,69 @@ def revoke_invitation(invitation_id: str, response: Response, db: Session = Depe
     return response
 
 
-@router.post("/login", response_model=AuthRead)
-def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)) -> AuthRead:
+@router.get("/members", response_model=list[MemberRead])
+def list_members(db: Session = Depends(get_db)) -> list[MemberRead]:
     require_formal_mode()
+    _, family_id = current_owner()
+    memberships = db.scalars(
+        select(FamilyMembership)
+        .where(FamilyMembership.family_id == family_id)
+        .order_by(FamilyMembership.created_at)
+    ).all()
+    return [
+        MemberRead(
+            membership_id=membership.id,
+            user_id=membership.user_id,
+            username=membership.user.username,
+            display_name=membership.user.display_name,
+            role=membership.role,
+            status=membership.status,
+            last_login_at=membership.user.last_login_at,
+        )
+        for membership in memberships
+    ]
+
+
+@router.delete("/members/{membership_id}", status_code=204)
+def revoke_member(
+    membership_id: str,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> Response:
+    require_formal_mode()
+    owner_user_id, family_id = current_owner()
+    membership = db.get(FamilyMembership, membership_id)
+    if membership is None or membership.family_id != family_id:
+        raise DomainError("MEMBER_NOT_FOUND", "没有找到这位家庭成员。", 404)
+    if membership.user_id == owner_user_id or membership.role == "owner":
+        raise DomainError("OWNER_CANNOT_BE_REVOKED", "家庭空间管理员不能在这里被移除。", 409)
+    membership.status = "revoked"
+    now = datetime.now(UTC).replace(tzinfo=None)
+    for auth_session in db.scalars(
+        select(AuthSession).where(
+            AuthSession.user_id == membership.user_id,
+            AuthSession.revoked_at.is_(None),
+        )
+    ):
+        auth_session.revoked_at = now
+    db.commit()
+    response.status_code = 204
+    return response
+
+
+@router.post("/login", response_model=AuthRead)
+def login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> AuthRead:
+    require_formal_mode()
+    username = normalize_username(payload.username)
+    attempt_key = auth_attempt_key(request, "login", username)
+    auth_attempt_limiter.check(attempt_key, limit=8, window_seconds=5 * 60)
     user = db.scalar(
-        select(UserAccount).where(UserAccount.username == normalize_username(payload.username))
+        select(UserAccount).where(UserAccount.username == username)
     )
     if user is None or not verify_password(payload.password, user.password_salt, user.password_hash):
         raise DomainError("LOGIN_FAILED", "登录名或密码不正确。", 401)
@@ -294,6 +380,7 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
         raise DomainError("MEMBERSHIP_MISSING", "账号尚未加入家庭空间。", 403)
     settings = get_settings()
     token = create_session(db, user, days=settings.auth_session_days)
+    auth_attempt_limiter.reset(attempt_key)
     set_session_cookie(response, token)
     return auth_read(db, user, membership)
 
@@ -325,5 +412,43 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)) 
     if token:
         revoke_session(db, token)
     response.delete_cookie(settings.auth_cookie_name, path="/")
+    response.status_code = 204
+    return response
+
+
+@router.post("/password", status_code=204)
+def change_password(
+    payload: PasswordChange,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> Response:
+    require_formal_mode()
+    context = current_auth.get()
+    if context is None:
+        raise DomainError("AUTH_REQUIRED", "请先登录。", 401)
+    user = db.get(UserAccount, context.user_id)
+    if user is None or not verify_password(
+        payload.current_password,
+        user.password_salt,
+        user.password_hash,
+    ):
+        raise DomainError("CURRENT_PASSWORD_INVALID", "当前密码不正确。", 403)
+    if verify_password(payload.new_password, user.password_salt, user.password_hash):
+        raise DomainError("PASSWORD_UNCHANGED", "新密码不能与当前密码相同。", 409)
+
+    user.password_salt, user.password_hash = hash_password(payload.new_password)
+    current_token = request.cookies.get(get_settings().auth_cookie_name)
+    current_token_hash = session_token_hash(current_token) if current_token else None
+    now = datetime.now(UTC).replace(tzinfo=None)
+    for auth_session in db.scalars(
+        select(AuthSession).where(
+            AuthSession.user_id == user.id,
+            AuthSession.revoked_at.is_(None),
+        )
+    ):
+        if auth_session.token_hash != current_token_hash:
+            auth_session.revoked_at = now
+    db.commit()
     response.status_code = 204
     return response
