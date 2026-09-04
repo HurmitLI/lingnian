@@ -4,6 +4,7 @@ import io
 import wave
 
 from app.services.tts.provider import add_wav_lead_in
+from app.services.tts.text import prepare_tts_text
 
 
 def wav_bytes(*, frames: int = 2400, sample_rate: int = 24_000) -> bytes:
@@ -33,3 +34,15 @@ def test_add_wav_lead_in_preserves_audio_after_quiet_start():
 
 def test_add_wav_lead_in_leaves_invalid_input_unchanged():
     assert add_wav_lead_in(b"not-wave") == b"not-wave"
+
+
+def test_prepare_tts_text_reads_years_digit_by_digit_without_changing_other_numbers():
+    assert prepare_tts_text("1928年，她十九岁，带着2个鸡蛋出门。") == (
+        "一九二八年，她十九岁，带着2个鸡蛋出门。"
+    )
+
+
+def test_prepare_tts_text_handles_spaces_and_full_dates():
+    assert prepare_tts_text(" 1982 年春天，2026年9月4日又提起这件事。 ") == (
+        "一九八二年春天，二零二六年9月4日又提起这件事。"
+    )

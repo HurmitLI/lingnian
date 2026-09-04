@@ -372,6 +372,7 @@ def test_local_generation_production_package_has_sources_and_reviewable_storyboa
         assert '"external_upload_authorized": false' in manifest
         storyboard = archive.read("production/storyboard.json").decode("utf-8")
         assert "人工确认故事原文" in storyboard
+        assert "spoken_narration" in storyboard
         assert "review_required" in storyboard
 
     denied = client.post(

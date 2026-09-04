@@ -1136,6 +1136,7 @@
 .app-shell .generation-task-form { padding: 16px; border: 1px solid var(--formal-line); border-radius: 10px; background: #f8f3ea; }
 .app-shell .generation-task-form fieldset,
 .app-shell .generation-task-form > button,
+.app-shell .generation-story-preview,
 .app-shell .generation-result-form > p,
 .app-shell .generation-review-form > p,
 .app-shell .generation-review-checks,
@@ -1143,6 +1144,13 @@
 .app-shell .generation-task-form fieldset { display: grid; gap: 8px; padding: 13px 15px; border: 1px solid var(--formal-line); border-radius: 9px; }
 .app-shell .generation-task-form fieldset label,
 .app-shell .generation-review-checks label { display: flex; align-items: flex-start; gap: 8px; }
+.app-shell .generation-story-preview { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 13px; padding: 16px; border: 1px solid rgba(180, 82, 37, .28); border-radius: 10px; background: #fffdf9; }
+.app-shell .generation-story-preview > svg { margin-top: 2px; color: var(--formal-orange-deep); }
+.app-shell .generation-story-preview > div { display: grid; gap: 5px; }
+.app-shell .generation-story-preview span { color: var(--formal-orange-deep); font-size: 11px; font-weight: 700; }
+.app-shell .generation-story-preview strong { font-size: 18px; }
+.app-shell .generation-story-preview ol { display: grid; gap: 4px; margin: 4px 0; padding-left: 22px; color: var(--formal-muted); line-height: 1.55; }
+.app-shell .generation-story-preview small { color: var(--formal-muted); line-height: 1.55; }
 .app-shell .generation-request-list { display: grid; gap: 14px; margin-top: 16px; }
 .app-shell .generation-empty { margin: 0; padding: 15px; border: 1px dashed var(--formal-line); border-radius: 9px; color: var(--formal-muted); }
 .app-shell .generation-request-card { overflow: hidden; border: 1px solid var(--formal-line); border-radius: 10px; background: #fff; }
@@ -1162,8 +1170,8 @@
 .app-shell .generation-result-image { display: block; width: min(100%, 760px); max-height: 680px; margin: 16px auto 0; border-radius: 8px; object-fit: contain; background: #f4efe7; }
 .app-shell .generation-queue-progress { display: flex; align-items: center; gap: 12px; padding: 18px; }
 .app-shell .generation-queue-progress svg { flex: 0 0 auto; color: var(--formal-orange-deep); animation: generation-spin 1.4s linear infinite; }
-.app-shell .generation-queue-progress div { display: grid; gap: 4px; }
-.app-shell .generation-queue-progress div { flex: 1; }
+.app-shell .generation-queue-progress div { display: grid; flex: 1; gap: 7px; }
+.app-shell .generation-queue-progress progress { width: 100%; height: 8px; accent-color: var(--formal-orange-deep); }
 .app-shell .generation-queue-progress span { color: var(--formal-muted); font-size: 12px; }
 @keyframes generation-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .app-shell .generation-queue-progress svg { animation: none; } }
@@ -1173,6 +1181,8 @@
 .app-shell .generation-review-actions .button.danger { border: 1.5px solid #7b2929; color: #7b2929; text-decoration: none; }
 .app-shell .generation-review-result { display: grid; gap: 6px; }
 .app-shell .generation-review-result small { color: var(--formal-muted); }
+.app-shell .generation-failed-result { justify-items: start; }
+.app-shell .generation-failed-result .button { display: inline-flex; align-items: center; gap: 7px; margin-top: 6px; }
 
 @media (max-width: 1120px) {
   .app-shell .welcome-card { padding-right: 180px; }

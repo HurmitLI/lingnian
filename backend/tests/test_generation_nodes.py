@@ -121,7 +121,6 @@ def test_home_generation_node_claims_encrypted_package_and_uploads_review_result
     )
     assert uploaded.status_code == 200, uploaded.text
     assert uploaded.json()["status"] == "pending_human_review"
-
     listed = client.get(
         f"/api/v1/elder-profiles/{profile['id']}/generative-media-requests"
     ).json()
@@ -177,12 +176,65 @@ def test_photo_restore_worker_uploads_a_real_png(client, db):
     )
     assert uploaded.status_code == 200, uploaded.text
     assert uploaded.json()["status"] == "pending_human_review"
-
     listed = client.get(
         f"/api/v1/elder-profiles/{profile['id']}/generative-media-requests"
     ).json()
     completed = next(item for item in listed if item["id"] == request_id)
     assert completed["result_content_url"]
+
+
+def test_family_can_retry_a_failed_generation_without_admin_console(client, db):
+    profile = create_profile(client)
+    story, _ = create_confirmed_story(client, profile, with_photo=True)
+    created = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/generative-media-requests",
+        json={
+            "story_id": story["id"],
+            "generation_type": "scene_video",
+            "actor_label": "测试家庭管理员",
+            "subject_consent": True,
+            "rights_confirmed": True,
+            "no_impersonation": True,
+            "allow_external_upload": True,
+            "max_cost_cents": 100,
+        },
+    )
+    request_id = created.json()["id"]
+    token = "ln_node_failed-task-with-enough-entropy-123456789"
+    db.add(
+        GenerationNode(
+            display_name="失败恢复测试节点",
+            token_hash=session_token_hash(token),
+            capabilities=["scene_video"],
+            status="active",
+        )
+    )
+    db.commit()
+    headers = {"Authorization": f"Bearer {token}"}
+    task = client.post("/api/v1/generation-worker/tasks/claim", headers=headers).json()
+    failed = client.post(
+        f"/api/v1/generation-worker/tasks/{request_id}/fail",
+        headers={**headers, "X-Lingnian-Lease": task["lease_token"]},
+        json={
+            "error_code": "WORKFLOW_FAILED",
+            "message": "unsafe worker detail",
+            "retryable": False,
+        },
+    )
+    assert failed.status_code == 200, failed.text
+    assert failed.json()["status"] == "failed"
+
+    retried = client.post(f"/api/v1/generative-media-requests/{request_id}/retry")
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["status"] == "queued"
+    assert retried.json()["attempt_count"] == 0
+    assert retried.json()["progress_percent"] == 0
+    assert retried.json()["progress_stage"] == "等待家用生成节点"
+
+    denied = client.post(f"/api/v1/generative-media-requests/{request_id}/retry")
+    assert denied.status_code == 409
+    assert denied.json()["error"]["code"] == "GENERATION_REQUEST_NOT_RETRYABLE"
+
 
 def test_worker_failure_requeues_until_attempt_limit(client, db):
     profile = create_profile(client)

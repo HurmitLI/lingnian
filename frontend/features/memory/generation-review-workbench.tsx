@@ -1,9 +1,10 @@
 "use client";
 
-import { CheckCircle2, FileVideo2, LoaderCircle, Upload, XCircle } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { CheckCircle2, Clapperboard, FileVideo2, LoaderCircle, RotateCcw, Upload, XCircle } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { api, mediaUrl } from "@/lib/api";
+import { generationCompletionNotice, generationTimingLabel, storyPreviewSentences } from "@/lib/generation/status";
 import { IS_FORMAL_CLOUD } from "@/lib/runtime";
 import type { GenerativeMediaRequest, TimelineItem } from "@/lib/types";
 
@@ -48,6 +49,31 @@ export default function GenerationReviewWorkbench({
   onError,
 }: Props) {
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
+  const [selectedStoryId, setSelectedStoryId] = useState(timeline[0]?.story.id ?? "");
+  const selectedStory = useMemo(
+    () => timeline.find((item) => item.story.id === selectedStoryId) ?? timeline[0],
+    [selectedStoryId, timeline],
+  );
+  const previewSentences = useMemo(
+    () => storyPreviewSentences(selectedStory?.story.body ?? ""),
+    [selectedStory],
+  );
+
+  useEffect(() => {
+    const storageKey = `lingnian.generation-status.${profileId}`;
+    let previous: Record<string, string> = {};
+    try {
+      previous = JSON.parse(window.localStorage.getItem(storageKey) || "{}") as Record<string, string>;
+    } catch {
+      previous = {};
+    }
+    const next = Object.fromEntries(requests.map((request) => [request.id, request.status]));
+    const message = requests
+      .map((request) => generationCompletionNotice(previous[request.id], request))
+      .find((item): item is string => Boolean(item));
+    window.localStorage.setItem(storageKey, JSON.stringify(next));
+    if (message) onNotice(message);
+  }, [onNotice, profileId, requests]);
 
   async function refresh() {
     onRequestsChange(await loadRequests(profileId));
@@ -160,22 +186,46 @@ export default function GenerationReviewWorkbench({
     }
   }
 
+  async function retryTask(requestId: string) {
+    setBusyRequestId(requestId);
+    try {
+      await api(`/api/v1/generative-media-requests/${requestId}/retry`, { method: "POST" });
+      await refresh();
+      onNotice("任务已经重新排队。可以离开当前页面，家用节点上线后会继续制作。");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusyRequestId(null);
+    }
+  }
+
   return (
     <section className="generation-review-workbench" aria-labelledby="generation-review-title">
       <div className="generation-review-heading">
         <div>
-          <span className="card-kicker">成片门禁 · 家庭验收</span>
-          <h3 id="generation-review-title">先登记、再导入、最后逐项验收</h3>
-          <p>生成成功不等于可以使用。人物讲述必须检查声音、嘴型、停顿、表情、叙事和时长；故事情景视频也必须检查声音、画面自然度、叙事和时长。</p>
+          <span className="card-kicker">后台成片 · 完成后验收</span>
+          <h3 id="generation-review-title">提交后可以离开，完成后再回来看片</h3>
+          <p>故事和分镜预览会立即保留；照片或视频由家用生成节点在后台制作。生成成功不等于可以使用，完成后仍需家人逐项验收。</p>
         </div>
         <span className="review-gate-badge"><FileVideo2 size={16} aria-hidden="true" />未验收不发布</span>
       </div>
 
       <form className="generation-task-form" onSubmit={registerTask}>
         <label className="field"><span>制作类型</span><select name="generationType"><option value="photo_restore">老照片修复副本</option><option value="portrait_video">人物讲述视频</option><option value="scene_video">故事情景视频</option></select></label>
-        <label className="field"><span>对应故事</span><select name="storyId" required>{timeline.map((item) => <option key={item.story.id} value={item.story.id}>{item.story.title}</option>)}</select></label>
+        <label className="field"><span>对应故事</span><select name="storyId" required value={selectedStory?.story.id ?? ""} onChange={(event) => setSelectedStoryId(event.target.value)}>{timeline.map((item) => <option key={item.story.id} value={item.story.id}>{item.story.title}</option>)}</select></label>
         <label className="field"><span>确认人</span><input name="actorLabel" required defaultValue="家庭管理员" /></label>
         <label className="field"><span>单次预算上限（元）</span><input name="maxCostYuan" type="number" min="0" max="1000" step="0.01" defaultValue="1.00" required /></label>
+        {selectedStory && (
+          <aside className="generation-story-preview" aria-label="本次成片内容预览">
+            <Clapperboard size={22} aria-hidden="true" />
+            <div>
+              <span>提交前即可确认</span>
+              <strong>{selectedStory.story.title}</strong>
+              <ol>{previewSentences.map((sentence, index) => <li key={`${index}-${sentence}`}>{sentence}</li>)}</ol>
+              <small>这些是已确认故事的原文片段。生成节点只能据此制作，不得自行增加家庭事实。</small>
+            </div>
+          </aside>
+        )}
         <fieldset>
           <legend>制作边界</legend>
           <label><input type="checkbox" name="subjectConsent" required />如涉及仍健在的真人，已经取得本人专项授权</label>
@@ -195,13 +245,21 @@ export default function GenerationReviewWorkbench({
             {(request.status === "queued" || request.status === "processing") && (
               <div className="generation-queue-progress" role="status">
                 <LoaderCircle size={18} aria-hidden="true" />
-                <div><strong>{request.progress_stage || "等待生成节点"}</strong><span>{request.status === "processing" ? `${request.progress_percent}% · 第 ${request.attempt_count} 次执行` : "家用电脑上线后会自动领取"}</span></div>
+                <div>
+                  <strong>{request.progress_stage || "等待生成节点"}</strong>
+                  <progress max="100" value={request.progress_percent} aria-label={`成片进度 ${request.progress_percent}%`} />
+                  <span>{request.status === "processing" ? `${request.progress_percent}% · 第 ${request.attempt_count} 次执行` : "家用电脑上线后会自动领取"} · {generationTimingLabel(request)}。可以离开本页，回来后会继续显示最新状态。</span>
+                </div>
                 <button className="button quiet" type="button" disabled={busyRequestId !== null} onClick={() => void cancelTask(request.id)}>取消任务</button>
               </div>
             )}
 
             {request.status === "failed" && (
-              <div className="generation-review-result"><strong>这次生成没有完成</strong><p>{request.last_error_message || "可以由平台管理员在生成控制中心重新排队。"}</p></div>
+              <div className="generation-review-result generation-failed-result">
+                <strong>这次生成没有完成</strong>
+                <p>{request.last_error_message || "素材和故事都还在，可以重新排队，不需要重新采访。"}</p>
+                <button className="button secondary" type="button" disabled={busyRequestId !== null} onClick={() => void retryTask(request.id)}><RotateCcw size={16} aria-hidden="true" />重新制作</button>
+              </div>
             )}
 
             {request.status === "awaiting_provider" && (

@@ -9,6 +9,7 @@ from typing import Protocol
 import httpx
 
 from app.core.config import get_settings
+from app.services.tts.text import prepare_tts_text
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,7 @@ class DashScopeTTSProvider:
 
         result = HttpSpeechSynthesizer.call(
             model=self.model,
-            text=text.strip(),
+            text=prepare_tts_text(text),
             voice=self.voice,
             audio_format="wav",
             sample_rate=24_000,

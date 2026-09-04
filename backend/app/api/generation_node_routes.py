@@ -359,6 +359,40 @@ def retry_generation_request(request_id: str, db: Session = Depends(get_db)) -> 
     return queue_read(request)
 
 
+@router.post("/generative-media-requests/{request_id}/retry", response_model=GenerationQueueItem)
+def retry_family_generation_request(
+    request_id: str,
+    db: Session = Depends(get_db),
+) -> GenerationQueueItem:
+    request = require(
+        db,
+        GenerativeMediaRequest,
+        request_id,
+        "GENERATION_REQUEST_NOT_FOUND",
+        "没有找到这项生成任务。",
+    )
+    if request.status != "failed":
+        raise DomainError("GENERATION_REQUEST_NOT_RETRYABLE", "只有生成失败的任务可以重新制作。", 409)
+    if not request.allow_external_upload:
+        raise DomainError("GENERATION_UPLOAD_NOT_AUTHORIZED", "这项任务没有获得素材发送授权。", 409)
+    request.status = "queued"
+    request.queued_at = utc_now()
+    request.started_at = None
+    request.completed_at = None
+    request.assigned_node_id = None
+    request.lease_token_hash = None
+    request.lease_expires_at = None
+    request.attempt_count = 0
+    request.progress_percent = 0
+    request.progress_stage = "等待家用生成节点"
+    request.actual_cost_cents = 0
+    request.error_code = None
+    request.last_error_message = None
+    db.commit()
+    db.refresh(request)
+    return queue_read(request)
+
+
 @router.post("/generative-media-requests/{request_id}/cancel", response_model=GenerationQueueItem)
 def cancel_generation_request(
     request_id: str,

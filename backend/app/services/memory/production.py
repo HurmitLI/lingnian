@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.services.tts import prepare_tts_text
+
 
 @dataclass(frozen=True)
 class ProductionMedia:
@@ -34,6 +36,7 @@ def _storyboard(body: str, *, place_name: str | None, event_year: int | None) ->
             {
                 "scene": index,
                 "narration": narration,
+                "spoken_narration": prepare_tts_text(narration),
                 "source": "人工确认故事原文",
                 "visual_direction": (
                     f"家庭纪实影像风格；{context + '；' if context else ''}"
