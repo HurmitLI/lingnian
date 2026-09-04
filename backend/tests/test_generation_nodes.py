@@ -5,6 +5,7 @@ import io
 import zipfile
 
 import pytest
+from PIL import Image
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -130,6 +131,41 @@ def test_home_generation_node_claims_encrypted_package_and_uploads_review_result
     assert completed["progress_percent"] == 100
     assert completed["provider_key"].startswith("home_comfyui:")
     assert completed["result_content_url"]
+
+
+def test_photo_restore_worker_uploads_a_real_png(client, db):
+    profile = create_profile(client)
+    story, _ = create_confirmed_story(client, profile, with_photo=True)
+    created = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/generative-media-requests",
+        json={
+            "story_id": story["id"],
+            "generation_type": "photo_restore",
+            "actor_label": "虚构示例管理员",
+            "subject_consent": False,
+            "rights_confirmed": True,
+            "no_impersonation": True,
+            "allow_external_upload": True,
+            "max_cost_cents": 0,
+        },
+    )
+    assert created.status_code == 201, created.text
+    token = "ln_node_png-upload-with-enough-entropy-123456789"
+    db.add(GenerationNode(display_name="PNG 测试节点", token_hash=session_token_hash(token), capabilities=["photo_restore"], status="active"))
+    db.commit()
+    headers = {"Authorization": f"Bearer {token}"}
+    task = client.post("/api/v1/generation-worker/tasks/claim", headers=headers).json()
+    png = io.BytesIO()
+    Image.new("RGB", (1024, 1024), (96, 112, 128)).save(png, format="PNG")
+    payload = png.getvalue()
+    uploaded = client.post(
+        f"/api/v1/generation-worker/tasks/{task['id']}/result",
+        headers={**headers, "X-Lingnian-Lease": task["lease_token"], "X-Content-Sha256": hashlib.sha256(payload).hexdigest()},
+        data={"actual_cost_cents": "0"},
+        files={"result": ("restored.png", payload, "image/png")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    assert uploaded.json()["status"] == "pending_human_review"
 
 
 def test_worker_failure_requeues_until_attempt_limit(client, db):

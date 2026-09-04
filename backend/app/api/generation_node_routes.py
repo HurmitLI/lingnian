@@ -698,6 +698,11 @@ async def upload_worker_result(
     session_id = request.story.source_draft.session_id
     if request.generation_type == "photo_restore":
         stored = await store_image_upload(result, session_id, get_settings(), storage_class="generated")
+        # Image dimensions belong to MediaLink metadata. Generated review assets
+        # have no MediaLink yet, so do not pass these transient validation values
+        # to the MediaAsset ORM constructor.
+        stored.pop("width", None)
+        stored.pop("height", None)
     else:
         stored = await store_video_upload(result, session_id, get_settings())
     if content_sha256 and not hmac.compare_digest(content_sha256.lower(), stored["sha256"].lower()):
