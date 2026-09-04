@@ -44,6 +44,7 @@ from app.services.archive.assets import (
     verify_asset_integrity,
 )
 from app.services.auth import current_auth, session_token_hash
+from app.services.generative_media import upgrade_requirements, worker_supports
 from app.services.memory import ProductionMedia, build_production_package, file_sha256
 from app.services.security import SecretStore, decrypt_media_file, get_secret_store, media_context
 
@@ -63,6 +64,7 @@ SAFE_WORKER_FAILURE_MESSAGES = {
     "RESULT_UPLOAD_FAILED": "生成结果暂时没有上传成功。",
     "PACKAGE_INVALID": "本次授权素材包不完整或校验未通过。",
     "AUDIO_DURATION_MISMATCH": "原始录音长于所选影片时长，请选择更长时长后重新制作。",
+    "STATIC_WORKFLOW_UNSUPPORTED": "家用节点当前仍是静态图片工作流，请先配置能输出动态空镜的视频工作流。",
 }
 
 
@@ -90,6 +92,7 @@ class GenerationNodeRead(BaseModel):
     connection_state: Literal["online", "offline", "revoked"]
     capabilities: list[str]
     software_version: str | None
+    upgrade_required_capabilities: dict[str, str]
     device_summary: str | None
     last_seen_at: datetime | None
     created_at: datetime
@@ -127,6 +130,7 @@ class WorkerHeartbeat(BaseModel):
 class WorkerHeartbeatRead(BaseModel):
     node_id: str
     accepted_capabilities: list[str]
+    upgrade_required_capabilities: dict[str, str]
     poll_interval_seconds: int = 8
     lease_seconds: int = int(LEASE_WINDOW.total_seconds())
 
@@ -189,13 +193,20 @@ def node_state(node: GenerationNode, *, now: datetime | None = None) -> Literal[
 
 
 def node_read(node: GenerationNode) -> GenerationNodeRead:
+    connection_state = node_state(node)
+    required_upgrades = (
+        upgrade_requirements(node.software_version, list(node.capabilities or []))
+        if connection_state != "revoked" and node.software_version
+        else {}
+    )
     return GenerationNodeRead(
         id=node.id,
         display_name=node.display_name,
         status=node.status,
-        connection_state=node_state(node),
+        connection_state=connection_state,
         capabilities=list(node.capabilities or []),
         software_version=node.software_version,
+        upgrade_required_capabilities=required_upgrades,
         device_summary=node.device_summary,
         last_seen_at=node.last_seen_at,
         created_at=node.created_at,
@@ -445,7 +456,16 @@ def worker_heartbeat(
     node.software_version = payload.software_version.strip()
     node.device_summary = payload.device_summary.strip()
     db.commit()
-    return WorkerHeartbeatRead(node_id=node.id, accepted_capabilities=approved)
+    usable = [
+        capability
+        for capability in approved
+        if worker_supports(node.software_version, capability)
+    ]
+    return WorkerHeartbeatRead(
+        node_id=node.id,
+        accepted_capabilities=usable,
+        upgrade_required_capabilities=upgrade_requirements(node.software_version, approved),
+    )
 
 
 def release_expired_leases(db: Session, now: datetime) -> None:
@@ -474,7 +494,11 @@ def claim_worker_task(
     node, _ = authenticate_node(db, authorization)
     now = utc_now()
     release_expired_leases(db, now)
-    capabilities = sorted(set(node.capabilities or []).intersection(WORKER_CAPABILITIES))
+    capabilities = [
+        capability
+        for capability in sorted(set(node.capabilities or []).intersection(WORKER_CAPABILITIES))
+        if worker_supports(node.software_version, capability)
+    ]
     candidates = db.scalars(
         select(GenerativeMediaRequest)
         .where(
@@ -753,6 +777,10 @@ async def upload_worker_result(
     duration_seconds: float = Form(default=0),
     width: int = Form(default=0),
     height: int = Form(default=0),
+    generated_context_scene_count: int = Form(default=0),
+    generated_video_scene_count: int = Form(default=0),
+    unique_generated_visual_count: int = Form(default=0),
+    duplicate_visual_check_passed: bool = Form(default=False),
     authorization: str | None = Header(default=None),
     lease_token: str | None = Header(default=None, alias="X-Lingnian-Lease"),
     content_sha256: str | None = Header(default=None, alias="X-Content-Sha256"),
@@ -765,6 +793,35 @@ async def upload_worker_result(
         raise DomainError("GENERATION_STORY_REQUIRED", "生成任务缺少已确认故事。", 409)
     if actual_cost_cents < 0 or actual_cost_cents > request.max_cost_cents:
         raise DomainError("GENERATION_COST_LIMIT_EXCEEDED", "生成费用超过了本次授权上限。", 409)
+    if request.generation_type == "scene_video":
+        quality_failure = None
+        if rendered_scene_count < 3 or generated_context_scene_count < 1:
+            quality_failure = "成片没有包含完整的纪实分镜。"
+        elif (
+            unique_generated_visual_count > generated_context_scene_count
+            or generated_video_scene_count > generated_context_scene_count
+        ):
+            quality_failure = "生成节点回传的镜头质量报告无效。"
+        elif not duplicate_visual_check_passed:
+            quality_failure = "生成节点没有完成重复画面检查。"
+        elif unique_generated_visual_count < generated_context_scene_count:
+            quality_failure = "纪实空镜存在重复画面。"
+        elif generated_video_scene_count < 1:
+            quality_failure = "纪实影片没有生成任何动态空镜，已阻止纯静态图片成片。"
+        target_duration = int((request.production_spec or {}).get("target_duration_seconds", 0))
+        if target_duration and abs(duration_seconds - target_duration) > 0.75:
+            quality_failure = "成片时长与本次授权规格不一致。"
+        if quality_failure:
+            request.status = "failed"
+            request.progress_stage = "自动质量检查未通过"
+            request.error_code = "AUTOMATED_QUALITY_CHECK_FAILED"
+            request.last_error_message = quality_failure
+            request.assigned_node_id = None
+            request.lease_token_hash = None
+            request.lease_expires_at = None
+            node.last_seen_at = utc_now()
+            db.commit()
+            raise DomainError("AUTOMATED_QUALITY_CHECK_FAILED", quality_failure, 409)
     session_id = request.story.source_draft.session_id
     if request.generation_type == "photo_restore":
         stored = await store_image_upload(result, session_id, get_settings(), storage_class="generated")
@@ -793,12 +850,21 @@ async def upload_worker_result(
     request.result_asset_id = asset.id
     request.provider_key = f"home_comfyui:{node.id}"
     request.actual_cost_cents = actual_cost_cents
-    request.result_report = {
+    result_report = {
         "rendered_scene_count": max(0, rendered_scene_count),
         "duration_seconds": max(0, round(duration_seconds, 3)),
         "width": max(0, width),
         "height": max(0, height),
     }
+    if request.generation_type == "scene_video":
+        result_report.update(
+            generated_context_scene_count=max(0, generated_context_scene_count),
+            generated_video_scene_count=max(0, generated_video_scene_count),
+            unique_generated_visual_count=max(0, unique_generated_visual_count),
+            duplicate_visual_check_passed=duplicate_visual_check_passed,
+            automated_quality_status="passed",
+        )
+    request.result_report = result_report
     request.status = "pending_human_review"
     request.progress_percent = 100
     request.progress_stage = "生成完成，等待家人验收"

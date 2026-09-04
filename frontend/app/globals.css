@@ -189,6 +189,9 @@ h1 { font-size: clamp(42px, 7vw, 68px); line-height: 1; font-weight: 600; letter
 .platform-node-list small, .platform-generation-queue small { color: var(--muted); font-size: 11px; }
 .platform-node-state, .platform-generation-queue article > span { width: fit-content; padding: 5px 8px; border-radius: 999px; background: #eee9e2; color: #625a51; font-size: 11px; font-weight: 700; }
 .platform-node-state[data-state="online"], .platform-generation-queue article > span[data-status="accepted"] { background: #e5f2e8; color: #376247; }
+.platform-node-state[data-state="upgrade"] { background: #fff0d8; color: #8b5617; }
+.platform-node-list article[data-upgrade-required="true"] { border-color: #d5a05d; background: #fffaf1; }
+.platform-node-list .platform-node-upgrade { color: #8b5617; font-weight: 700; }
 .platform-node-state[data-state="revoked"], .platform-generation-queue article > span[data-status="failed"], .platform-generation-queue article > span[data-status="rejected"] { background: #f6e5e2; color: #853d36; }
 .platform-generation-queue h3 { margin: 10px 0 2px; font-size: 21px; }
 .platform-empty { margin: 0; padding: 15px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); }

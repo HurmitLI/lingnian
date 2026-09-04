@@ -59,4 +59,4 @@ $Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Days
 Register-ScheduledTask -TaskName "LingnianGenerationWorker" -Action $Action -Trigger $Trigger -Settings $Settings -Description "LingNian home documentary generation worker" -Force | Out-Null
 Start-ScheduledTask -TaskName "LingnianGenerationWorker"
 
-Write-Host "聆年家用节点 v2.0.1 已安装并启动。以后登录 Windows 会自动运行。"
+Write-Host "聆年家用节点 v2.0.2 已安装并启动。以后登录 Windows 会自动运行。"

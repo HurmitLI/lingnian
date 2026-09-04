@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lingnian-generation-worker"
-version = "2.0.1"
+version = "2.0.2"
 description = "聆年家用生成节点：领取授权任务并制作纪实故事影片"
 requires-python = ">=3.11,<3.13"
 dependencies = [

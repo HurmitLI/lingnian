@@ -673,6 +673,8 @@ class GenerativeMediaCapability(BaseModel):
     requires_subject_consent: bool
     estimated_cost_cents: int | None
     unavailable_reason: str | None
+    minimum_worker_version: str | None = None
+    submission_blocked: bool = False
 
 
 class GenerativeMediaRequestCreate(BaseModel):

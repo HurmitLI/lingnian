@@ -373,6 +373,8 @@ export type GenerativeMediaCapability = {
   requires_subject_consent: boolean;
   estimated_cost_cents: number | null;
   unavailable_reason: string | null;
+  minimum_worker_version?: string | null;
+  submission_blocked?: boolean;
 };
 
 export type GenerativeMediaRequest = {
@@ -416,6 +418,11 @@ export type GenerativeMediaRequest = {
     duration_seconds?: number;
     width?: number;
     height?: number;
+    generated_context_scene_count?: number;
+    generated_video_scene_count?: number;
+    unique_generated_visual_count?: number;
+    duplicate_visual_check_passed?: boolean;
+    automated_quality_status?: "passed";
   };
   queued_at: string | null;
   started_at: string | null;

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import zipfile
+from datetime import UTC, datetime
 
 import pytest
 from PIL import Image
@@ -84,7 +85,7 @@ def test_home_generation_node_claims_encrypted_package_and_uploads_review_result
         "/api/v1/generation-worker/heartbeat",
         headers=headers,
         json={
-            "software_version": "test-worker-1",
+            "software_version": "lingnian-worker/2.0.2",
             "device_summary": "Windows 11 · RTX 5080 16GB",
             "capabilities": ["portrait_video", "scene_video"],
         },
@@ -227,6 +228,7 @@ def test_family_can_retry_a_failed_generation_without_admin_console(client, db):
             display_name="失败恢复测试节点",
             token_hash=session_token_hash(token),
             capabilities=["scene_video"],
+            software_version="lingnian-worker/2.0.2",
             status="active",
         )
     )
@@ -292,6 +294,7 @@ def test_worker_failure_requeues_until_attempt_limit(client, db):
             display_name="测试节点",
             token_hash=session_token_hash(token),
             capabilities=["scene_video"],
+            software_version="lingnian-worker/2.0.2",
             status="active",
         )
     )
@@ -310,3 +313,159 @@ def test_worker_failure_requeues_until_attempt_limit(client, db):
     assert cancelled.status_code == 200, cancelled.text
     assert cancelled.json()["status"] == "cancelled"
     assert client.post("/api/v1/generation-worker/tasks/claim", headers=headers).json() is None
+
+
+def test_outdated_scene_worker_is_visible_but_cannot_receive_or_start_new_tasks(client, db):
+    profile = create_profile(client)
+    story, _ = create_confirmed_story(client, profile)
+    request_payload = {
+        "story_id": story["id"],
+        "generation_type": "scene_video",
+        "actor_label": "测试家庭管理员",
+        "subject_consent": True,
+        "rights_confirmed": True,
+        "no_impersonation": True,
+        "allow_external_upload": True,
+        "max_cost_cents": 0,
+        "target_duration_seconds": 45,
+    }
+    queued = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/generative-media-requests",
+        json=request_payload,
+    )
+    assert queued.status_code == 201, queued.text
+
+    token = "ln_node_outdated-version-with-enough-entropy-123456"
+    db.add(
+        GenerationNode(
+            display_name="旧版测试节点",
+            token_hash=session_token_hash(token),
+            capabilities=["scene_video"],
+            software_version="lingnian-worker/2.0.1",
+            device_summary="Windows 11 · RTX 5080 16GB",
+            last_seen_at=datetime.now(UTC).replace(tzinfo=None),
+            status="active",
+        )
+    )
+    db.commit()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    capabilities = client.get("/api/v1/generative-media/capabilities").json()
+    scene = next(item for item in capabilities if item["generation_type"] == "scene_video")
+    assert scene["submission_blocked"] is True
+    assert scene["minimum_worker_version"] == "2.0.2"
+    assert client.post("/api/v1/generation-worker/tasks/claim", headers=headers).json() is None
+
+    blocked = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/generative-media-requests",
+        json=request_payload,
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["error"]["code"] == "GENERATION_NODE_UPGRADE_REQUIRED"
+
+    heartbeat = client.post(
+        "/api/v1/generation-worker/heartbeat",
+        headers=headers,
+        json={
+            "software_version": "lingnian-worker/2.0.2",
+            "device_summary": "Windows 11 · RTX 5080 16GB",
+            "capabilities": ["scene_video"],
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+    assert heartbeat.json()["accepted_capabilities"] == ["scene_video"]
+    assert heartbeat.json()["upgrade_required_capabilities"] == {}
+    assert client.post("/api/v1/generation-worker/tasks/claim", headers=headers).json()["id"] == queued.json()["id"]
+
+
+def test_scene_result_must_pass_duplicate_and_dynamic_visual_checks(client, db):
+    profile = create_profile(client)
+    story, _ = create_confirmed_story(client, profile)
+    token = "ln_node_quality-report-with-enough-entropy-123456789"
+    db.add(
+        GenerationNode(
+            display_name="质量测试节点",
+            token_hash=session_token_hash(token),
+            capabilities=["scene_video"],
+            software_version="lingnian-worker/2.0.2",
+            status="active",
+        )
+    )
+    db.commit()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    def create_and_claim():
+        created = client.post(
+            f"/api/v1/elder-profiles/{profile['id']}/generative-media-requests",
+            json={
+                "story_id": story["id"],
+                "generation_type": "scene_video",
+                "actor_label": "测试家庭管理员",
+                "subject_consent": True,
+                "rights_confirmed": True,
+                "no_impersonation": True,
+                "allow_external_upload": True,
+                "max_cost_cents": 0,
+                "target_duration_seconds": 45,
+            },
+        )
+        assert created.status_code == 201, created.text
+        task = client.post("/api/v1/generation-worker/tasks/claim", headers=headers).json()
+        return created.json(), task
+
+    video_bytes = b"\x00\x00\x00\x18ftypisom" + b"moov" + b"quality-video" + b"mdat" + b"frames"
+    created, task = create_and_claim()
+    rejected = client.post(
+        f"/api/v1/generation-worker/tasks/{task['id']}/result",
+        headers={
+            **headers,
+            "X-Lingnian-Lease": task["lease_token"],
+            "X-Content-Sha256": hashlib.sha256(video_bytes).hexdigest(),
+        },
+        data={
+            "rendered_scene_count": "4",
+            "duration_seconds": "45",
+            "width": "1280",
+            "height": "720",
+            "generated_context_scene_count": "2",
+            "generated_video_scene_count": "0",
+            "unique_generated_visual_count": "2",
+            "duplicate_visual_check_passed": "true",
+        },
+        files={"result": ("static.mp4", video_bytes, "video/mp4")},
+    )
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["error"]["code"] == "AUTOMATED_QUALITY_CHECK_FAILED"
+    failed = client.get(
+        f"/api/v1/elder-profiles/{profile['id']}/generative-media-requests"
+    ).json()
+    assert next(item for item in failed if item["id"] == created["id"])["status"] == "failed"
+
+    accepted, task = create_and_claim()
+    uploaded = client.post(
+        f"/api/v1/generation-worker/tasks/{task['id']}/result",
+        headers={
+            **headers,
+            "X-Lingnian-Lease": task["lease_token"],
+            "X-Content-Sha256": hashlib.sha256(video_bytes).hexdigest(),
+        },
+        data={
+            "rendered_scene_count": "4",
+            "duration_seconds": "45",
+            "width": "1280",
+            "height": "720",
+            "generated_context_scene_count": "2",
+            "generated_video_scene_count": "2",
+            "unique_generated_visual_count": "2",
+            "duplicate_visual_check_passed": "true",
+        },
+        files={"result": ("dynamic.mp4", video_bytes, "video/mp4")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    completed = client.get(
+        f"/api/v1/elder-profiles/{profile['id']}/generative-media-requests"
+    ).json()
+    report = next(item for item in completed if item["id"] == accepted["id"])["result_report"]
+    assert report["automated_quality_status"] == "passed"
+    assert report["generated_video_scene_count"] == 2
+    assert report["unique_generated_visual_count"] == 2

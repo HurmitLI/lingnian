@@ -1136,6 +1136,7 @@
 .app-shell .generation-task-form { padding: 16px; border: 1px solid var(--formal-line); border-radius: 10px; background: #f8f3ea; }
 .app-shell .generation-task-form fieldset,
 .app-shell .generation-task-form > button,
+.app-shell .generation-node-warning,
 .app-shell .generation-film-spec,
 .app-shell .generation-shot-preview,
 .app-shell .generation-story-preview,
@@ -1164,6 +1165,8 @@
 .app-shell .generation-story-preview strong { font-size: 18px; }
 .app-shell .generation-story-preview ol { display: grid; gap: 4px; margin: 4px 0; padding-left: 22px; color: var(--formal-muted); line-height: 1.55; }
 .app-shell .generation-story-preview small { color: var(--formal-muted); line-height: 1.55; }
+.app-shell .generation-node-warning { padding: 14px 16px; border: 1px solid #bd6c52; border-radius: 9px; background: #fff0ea; color: #71392b; }
+.app-shell .generation-node-warning p { margin: 5px 0 0; line-height: 1.55; }
 .app-shell .generation-request-list { display: grid; gap: 14px; margin-top: 16px; }
 .app-shell .generation-empty { margin: 0; padding: 15px; border: 1px dashed var(--formal-line); border-radius: 9px; color: var(--formal-muted); }
 .app-shell .generation-request-card { overflow: hidden; border: 1px solid var(--formal-line); border-radius: 10px; background: #fff; }
@@ -1175,6 +1178,7 @@
 .app-shell .generation-request-spec span { padding: 5px 9px; border: 1px solid var(--formal-line); border-radius: 999px; background: #f8f3ea; color: var(--formal-muted); font-size: 11px; }
 .app-shell .generation-result-report { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 10px 16px 0; }
 .app-shell .generation-result-report span { padding: 5px 9px; border-radius: 999px; background: #edf4ed; color: var(--formal-green); font-size: 11px; font-weight: 700; }
+.app-shell .generation-quality-warning { margin: 12px 16px 0; padding: 12px 14px; border: 1px solid #d7b86e; border-radius: 8px; background: #fff8dc; color: #6c5420; line-height: 1.55; }
 .app-shell .generation-request-card.status-accepted > header { background: #eaf5e9; }
 .app-shell .generation-request-card.status-rejected > header { background: #f9e9e5; }
 .app-shell .generation-result-form,

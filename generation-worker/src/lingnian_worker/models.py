@@ -46,6 +46,10 @@ class RenderReport:
     duration_seconds: float
     width: int
     height: int
+    generated_context_scene_count: int
+    generated_video_scene_count: int
+    unique_generated_visual_count: int
+    duplicate_visual_check_passed: bool
 
 
 class WorkerError(RuntimeError):
@@ -55,6 +59,10 @@ class WorkerError(RuntimeError):
 
 class ConfigurationError(WorkerError):
     code = "MODEL_MISSING"
+
+
+class StaticWorkflowError(WorkerError):
+    code = "STATIC_WORKFLOW_UNSUPPORTED"
 
 
 class PackageError(WorkerError):

@@ -61,6 +61,7 @@ type GenerationNode = {
   connection_state: "online" | "offline" | "revoked";
   capabilities: string[];
   software_version: string | null;
+  upgrade_required_capabilities: Record<string, string>;
   device_summary: string | null;
   last_seen_at: string | null;
   created_at: string;
@@ -388,9 +389,9 @@ export function PlatformAdminConsole() {
         <div className="platform-node-list">
           {generationNodes.length === 0 && <p className="platform-empty">还没有生成节点。家用电脑部署完成前，可以先生成连接密钥。</p>}
           {generationNodes.map((node) => (
-            <article key={node.id}>
-              <span className="platform-node-state" data-state={node.connection_state}>{node.connection_state === "online" ? "在线" : node.connection_state === "revoked" ? "已断开" : "未连接"}</span>
-              <div><strong>{node.display_name}</strong><small>{node.device_summary || "等待家用电脑首次连接"}</small>{node.software_version && <small>程序版本：{node.software_version}</small>}</div>
+            <article key={node.id} data-upgrade-required={Object.keys(node.upgrade_required_capabilities || {}).length > 0 ? "true" : undefined}>
+              <span className="platform-node-state" data-state={Object.keys(node.upgrade_required_capabilities || {}).length > 0 ? "upgrade" : node.connection_state}>{Object.keys(node.upgrade_required_capabilities || {}).length > 0 ? "需升级" : node.connection_state === "online" ? "在线" : node.connection_state === "revoked" ? "已断开" : "未连接"}</span>
+              <div><strong>{node.display_name}</strong><small>{node.device_summary || "等待家用电脑首次连接"}</small>{node.software_version && <small>程序版本：{node.software_version}</small>}{Object.entries(node.upgrade_required_capabilities || {}).map(([capability, version]) => <small className="platform-node-upgrade" key={capability}>{generationTypeLabel[capability] ?? capability}需升级到 {version}，升级前不会领取任务</small>)}</div>
               <div><small>最近连接</small><strong>{localDate(node.last_seen_at)}</strong></div>
               {node.connection_state !== "revoked" && <button type="button" disabled={busy} onClick={() => void revokeGenerationNode(node)}>断开</button>}
             </article>

@@ -157,7 +157,12 @@ from app.services.memory import (
     select_question,
     SelectedQuestion,
 )
-from app.services.generative_media import capability_catalog, estimate_request
+from app.services.generative_media import (
+    capability_catalog,
+    estimate_request,
+    required_worker_version,
+    worker_supports,
+)
 from app.services.asr import get_asr_provider
 from app.services.asr.audio import get_ffmpeg_binary, normalize_audio
 from app.services.llm import (
@@ -5012,14 +5017,20 @@ def get_generative_media_capabilities(
             GenerationNode.last_seen_at >= online_after,
         )
     ).all()
-    online_capabilities = {
-        capability
-        for node in online_nodes
-        for capability in (node.capabilities or [])
-    }
     result: list[GenerativeMediaCapability] = []
     for item in capability_catalog():
-        if item.generation_type in online_capabilities:
+        capable_nodes = [
+            node
+            for node in online_nodes
+            if item.generation_type in (node.capabilities or [])
+        ]
+        compatible_nodes = [
+            node
+            for node in capable_nodes
+            if worker_supports(node.software_version, item.generation_type)
+        ]
+        minimum_version = required_worker_version(item.generation_type)
+        if compatible_nodes:
             result.append(
                 GenerativeMediaCapability(
                     generation_type=item.generation_type,
@@ -5030,6 +5041,29 @@ def get_generative_media_capabilities(
                     requires_subject_consent=item.requires_subject_consent,
                     estimated_cost_cents=0,
                     unavailable_reason="家用生成节点已在线；每项任务仍需单独授权，生成结果必须经过家庭验收。",
+                    minimum_worker_version=minimum_version,
+                    submission_blocked=False,
+                )
+            )
+        elif capable_nodes and minimum_version:
+            versions = "、".join(
+                sorted({node.software_version or "未报告版本" for node in capable_nodes})
+            )
+            result.append(
+                GenerativeMediaCapability(
+                    generation_type=item.generation_type,
+                    label=item.label,
+                    available=False,
+                    provider_key="home_comfyui",
+                    requires_external_upload=True,
+                    requires_subject_consent=item.requires_subject_consent,
+                    estimated_cost_cents=0,
+                    unavailable_reason=(
+                        f"在线节点版本为 {versions}，低于最低版本 {minimum_version}。"
+                        "升级前已阻止新任务，避免重复画面继续消耗时间。"
+                    ),
+                    minimum_worker_version=minimum_version,
+                    submission_blocked=True,
                 )
             )
         elif item.generation_type in {"photo_restore", "portrait_video", "scene_video"}:
@@ -5043,10 +5077,18 @@ def get_generative_media_capabilities(
                     requires_subject_consent=item.requires_subject_consent,
                     estimated_cost_cents=0,
                     unavailable_reason="家用生成节点尚未在线；完成单次授权后可以先排队，电脑上线会自动领取。",
+                    minimum_worker_version=minimum_version,
+                    submission_blocked=False,
                 )
             )
         else:
-            result.append(GenerativeMediaCapability(**item.__dict__))
+            result.append(
+                GenerativeMediaCapability(
+                    **item.__dict__,
+                    minimum_worker_version=minimum_version,
+                    submission_blocked=False,
+                )
+            )
     return result
 
 
@@ -5095,6 +5137,34 @@ def create_generative_media_request(
         raise DomainError("UNSUPPORTED_GENERATION_TYPE", "暂不支持这种生成类型。", 422)
     if capability.requires_subject_consent and not payload.subject_consent:
         raise DomainError("SUBJECT_CONSENT_REQUIRED", "人物影像或声音生成必须有讲述者本人明确授权。", 409)
+    if payload.allow_external_upload:
+        online_after = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=90)
+        online_capable_nodes = db.scalars(
+            select(GenerationNode).where(
+                GenerationNode.status == "active",
+                GenerationNode.revoked_at.is_(None),
+                GenerationNode.last_seen_at >= online_after,
+            )
+        ).all()
+        online_capable_nodes = [
+            node
+            for node in online_capable_nodes
+            if payload.generation_type in (node.capabilities or [])
+        ]
+        minimum_version = required_worker_version(payload.generation_type)
+        if (
+            online_capable_nodes
+            and minimum_version
+            and not any(
+                worker_supports(node.software_version, payload.generation_type)
+                for node in online_capable_nodes
+            )
+        ):
+            raise DomainError(
+                "GENERATION_NODE_UPGRADE_REQUIRED",
+                f"家用生成节点需要升级到 {minimum_version} 或更高版本，升级前不会提交新任务。",
+                409,
+            )
     provider_key, estimated_cost, status = estimate_request(payload.generation_type)
     if payload.allow_external_upload and payload.generation_type != "voice_replica":
         provider_key = "home_comfyui"

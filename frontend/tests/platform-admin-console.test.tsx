@@ -78,6 +78,7 @@ describe("平台管理后台", () => {
           connection_state: "online",
           capabilities: ["scene_video"],
           software_version: "lingnian-worker/2.0.0",
+          upgrade_required_capabilities: { scene_video: "2.0.2" },
           device_summary: "Windows 11 · NVIDIA GeForce RTX 5080 / 16303MB",
           last_seen_at: "2026-09-04T06:53:58Z",
           created_at: "2026-09-04T02:00:00Z",
@@ -129,10 +130,12 @@ describe("平台管理后台", () => {
     ));
   });
 
-  it("显示在线节点的软件版本，便于确认家里电脑是否升级", async () => {
+  it("显示在线节点的软件版本并明确阻止旧版领取影片任务", async () => {
     render(<PlatformAdminConsole />);
 
     expect(await screen.findByText("程序版本：lingnian-worker/2.0.0")).toBeVisible();
     expect(screen.getByText("Windows 11 · NVIDIA GeForce RTX 5080 / 16303MB")).toBeVisible();
+    expect(screen.getByText("需升级")).toBeVisible();
+    expect(screen.getByText("纪实故事影片需升级到 2.0.2，升级前不会领取任务")).toBeVisible();
   });
 });

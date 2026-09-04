@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import textwrap
 from pathlib import Path
@@ -111,6 +112,49 @@ class MediaRenderer:
             }
         except (ValueError, TypeError) as exc:
             raise PackageError("成片信息格式不正确。") from exc
+
+    def visual_fingerprint(self, path: Path) -> str:
+        """Hash coarse pixels from several moments, ignoring container metadata."""
+
+        signatures: list[bytes] = []
+        for index, timestamp in enumerate((0.35, 1.25, 2.25)):
+            frame = path.with_name(f"{path.stem}.fingerprint-{index}.png")
+            completed = subprocess.run(
+                [
+                    self.ffmpeg,
+                    "-y",
+                    "-ss",
+                    str(timestamp),
+                    "-i",
+                    str(path),
+                    "-frames:v",
+                    "1",
+                    "-vf",
+                    "scale=32:32:force_original_aspect_ratio=increase,crop=32:32",
+                    str(frame),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            if completed.returncode != 0 or not frame.is_file():
+                continue
+            with Image.open(frame) as image:
+                gray = image.convert("L").resize((16, 16), Image.Resampling.LANCZOS)
+                pixels = list(gray.get_flattened_data())
+                average = sum(pixels) / len(pixels)
+                shape = bytes(1 if pixel >= average else 0 for pixel in pixels)
+                color = image.convert("RGB").resize((4, 4), Image.Resampling.LANCZOS)
+                histogram = bytes(
+                    channel // 32
+                    for pixel in color.get_flattened_data()
+                    for channel in pixel
+                )
+                signatures.append(shape + histogram)
+        if not signatures:
+            raise PackageError("动态镜头无法提取画面指纹。")
+        return hashlib.sha256(b"".join(signatures)).hexdigest()
 
     def image_clip(
         self,

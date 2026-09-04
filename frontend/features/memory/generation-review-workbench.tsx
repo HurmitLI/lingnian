@@ -6,12 +6,13 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, mediaUrl } from "@/lib/api";
 import { generationCompletionNotice, generationTimingLabel, storyPreviewSentences } from "@/lib/generation/status";
 import { IS_FORMAL_CLOUD } from "@/lib/runtime";
-import type { DocumentaryPlanPreview, GenerativeMediaRequest, TimelineItem } from "@/lib/types";
+import type { DocumentaryPlanPreview, GenerativeMediaCapability, GenerativeMediaRequest, TimelineItem } from "@/lib/types";
 
 type Props = {
   profileId: string;
   timeline: TimelineItem[];
   requests: GenerativeMediaRequest[];
+  capabilities: GenerativeMediaCapability[];
   onRequestsChange: (requests: GenerativeMediaRequest[]) => void;
   onNotice: (message: string) => void;
   onError: (error: unknown) => void;
@@ -51,6 +52,7 @@ export default function GenerationReviewWorkbench({
   profileId,
   timeline,
   requests,
+  capabilities,
   onRequestsChange,
   onNotice,
   onError,
@@ -61,6 +63,11 @@ export default function GenerationReviewWorkbench({
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9");
   const [planPreview, setPlanPreview] = useState<DocumentaryPlanPreview | null>(null);
   const [selectedStoryId, setSelectedStoryId] = useState(timeline[0]?.story.id ?? "");
+  const [externalUploadAuthorized, setExternalUploadAuthorized] = useState(false);
+  const selectedCapability = capabilities.find(
+    (item) => item.generation_type === generationType,
+  );
+  const submissionBlocked = externalUploadAuthorized && Boolean(selectedCapability?.submission_blocked);
   const selectedStory = useMemo(
     () => timeline.find((item) => item.story.id === selectedStoryId) ?? timeline[0],
     [selectedStoryId, timeline],
@@ -143,6 +150,7 @@ export default function GenerationReviewWorkbench({
       });
       await refresh();
       formElement.reset();
+      setExternalUploadAuthorized(false);
       onNotice(
         form.get("allowExternalUpload") === "on"
           ? "制作任务已进入家用生成队列。生成完成后仍要由家人逐项验收。"
@@ -288,9 +296,15 @@ export default function GenerationReviewWorkbench({
           <label><input type="checkbox" name="subjectConsent" required />如涉及仍健在的真人，已经取得本人专项授权</label>
           <label><input type="checkbox" name="rightsConfirmed" required />确认拥有照片、原声和故事的使用权</label>
           <label><input type="checkbox" name="noImpersonation" required />不会冒充本人或误导公众</label>
-          <label><input type="checkbox" name="allowExternalUpload" />本次允许把所选素材加密发送到家用生成节点</label>
+          <label><input type="checkbox" name="allowExternalUpload" checked={externalUploadAuthorized} onChange={(event) => setExternalUploadAuthorized(event.target.checked)} />本次允许把所选素材加密发送到家用生成节点</label>
         </fieldset>
-        <button className="button secondary" disabled={busyRequestId !== null || timeline.length === 0}>登记成片验收任务</button>
+        {selectedCapability?.submission_blocked && (
+          <aside className="generation-node-warning" role="alert">
+            <strong>当前家用节点需要升级</strong>
+            <p>{selectedCapability.unavailable_reason}</p>
+          </aside>
+        )}
+        <button className="button secondary" disabled={busyRequestId !== null || timeline.length === 0 || submissionBlocked}>{submissionBlocked ? `升级到 ${selectedCapability?.minimum_worker_version} 后可提交` : "登记成片验收任务"}</button>
       </form>
 
       <div className="generation-request-list">
@@ -351,8 +365,15 @@ export default function GenerationReviewWorkbench({
                 <span>实际 {request.result_report.duration_seconds} 秒</span>
                 {request.result_report.rendered_scene_count ? <span>{request.result_report.rendered_scene_count} 个镜头</span> : null}
                 {request.result_report.width && request.result_report.height ? <span>{request.result_report.width}×{request.result_report.height}</span> : null}
+                {request.result_report.automated_quality_status === "passed" ? <span>自动查重通过</span> : null}
+                {request.result_report.generated_context_scene_count ? <span>空镜去重 {request.result_report.unique_generated_visual_count}/{request.result_report.generated_context_scene_count}</span> : null}
+                {request.result_report.generated_video_scene_count !== undefined ? <span>动态空镜 {request.result_report.generated_video_scene_count}</span> : null}
               </div>
             ) : null}
+
+            {request.status === "pending_human_review" && request.generation_type === "scene_video" && !request.result_report.automated_quality_status && (
+              <p className="generation-quality-warning">这是旧版节点回传的成片，没有自动查重与动态镜头报告，请人工重点检查重复画面和纯静态画面。</p>
+            )}
 
             {request.status === "pending_human_review" && (
               <form className="generation-review-form" onSubmit={(event) => reviewResult(event, request.id)}>

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
 from lingnian_worker.executor import DocumentaryExecutor
-from lingnian_worker.models import AuthorizedPackage, PackageError, WorkerTask
+from lingnian_worker.models import AuthorizedPackage, PackageError, StaticWorkflowError, WorkerTask
 
 
 class FakeRenderer:
@@ -29,6 +30,9 @@ class FakeRenderer:
 
     def probe(self, path: Path) -> dict:
         return {"duration": 45.0, "width": 1280, "height": 720}
+
+    def visual_fingerprint(self, path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 class FakeComfy:
@@ -91,6 +95,10 @@ def test_executes_all_scenes_and_reports_exact_output(tmp_path, monkeypatch):
     assert report.rendered_scene_count == 4
     assert report.duration_seconds == 45.0
     assert report.result_path.read_bytes() == b"final-video"
+    assert report.generated_context_scene_count == 1
+    assert report.generated_video_scene_count == 1
+    assert report.unique_generated_visual_count == 1
+    assert report.duplicate_visual_check_passed is True
     assert comfy.generated == 1
     assert updates[-1][2:] == (4, 4, "scene-04")
 
@@ -105,6 +113,8 @@ def test_reuses_verified_scene_checkpoints_after_restart(tmp_path, monkeypatch):
     )
     checkpoint = json.loads((tmp_path / "worker/jobs/task-1/checkpoint.json").read_text())
     assert len(checkpoint["clips"]) == 4
+    assert checkpoint["version"] == 2
+    assert checkpoint["scene_reports"]["3"]["source_type"] == "generated_video"
 
     second_renderer = FakeRenderer()
     second_comfy = FakeComfy()
@@ -146,8 +156,8 @@ def test_retries_then_blocks_duplicate_context_visuals(tmp_path, monkeypatch):
     class DuplicateComfy(FakeComfy):
         def generate_scene(self, *, output_path: Path, **kwargs) -> Path:
             self.generated += 1
-            target = output_path.with_suffix(".png")
-            target.write_bytes(b"same-generated-image")
+            target = output_path.with_suffix(".mp4")
+            target.write_bytes(b"same-generated-video")
             return target
 
     duplicate = DuplicateComfy()
@@ -155,3 +165,17 @@ def test_retries_then_blocks_duplicate_context_visuals(tmp_path, monkeypatch):
     with pytest.raises(PackageError, match="相同画面"):
         executor.execute(make_task(), package, lambda *args: None)
     assert duplicate.generated == 3
+
+
+def test_blocks_static_image_only_context_workflow(tmp_path, monkeypatch):
+    monkeypatch.setattr("lingnian_worker.executor.make_card", lambda path, **kwargs: path.write_bytes(b"card") or path)
+
+    class StaticComfy(FakeComfy):
+        def generate_scene(self, *, output_path: Path, **kwargs) -> Path:
+            target = output_path.with_suffix(".png")
+            target.write_bytes(b"static-image")
+            return target
+
+    executor = DocumentaryExecutor(renderer=FakeRenderer(), comfyui=StaticComfy(), work_dir=tmp_path / "worker")
+    with pytest.raises(StaticWorkflowError, match="只输出静态图片"):
+        executor.execute(make_task(), make_package(tmp_path), lambda *args: None)
