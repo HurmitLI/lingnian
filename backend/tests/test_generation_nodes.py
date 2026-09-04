@@ -149,8 +149,16 @@ def test_photo_restore_worker_uploads_a_real_png(client, db):
         },
     )
     assert created.status_code == 201, created.text
+    request_id = created.json()["id"]
     token = "ln_node_png-upload-with-enough-entropy-123456789"
-    db.add(GenerationNode(display_name="PNG 测试节点", token_hash=session_token_hash(token), capabilities=["photo_restore"], status="active"))
+    db.add(
+        GenerationNode(
+            display_name="PNG 测试节点",
+            token_hash=session_token_hash(token),
+            capabilities=["photo_restore"],
+            status="active",
+        )
+    )
     db.commit()
     headers = {"Authorization": f"Bearer {token}"}
     task = client.post("/api/v1/generation-worker/tasks/claim", headers=headers).json()
@@ -159,13 +167,22 @@ def test_photo_restore_worker_uploads_a_real_png(client, db):
     payload = png.getvalue()
     uploaded = client.post(
         f"/api/v1/generation-worker/tasks/{task['id']}/result",
-        headers={**headers, "X-Lingnian-Lease": task["lease_token"], "X-Content-Sha256": hashlib.sha256(payload).hexdigest()},
+        headers={
+            **headers,
+            "X-Lingnian-Lease": task["lease_token"],
+            "X-Content-Sha256": hashlib.sha256(payload).hexdigest(),
+        },
         data={"actual_cost_cents": "0"},
         files={"result": ("restored.png", payload, "image/png")},
     )
     assert uploaded.status_code == 200, uploaded.text
     assert uploaded.json()["status"] == "pending_human_review"
 
+    listed = client.get(
+        f"/api/v1/elder-profiles/{profile['id']}/generative-media-requests"
+    ).json()
+    completed = next(item for item in listed if item["id"] == request_id)
+    assert completed["result_content_url"]
 
 def test_worker_failure_requeues_until_attempt_limit(client, db):
     profile = create_profile(client)
