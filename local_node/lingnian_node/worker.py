@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import httpx
+from PIL import Image
 
 from . import __version__
 from .cloud import CloudClient, WorkerTask, decrypt_package, safe_extract
@@ -125,19 +126,30 @@ class ProductionWorker:
     def _generate(self, task: WorkerTask, manifest: dict, package_root: Path) -> Path:
         if task.generation_type != "photo_restore":
             raise FileNotFoundError("当前节点尚未安装已授权视频模型。")
-        output_dir = self.comfy_root / "output" / "lingnian"
-        cached = sorted(output_dir.glob(f"production-{task.id}_*.png"), key=lambda path: path.stat().st_mtime, reverse=True)
-        if cached:
-            return cached[0]
         media = next((item for item in manifest["media"] if item.get("mime_type", "").startswith("image/")), None)
         if not media:
             raise ValueError("修复任务缺少照片。")
         source = package_root.joinpath(*media["path"].split("/"))
+        with Image.open(source) as source_image:
+            source_width, source_height = source_image.size
+        if source_width <= 0 or source_height <= 0:
+            raise ValueError("原图尺寸无效。")
+        target_width = min(1024, source_width)
+        target_height = max(1, round(target_width * source_height / source_width))
+        output_dir = self.comfy_root / "output" / "lingnian"
+        cached = sorted(output_dir.glob(f"production-{task.id}_*.png"), key=lambda path: path.stat().st_mtime, reverse=True)
+        for candidate in cached:
+            with Image.open(candidate) as cached_image:
+                if cached_image.size == (target_width, target_height):
+                    return candidate
         input_name = f"lingnian-{task.id}{source.suffix.lower()}"
         comfy_input = self.comfy_root / "input" / input_name
         shutil.copyfile(source, comfy_input)
         workflow = json.loads((Path(__file__).parents[1] / "workflows" / "老照片修复.json").read_text(encoding="utf-8"))
         workflow["1"]["inputs"]["image"] = input_name
+        workflow["4"]["inputs"]["width"] = target_width
+        workflow["4"]["inputs"]["height"] = target_height
+        workflow["4"]["inputs"]["crop"] = "disabled"
         workflow["5"]["inputs"]["filename_prefix"] = f"lingnian/production-{task.id}"
         try:
             history = self.comfy.run(workflow)
@@ -148,6 +160,9 @@ class ProductionWorker:
             result = self.comfy_root / "output" / item.get("subfolder", "") / item["filename"]
             if not result.is_file():
                 raise RuntimeError("ComfyUI 输出文件不存在。")
+            with Image.open(result) as output_image:
+                if output_image.size != (target_width, target_height):
+                    raise RuntimeError("修复结果尺寸不符合原图宽高比，已阻止上传。")
             return result
         finally:
             comfy_input.unlink(missing_ok=True)

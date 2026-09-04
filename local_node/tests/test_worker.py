@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+from PIL import Image
 
 from lingnian_node.worker import ProductionWorker
 
@@ -41,6 +42,17 @@ def test_generate_reuses_real_cached_task_output(tmp_path):
     output = tmp_path / "output" / "lingnian"
     output.mkdir(parents=True)
     cached = output / "production-task-1_00001_.png"
-    cached.write_bytes(b"real-result")
+    Image.new("RGB", (1024, 576)).save(cached)
+    package = tmp_path / "package"
+    source = package / "sources" / "original.png"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (1664, 936)).save(source)
     task = SimpleNamespace(id="task-1", generation_type="photo_restore")
-    assert worker._generate(task, {"media": []}, Path("unused")) == cached
+    manifest = {"media": [{"path": "sources/original.png", "mime_type": "image/png"}]}
+    assert worker._generate(task, manifest, package) == cached
+
+
+def test_photo_restore_workflow_defaults_to_uncropped_16_by_9():
+    workflow = __import__("json").loads((Path(__file__).parents[1] / "workflows" / "老照片修复.json").read_text(encoding="utf-8"))
+    scale = workflow["4"]["inputs"]
+    assert (scale["width"], scale["height"], scale["crop"]) == (1024, 576, "disabled")
