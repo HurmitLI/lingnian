@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lingnian-generation-worker"
+version = "2.0.0"
+description = "聆年家用生成节点：领取授权任务并制作纪实故事影片"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "cryptography>=50,<51",
+  "httpx>=0.28,<1",
+  "imageio-ffmpeg>=0.6,<1",
+  "keyring>=25,<26",
+  "pillow>=12,<13",
+  "python-dotenv>=1.1,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<9"]
+
+[project.scripts]
+lingnian-worker = "lingnian_worker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["src"]

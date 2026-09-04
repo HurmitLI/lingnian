@@ -70,7 +70,19 @@ describe("平台管理后台", () => {
         capabilities: ["photo_restore", "portrait_video", "scene_video"],
         created_at: "2026-09-04T02:00:00Z",
       });
-      if (path === "/api/v1/generation-control/nodes") return Promise.resolve([]);
+      if (path === "/api/v1/generation-control/nodes") return Promise.resolve([
+        {
+          id: "node-online",
+          display_name: "家用 RTX 5080 生成节点",
+          status: "active",
+          connection_state: "online",
+          capabilities: ["scene_video"],
+          software_version: "lingnian-worker/2.0.0",
+          device_summary: "Windows 11 · NVIDIA GeForce RTX 5080 / 16303MB",
+          last_seen_at: "2026-09-04T06:53:58Z",
+          created_at: "2026-09-04T02:00:00Z",
+        },
+      ]);
       if (path === "/api/v1/generation-control/requests") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected ${path}`));
     });
@@ -113,7 +125,14 @@ describe("平台管理后台", () => {
     expect(screen.getByText("连接密钥只完整显示这一次")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "复制家用电脑连接配置" }));
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining(
-      "LINGNIAN_API_BASE=https://formal-api.example.com",
+      "LINGNIAN_BACKEND_URL=https://formal-api.example.com",
     ));
+  });
+
+  it("显示在线节点的软件版本，便于确认家里电脑是否升级", async () => {
+    render(<PlatformAdminConsole />);
+
+    expect(await screen.findByText("程序版本：lingnian-worker/2.0.0")).toBeVisible();
+    expect(screen.getByText("Windows 11 · NVIDIA GeForce RTX 5080 / 16303MB")).toBeVisible();
   });
 });

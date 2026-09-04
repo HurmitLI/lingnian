@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from app.api.generation_node_routes import PACKAGE_MAGIC
+from app.api.generation_node_routes import PACKAGE_MAGIC, SAFE_WORKER_FAILURE_MESSAGES
 from app.main import app
 from app.models import GenerationNode
 from app.services.security import InMemorySecretStore, get_secret_store
@@ -39,6 +39,11 @@ def decrypt_package(payload: bytes, *, token: str, request_id: str) -> bytes:
         info=b"lingnian-generation-package-v1",
     ).derive(token.encode("utf-8"))
     return AESGCM(key).decrypt(nonce, ciphertext, request_id.encode("ascii"))
+
+
+def test_worker_failure_messages_are_safe_and_actionable():
+    assert SAFE_WORKER_FAILURE_MESSAGES["PACKAGE_INVALID"] == "本次授权素材包不完整或校验未通过。"
+    assert "选择更长时长" in SAFE_WORKER_FAILURE_MESSAGES["AUDIO_DURATION_MISMATCH"]
 
 
 def test_home_generation_node_claims_encrypted_package_and_uploads_review_result(client, db):

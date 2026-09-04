@@ -61,6 +61,8 @@ SAFE_WORKER_FAILURE_MESSAGES = {
     "MODEL_LOAD_FAILED": "家用生成节点暂时无法加载模型。",
     "WORKFLOW_FAILED": "本地生成工作流没有完成。",
     "RESULT_UPLOAD_FAILED": "生成结果暂时没有上传成功。",
+    "PACKAGE_INVALID": "本次授权素材包不完整或校验未通过。",
+    "AUDIO_DURATION_MISMATCH": "原始录音长于所选影片时长，请选择更长时长后重新制作。",
 }
 
 

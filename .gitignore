@@ -48,5 +48,10 @@ frontend/test-results/
 *.log
 .runtime/
 
+# Home generation worker runtime (may contain decrypted authorized material)
+generation-worker/.worker-data/
+generation-worker/dist/
+generation-worker/build/
+
 # Cloud deployment bindings are account and environment specific
 .vefaas/

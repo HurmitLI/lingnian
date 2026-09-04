@@ -98,7 +98,7 @@ const invitationStatus = {
 const generationTypeLabel: Record<string, string> = {
   photo_restore: "老照片修复",
   portrait_video: "人物讲述视频",
-  scene_video: "故事情景视频",
+  scene_video: "纪实故事影片",
 };
 
 const generationStatusLabel: Record<string, string> = {
@@ -226,9 +226,8 @@ export function PlatformAdminConsole() {
     const configuredWorkerApiBase = process.env.NEXT_PUBLIC_LINGNIAN_WORKER_API_BASE?.trim();
     const workerApiBase = (configuredWorkerApiBase || window.location.origin).replace(/\/+$/, "");
     const text = [
-      `LINGNIAN_API_BASE=${workerApiBase}`,
+      `LINGNIAN_BACKEND_URL=${workerApiBase}`,
       `LINGNIAN_NODE_TOKEN=${createdNode.connection_token}`,
-      `LINGNIAN_NODE_ID=${createdNode.id}`,
     ].join("\n");
     try {
       await navigator.clipboard.writeText(text);
@@ -391,7 +390,7 @@ export function PlatformAdminConsole() {
           {generationNodes.map((node) => (
             <article key={node.id}>
               <span className="platform-node-state" data-state={node.connection_state}>{node.connection_state === "online" ? "在线" : node.connection_state === "revoked" ? "已断开" : "未连接"}</span>
-              <div><strong>{node.display_name}</strong><small>{node.device_summary || "等待家用电脑首次连接"}</small></div>
+              <div><strong>{node.display_name}</strong><small>{node.device_summary || "等待家用电脑首次连接"}</small>{node.software_version && <small>程序版本：{node.software_version}</small>}</div>
               <div><small>最近连接</small><strong>{localDate(node.last_seen_at)}</strong></div>
               {node.connection_state !== "revoked" && <button type="button" disabled={busy} onClick={() => void revokeGenerationNode(node)}>断开</button>}
             </article>
