@@ -64,6 +64,7 @@ class DocumentaryExecutor:
         checkpoint_path = job_dir / "checkpoint.json"
         completed = self._load_checkpoint(checkpoint_path, scenes)
         clips: list[Path] = []
+        generated_visual_hashes: set[str] = set()
         total = len(scenes)
 
         for index, scene in enumerate(scenes, start=1):
@@ -86,6 +87,7 @@ class DocumentaryExecutor:
                 width=width,
                 height=height,
                 fps=fps,
+                generated_visual_hashes=generated_visual_hashes,
                 keepalive=lambda: progress(
                     10 + round(75 * (index - 1) / total),
                     f"正在生成第 {index}/{total} 个镜头",
@@ -146,6 +148,7 @@ class DocumentaryExecutor:
         width: int,
         height: int,
         fps: int,
+        generated_visual_hashes: set[str],
         keepalive: Callable[[], None],
     ) -> None:
         kind = str(scene.get("kind", ""))
@@ -190,15 +193,25 @@ class DocumentaryExecutor:
         if kind != "documentary_context":
             raise PackageError("分镜包含未知镜头类型。")
         self.comfyui.doctor()
-        generated = self.comfyui.generate_scene(
-            scene=scene,
-            output_path=clip.with_suffix(".generated"),
-            width=width,
-            height=height,
-            fps=fps,
-            source_image=None,
-            on_wait=keepalive,
-        )
+        generated: Path | None = None
+        for seed_offset in range(2):
+            candidate = self.comfyui.generate_scene(
+                scene=scene,
+                output_path=clip.with_suffix(f".generated-{seed_offset}"),
+                width=width,
+                height=height,
+                fps=fps,
+                source_image=None,
+                seed_offset=seed_offset,
+                on_wait=keepalive,
+            )
+            visual_hash = _sha256(candidate)
+            if visual_hash not in generated_visual_hashes:
+                generated_visual_hashes.add(visual_hash)
+                generated = candidate
+                break
+        if generated is None:
+            raise PackageError("多个纪实空镜生成了相同画面，已阻止低质量重复成片。")
         if generated.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
             self.renderer.image_clip(
                 generated,

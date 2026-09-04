@@ -18,6 +18,7 @@ from app.models import (
     StoryDetail,
 )
 from app.services.security import InMemorySecretStore, get_secret_store
+from app.services.memory.production import build_documentary_plan
 from test_api_flow import create_profile, upload_test_audio
 
 
@@ -67,6 +68,31 @@ def create_confirmed_story(client, profile: dict, *, with_photo: bool = False) -
     )
     assert confirmed.status_code == 200, confirmed.text
     return confirmed.json(), image_asset_id
+
+
+def test_documentary_plan_keeps_all_confirmed_words_and_grounds_each_visual_shot():
+    body = (
+        "沈素琴（虚构演示）回忆道，那个蓝布包她一直没舍得扔。"
+        "1982年春天，她19岁，第一次一个人坐火车去无锡的纺织厂。"
+    )
+    plan = build_documentary_plan(
+        story_id="story-demo",
+        title="沈素琴回忆1982年赴无锡",
+        body=body,
+        place_name="无锡",
+        event_year=1982,
+        has_image=True,
+        production_spec={"target_duration_seconds": 45, "aspect_ratio": "16:9"},
+    )
+    story_scenes = [
+        scene for scene in plan["scenes"] if scene["kind"] not in {"title_card", "source_card"}
+    ]
+    assert "".join(scene["subtitle"] for scene in story_scenes) == body
+    context_scenes = [scene for scene in story_scenes if scene["kind"] == "documentary_context"]
+    assert len({scene["visual_direction"] for scene in context_scenes}) == len(context_scenes)
+    assert all("当前镜头必须直接对应" in scene["visual_direction"] for scene in context_scenes)
+    assert all("不得出现现代高楼天际线" in scene["visual_direction"] for scene in context_scenes)
+    assert all("禁止无关城市航拍" in scene["visual_direction"] for scene in context_scenes)
 
 
 def test_archive_question_is_grounded_and_gap_becomes_interview(client):

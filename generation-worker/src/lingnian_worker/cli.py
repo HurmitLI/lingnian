@@ -19,6 +19,7 @@ def _parser() -> argparse.ArgumentParser:
     subcommands.add_parser("once", help="只检查并处理一个任务")
     subcommands.add_parser("doctor", help="检查云端、ComfyUI、工作流和媒体工具")
     subcommands.add_parser("credential-set", help="把节点连接密钥写入系统凭据库")
+    subcommands.add_parser("credential-status", help="只检查系统凭据库中是否已有节点密钥")
     return parser
 
 
@@ -36,6 +37,13 @@ def main() -> int:
     args = _parser().parse_args()
     if args.command == "credential-set":
         return _save_credential()
+    if args.command == "credential-status":
+        token = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME) or ""
+        if len(token) < 32:
+            print("系统凭据库中没有有效的节点连接密钥。", file=sys.stderr)
+            return 2
+        print("系统凭据库中的节点连接密钥已就绪。")
+        return 0
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     service: WorkerService | None = None
     try:

@@ -3,6 +3,12 @@ $ErrorActionPreference = "Stop"
 
 $WorkerRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Python = Join-Path $WorkerRoot ".venv\Scripts\python.exe"
+$EnvPath = Join-Path $WorkerRoot ".env"
+$ExistingTask = Get-ScheduledTask -TaskName "LingnianGenerationWorker" -ErrorAction SilentlyContinue
+
+if ($ExistingTask) {
+    Stop-ScheduledTask -TaskName "LingnianGenerationWorker" -ErrorAction SilentlyContinue
+}
 
 if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
     throw "Python launcher not found. Install Python 3.11 or 3.12."
@@ -20,25 +26,31 @@ if (-not (Test-Path $Python)) {
 }
 
 & $Python -m pip install --upgrade pip
-& $Python -m pip install -e $WorkerRoot
+& $Python -m pip install --upgrade --force-reinstall $WorkerRoot
 
-if (-not $BackendUrl) { $BackendUrl = Read-Host "Formal backend HTTPS URL" }
-if (-not $WorkflowPath) { $WorkflowPath = Read-Host "Full path to the ComfyUI documentary API workflow JSON" }
-$EnvLines = @(
-    "LINGNIAN_BACKEND_URL=$BackendUrl",
-    "LINGNIAN_COMFYUI_URL=http://127.0.0.1:8188",
-    "LINGNIAN_WORK_DIR=$($WorkerRoot.Replace('\', '/'))/.worker-data",
-    "LINGNIAN_SCENE_WORKFLOW=$($WorkflowPath.Replace('\', '/'))",
-    "LINGNIAN_POLL_SECONDS=8",
-    "LINGNIAN_COMFY_TIMEOUT_SECONDS=1800",
-    "LINGNIAN_MAX_GENERATION_SECONDS=5",
-    "LINGNIAN_CAPABILITIES=scene_video"
-)
-$Utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllLines((Join-Path $WorkerRoot ".env"), $EnvLines, $Utf8WithoutBom)
+if (-not (Test-Path $EnvPath)) {
+    if (-not $BackendUrl) { $BackendUrl = Read-Host "Formal backend HTTPS URL" }
+    if (-not $WorkflowPath) { $WorkflowPath = Read-Host "Full path to the ComfyUI documentary API workflow JSON" }
+    $EnvLines = @(
+        "LINGNIAN_BACKEND_URL=$BackendUrl",
+        "LINGNIAN_COMFYUI_URL=http://127.0.0.1:8188",
+        "LINGNIAN_WORK_DIR=$($WorkerRoot.Replace('\', '/'))/.worker-data",
+        "LINGNIAN_SCENE_WORKFLOW=$($WorkflowPath.Replace('\', '/'))",
+        "LINGNIAN_POLL_SECONDS=8",
+        "LINGNIAN_COMFY_TIMEOUT_SECONDS=1800",
+        "LINGNIAN_MAX_GENERATION_SECONDS=5",
+        "LINGNIAN_CAPABILITIES=scene_video"
+    )
+    $Utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllLines($EnvPath, $EnvLines, $Utf8WithoutBom)
+} else {
+    Write-Host "检测到现有 .env，原位升级将保留后端地址、工作流路径和其他本机配置。"
+}
 
-$HasCredential = & $Python -c "import keyring; print('yes' if keyring.get_password('lingnian-generation-worker', 'node-token') else 'no')"
-if ($HasCredential.Trim() -ne "yes") { & $Python -m lingnian_worker credential-set }
+& $Python -m lingnian_worker credential-status
+if ($LASTEXITCODE -ne 0) {
+    & $Python -m lingnian_worker credential-set
+}
 & $Python -m lingnian_worker doctor
 
 $Action = New-ScheduledTaskAction -Execute $Python -Argument "-m lingnian_worker run" -WorkingDirectory $WorkerRoot
@@ -47,4 +59,4 @@ $Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Days
 Register-ScheduledTask -TaskName "LingnianGenerationWorker" -Action $Action -Trigger $Trigger -Settings $Settings -Description "LingNian home documentary generation worker" -Force | Out-Null
 Start-ScheduledTask -TaskName "LingnianGenerationWorker"
 
-Write-Host "LingNian home worker v2 installed and started."
+Write-Host "聆年家用节点 v2.0.1 已安装并启动。以后登录 Windows 会自动运行。"

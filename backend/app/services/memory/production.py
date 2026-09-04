@@ -64,9 +64,22 @@ def _select_evenly(items: list[str], limit: int) -> list[str]:
     if len(items) <= limit:
         return items
     if limit <= 1:
-        return [items[0]]
-    indexes = [round(index * (len(items) - 1) / (limit - 1)) for index in range(limit)]
-    return [items[index] for index in indexes]
+        return ["".join(items)]
+
+    # A documentary plan must not silently drop the year, place or object merely
+    # because spoken Chinese was split into many short comma clauses.  Merge the
+    # shortest neighbouring clauses until the requested shot count is reached so
+    # every confirmed word remains represented in the storyboard.
+    selected = list(items)
+    while len(selected) > limit:
+        merge_at = min(
+            range(len(selected) - 1),
+            key=lambda index: len(selected[index]) + len(selected[index + 1]),
+        )
+        selected[merge_at : merge_at + 2] = [
+            f"{selected[merge_at]}{selected[merge_at + 1]}"
+        ]
+    return selected
 
 
 def _scene_durations(total_seconds: int, scene_count: int) -> list[int]:
@@ -95,6 +108,18 @@ def _documentary_storyboard(
     context = "、".join(
         item for item in (str(event_year) if event_year else None, place_name) if item
     )
+    period_guard = ""
+    if event_year:
+        period_guard = (
+            f"时代固定为{event_year}年前后的中国；服装、交通工具、建筑、室内陈设和物件都要符合当时，"
+            "不得出现现代高楼天际线、现代汽车、智能手机或当代商业标识。"
+        )
+    place_guard = (
+        f"地点背景仅限{place_name}；无法准确还原时使用不含地标的近景物件，不用通用城市航拍替代。"
+        if place_name
+        else ""
+    )
+    story_context = body.strip()[:600]
     scenes: list[dict] = [
         {
             "scene": 1,
@@ -139,8 +164,10 @@ def _documentary_storyboard(
                     if uses_photo
                     else (
                         f"家庭纪实空镜或物件意象；{context + '；' if context else ''}"
-                        "只表现这句原文明确出现的环境、物件或动作，不生成具体真人正脸，"
-                        "不新增身份、对白、因果、地点或年代事实。"
+                        f"整段已确认故事仅为「{story_context}」；当前镜头必须直接对应「{quote}」。"
+                        f"{period_guard}{place_guard}"
+                        "优先中近景、物件、动作和环境细节，禁止无关城市航拍或通用城市全景；"
+                        "不生成具体真人正脸，不新增身份、对白、因果、地点或年代事实。"
                     )
                 ),
                 "camera_motion": motions[index % len(motions)],

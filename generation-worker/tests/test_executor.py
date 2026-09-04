@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from lingnian_worker.executor import DocumentaryExecutor
-from lingnian_worker.models import AuthorizedPackage, WorkerTask
+from lingnian_worker.models import AuthorizedPackage, PackageError, WorkerTask
 
 
 class FakeRenderer:
@@ -39,7 +41,7 @@ class FakeComfy:
     def generate_scene(self, *, output_path: Path, **kwargs) -> Path:
         self.generated += 1
         target = output_path.with_suffix(".mp4")
-        target.write_bytes(b"generated-scene")
+        target.write_bytes(f"generated-scene-{self.generated}".encode())
         return target
 
 
@@ -111,3 +113,45 @@ def test_reuses_verified_scene_checkpoints_after_restart(tmp_path, monkeypatch):
     )
     assert second_renderer.rendered == []
     assert second_comfy.generated == 0
+
+
+def test_retries_then_blocks_duplicate_context_visuals(tmp_path, monkeypatch):
+    monkeypatch.setattr("lingnian_worker.executor.make_card", lambda path, **kwargs: path.write_bytes(b"card") or path)
+    package = make_package(tmp_path)
+    package.plan["scenes"] = [
+        package.plan["scenes"][0],
+        {
+            "scene": 2,
+            "kind": "documentary_context",
+            "duration_seconds": 18,
+            "subtitle": "蓝布包",
+            "narration": "蓝布包",
+            "camera_motion": "slow_push",
+            "source_story_id": "story-1",
+            "visual_direction": "蓝布包近景",
+        },
+        {
+            "scene": 3,
+            "kind": "documentary_context",
+            "duration_seconds": 18,
+            "subtitle": "火车站台",
+            "narration": "火车站台",
+            "camera_motion": "slow_pan_left",
+            "source_story_id": "story-1",
+            "visual_direction": "火车站台远景",
+        },
+        package.plan["scenes"][-1],
+    ]
+
+    class DuplicateComfy(FakeComfy):
+        def generate_scene(self, *, output_path: Path, **kwargs) -> Path:
+            self.generated += 1
+            target = output_path.with_suffix(".png")
+            target.write_bytes(b"same-generated-image")
+            return target
+
+    duplicate = DuplicateComfy()
+    executor = DocumentaryExecutor(renderer=FakeRenderer(), comfyui=duplicate, work_dir=tmp_path / "worker")
+    with pytest.raises(PackageError, match="相同画面"):
+        executor.execute(make_task(), package, lambda *args: None)
+    assert duplicate.generated == 3
