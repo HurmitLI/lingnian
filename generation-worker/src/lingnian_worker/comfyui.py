@@ -50,10 +50,26 @@ class ComfyUiClient:
         if not self.workflow_path.is_file():
             raise ConfigurationError("缺少纪实空镜 ComfyUI API 工作流。")
         try:
+            raw = self.workflow_path.read_text(encoding="utf-8")
+            workflow = json.loads(raw)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConfigurationError("纪实空镜工作流不是有效 JSON。") from exc
+        required = {"__LINGNIAN_PROMPT__", "__LINGNIAN_NEGATIVE_PROMPT__", "__LINGNIAN_WIDTH__", "__LINGNIAN_HEIGHT__", "__LINGNIAN_SEED__", "__LINGNIAN_OUTPUT_PREFIX__"}
+        if any(token not in raw for token in required):
+            raise ConfigurationError("纪实空镜工作流缺少必要占位符。")
+        if not isinstance(workflow, dict) or not workflow:
+            raise ConfigurationError("纪实空镜工作流必须是 ComfyUI API 格式。")
+        try:
             response = self._client.get("/system_stats")
             response.raise_for_status()
+            object_info = self._client.get("/object_info")
+            object_info.raise_for_status()
+            available = object_info.json()
         except httpx.HTTPError as exc:
             raise TemporaryWorkerError("ComfyUI 尚未在本机 8188 端口就绪。") from exc
+        classes = {str(node.get("class_type", "")) for node in workflow.values() if isinstance(node, dict)}
+        if not classes or classes - set(available):
+            raise ConfigurationError("纪实空镜工作流包含本机 ComfyUI 不支持的节点。")
 
     def _load_workflow(self, replacements: dict[str, Any]) -> dict[str, Any]:
         try:

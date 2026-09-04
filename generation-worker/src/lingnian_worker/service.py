@@ -64,13 +64,20 @@ class WorkerService:
         summary = device_summary()
         if "GPU 未识别" in summary:
             raise WorkerError("没有识别到 NVIDIA 显卡，请检查驱动和 nvidia-smi。")
+        for label, executable in (("FFmpeg", self.config.ffmpeg), ("FFprobe", self.config.ffprobe)):
+            try:
+                check = subprocess.run([executable, "-version"], capture_output=True, timeout=15)
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise WorkerError(f"{label} 无法运行。") from exc
+            if check.returncode != 0:
+                raise WorkerError(f"{label} 自检失败。")
         self.comfyui.doctor()
         self.api.heartbeat(
             software_version=f"lingnian-worker/{__version__}",
             device_summary=summary,
             capabilities=self.config.capabilities,
         )
-        return "云端、系统凭据、ComfyUI、工作流和媒体工具均已就绪。"
+        return "云端、系统凭据、RTX 5080、ComfyUI、API 工作流、FFmpeg 和 FFprobe 全部通过。"
 
     def run_once(self) -> bool:
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
