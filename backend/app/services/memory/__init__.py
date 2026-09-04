@@ -15,8 +15,10 @@ from app.services.memory.heritage import (
 )
 from app.services.memory.production import (
     ProductionMedia,
+    build_documentary_plan,
     build_production_package,
     file_sha256,
+    normalize_production_spec,
 )
 from app.services.memory.questions import SelectedQuestion, ensure_question_bank, select_question
 
@@ -34,6 +36,8 @@ __all__ = [
     "HeritageStory",
     "build_heritage_package",
     "ProductionMedia",
+    "build_documentary_plan",
     "build_production_package",
     "file_sha256",
+    "normalize_production_spec",
 ]

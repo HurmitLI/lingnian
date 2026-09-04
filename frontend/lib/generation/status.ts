@@ -18,11 +18,15 @@ export function generationTimingLabel(request: GenerativeMediaRequest): string |
   if (!ACTIVE_STATUSES.has(request.status)) return null;
   const range = DURATION_RANGES[request.generation_type];
   if (!range) return "生成时间取决于当前工作流";
+  const durationScale = request.generation_type === "scene_video"
+    ? (request.production_spec?.target_duration_seconds ?? 60) / 60
+    : 1;
+  const scaledRange: readonly [number, number] = [range[0] * durationScale, range[1] * durationScale];
   if (request.status === "queued") {
-    return `节点领取后通常约 ${minuteRangeLabel(range[0], range[1])}`;
+    return `节点领取后通常约 ${minuteRangeLabel(scaledRange[0], scaledRange[1])}`;
   }
   const remainingRatio = Math.max(0.05, (100 - request.progress_percent) / 100);
-  return `预计还需约 ${minuteRangeLabel(range[0] * remainingRatio, range[1] * remainingRatio)}`;
+  return `预计还需约 ${minuteRangeLabel(scaledRange[0] * remainingRatio, scaledRange[1] * remainingRatio)}`;
 }
 
 export function generationCompletionNotice(

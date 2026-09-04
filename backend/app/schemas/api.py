@@ -366,6 +366,37 @@ class ProductionPackageCreate(BaseModel):
     subject_consent: bool
     rights_confirmed: bool
     no_impersonation: bool
+    target_duration_seconds: int = Field(default=60, ge=45, le=90)
+    aspect_ratio: str = Field(default="16:9", pattern="^(16:9|9:16)$")
+
+    @field_validator("target_duration_seconds")
+    @classmethod
+    def validate_documentary_duration(cls, value: int) -> int:
+        if value not in {45, 60, 90}:
+            raise ValueError("故事影片时长只能选择 45、60 或 90 秒。")
+        return value
+
+
+class DocumentaryPlanPreviewCreate(BaseModel):
+    story_id: str
+    target_duration_seconds: int = Field(default=60, ge=45, le=90)
+    aspect_ratio: str = Field(default="16:9", pattern="^(16:9|9:16)$")
+
+    @field_validator("target_duration_seconds")
+    @classmethod
+    def validate_preview_duration(cls, value: int) -> int:
+        if value not in {45, 60, 90}:
+            raise ValueError("故事影片时长只能选择 45、60 或 90 秒。")
+        return value
+
+
+class DocumentaryPlanPreviewRead(BaseModel):
+    format: str
+    version: int
+    production_spec: dict
+    audio_plan: dict
+    scenes: list[dict]
+    review_checklist: list[str]
 
 
 class KeepsakeCatalogItem(BaseModel):
@@ -655,6 +686,15 @@ class GenerativeMediaRequestCreate(BaseModel):
     no_impersonation: bool
     allow_external_upload: bool
     max_cost_cents: int = Field(default=0, ge=0, le=100_000)
+    target_duration_seconds: int = Field(default=60, ge=45, le=90)
+    aspect_ratio: str = Field(default="16:9", pattern="^(16:9|9:16)$")
+
+    @field_validator("target_duration_seconds")
+    @classmethod
+    def validate_target_duration(cls, value: int) -> int:
+        if value not in {45, 60, 90}:
+            raise ValueError("故事影片时长只能选择 45、60 或 90 秒。")
+        return value
 
 
 class GenerativeMediaReviewCreate(BaseModel):
@@ -669,6 +709,8 @@ class GenerativeMediaReviewCreate(BaseModel):
     duration_appropriate: bool = False
     source_preserved: bool = False
     identity_preserved: bool = False
+    shot_continuity_verified: bool = False
+    no_fabricated_facts: bool = False
 
 
 class GenerativeMediaRequestRead(ORMModel):
@@ -689,9 +731,12 @@ class GenerativeMediaRequestRead(ORMModel):
     estimated_cost_cents: int
     actual_cost_cents: int
     max_cost_cents: int
+    production_spec: dict
     attempt_count: int
     progress_percent: int
     progress_stage: str | None
+    progress_detail: dict
+    result_report: dict
     queued_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None

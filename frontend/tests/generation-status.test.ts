@@ -26,9 +26,12 @@ function request(overrides: Partial<GenerativeMediaRequest> = {}): GenerativeMed
     estimated_cost_cents: 0,
     actual_cost_cents: 0,
     max_cost_cents: 100,
+    production_spec: {},
     attempt_count: 1,
     progress_percent: 50,
     progress_stage: "正在制作分镜",
+    progress_detail: {},
+    result_report: {},
     queued_at: "2026-09-04T08:00:00Z",
     started_at: "2026-09-04T08:01:00Z",
     completed_at: null,
@@ -49,6 +52,10 @@ describe("生成任务产品状态", () => {
     expect(generationTimingLabel(request({ status: "queued" }))).toBe(
       "节点领取后通常约 25–70 分钟",
     );
+    expect(generationTimingLabel(request({
+      status: "queued",
+      production_spec: { target_duration_seconds: 90 },
+    }))).toBe("节点领取后通常约 38–105 分钟");
     expect(generationTimingLabel(request({ status: "accepted" }))).toBeNull();
   });
 

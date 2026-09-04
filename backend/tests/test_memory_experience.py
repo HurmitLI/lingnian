@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 
 from PIL import Image
@@ -338,11 +339,62 @@ def test_paid_media_requests_are_recorded_but_never_executed(client):
             "pauses_natural": False,
             "expression_natural": True,
             "narrative_consistent": True,
+            "shot_continuity_verified": True,
+            "no_fabricated_facts": True,
             "duration_appropriate": True,
         },
     )
     assert scene_review.status_code == 200, scene_review.text
     assert scene_review.json()["status"] == "accepted"
+
+
+def test_documentary_package_has_exact_duration_source_mapping_and_single_photo_limit(client):
+    profile = create_profile(client)
+    story, _ = create_confirmed_story(client, profile, with_photo=True)
+    preview = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/documentary-plan-preview",
+        json={
+            "story_id": story["id"],
+            "target_duration_seconds": 45,
+            "aspect_ratio": "9:16",
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["production_spec"]["target_duration_seconds"] == 45
+    assert sum(scene["duration_seconds"] for scene in preview.json()["scenes"]) == 45
+    package = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/production-package",
+        json={
+            "story_id": story["id"],
+            "generation_type": "scene_video",
+            "actor_label": "测试家人",
+            "subject_consent": True,
+            "rights_confirmed": True,
+            "no_impersonation": True,
+            "target_duration_seconds": 45,
+            "aspect_ratio": "9:16",
+        },
+    )
+    assert package.status_code == 200, package.text
+    with zipfile.ZipFile(io.BytesIO(package.content)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        storyboard = json.loads(archive.read("production/storyboard.json"))
+    assert manifest["version"] == 2
+    assert manifest["production_spec"]["target_duration_seconds"] == 45
+    assert manifest["production_spec"]["aspect_ratio"] == "9:16"
+    assert manifest["production_spec"]["output"] == {"width": 720, "height": 1280, "fps": 24}
+    assert storyboard["audio_plan"]["synthetic_voice_allowed"] is False
+    assert sum(scene["duration_seconds"] for scene in storyboard["scenes"]) == 45
+    assert storyboard["scenes"][0]["kind"] == "title_card"
+    assert storyboard["scenes"][-1]["kind"] == "source_card"
+    assert all(scene["source_story_id"] == story["id"] for scene in storyboard["scenes"])
+    assert sum(scene["kind"] == "archival_photo" for scene in storyboard["scenes"]) <= 2
+    photo_seconds = sum(
+        scene["duration_seconds"]
+        for scene in storyboard["scenes"]
+        if scene["kind"] == "archival_photo"
+    )
+    assert photo_seconds / 45 <= 0.35
 
 
 def test_local_generation_production_package_has_sources_and_reviewable_storyboard(client):

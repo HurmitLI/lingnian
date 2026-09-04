@@ -6,7 +6,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, mediaUrl } from "@/lib/api";
 import { generationCompletionNotice, generationTimingLabel, storyPreviewSentences } from "@/lib/generation/status";
 import { IS_FORMAL_CLOUD } from "@/lib/runtime";
-import type { GenerativeMediaRequest, TimelineItem } from "@/lib/types";
+import type { DocumentaryPlanPreview, GenerativeMediaRequest, TimelineItem } from "@/lib/types";
 
 type Props = {
   profileId: string;
@@ -30,8 +30,15 @@ const STATUS_LABELS: Record<string, string> = {
 
 const TYPE_LABELS: Record<string, string> = {
   portrait_video: "人物讲述视频",
-  scene_video: "故事情景视频",
+  scene_video: "纪实故事影片",
   photo_restore: "老照片修复副本",
+};
+
+const SCENE_KIND_LABELS: Record<string, string> = {
+  title_card: "片头",
+  archival_photo: "档案照片",
+  documentary_context: "纪实空镜",
+  source_card: "来源说明",
 };
 
 async function loadRequests(profileId: string) {
@@ -49,6 +56,10 @@ export default function GenerationReviewWorkbench({
   onError,
 }: Props) {
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
+  const [generationType, setGenerationType] = useState("scene_video");
+  const [targetDuration, setTargetDuration] = useState(60);
+  const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9");
+  const [planPreview, setPlanPreview] = useState<DocumentaryPlanPreview | null>(null);
   const [selectedStoryId, setSelectedStoryId] = useState(timeline[0]?.story.id ?? "");
   const selectedStory = useMemo(
     () => timeline.find((item) => item.story.id === selectedStoryId) ?? timeline[0],
@@ -58,6 +69,35 @@ export default function GenerationReviewWorkbench({
     () => storyPreviewSentences(selectedStory?.story.body ?? ""),
     [selectedStory],
   );
+
+  useEffect(() => {
+    if (generationType !== "scene_video" || !selectedStory) {
+      return;
+    }
+    let active = true;
+    api<DocumentaryPlanPreview>(`/api/v1/elder-profiles/${profileId}/documentary-plan-preview`, {
+      method: "POST",
+      body: JSON.stringify({
+        story_id: selectedStory.story.id,
+        target_duration_seconds: targetDuration,
+        aspect_ratio: aspectRatio,
+      }),
+    })
+      .then((plan) => {
+        if (active) setPlanPreview(plan);
+      })
+      .catch(() => {
+        if (active) setPlanPreview(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [aspectRatio, generationType, profileId, selectedStory, targetDuration]);
+  const matchingPlan = planPreview
+    && planPreview.production_spec.target_duration_seconds === targetDuration
+    && planPreview.production_spec.aspect_ratio === aspectRatio
+    ? planPreview
+    : null;
 
   useEffect(() => {
     const storageKey = `lingnian.generation-status.${profileId}`;
@@ -97,6 +137,8 @@ export default function GenerationReviewWorkbench({
           no_impersonation: form.get("noImpersonation") === "on",
           allow_external_upload: form.get("allowExternalUpload") === "on",
           max_cost_cents: Math.round(maxCostYuan * 100),
+          target_duration_seconds: Number(form.get("targetDurationSeconds") || 60),
+          aspect_ratio: form.get("aspectRatio") || "16:9",
         }),
       });
       await refresh();
@@ -157,6 +199,8 @@ export default function GenerationReviewWorkbench({
           duration_appropriate: form.get("durationAppropriate") === "on",
           source_preserved: form.get("sourcePreserved") === "on",
           identity_preserved: form.get("identityPreserved") === "on",
+          shot_continuity_verified: form.get("shotContinuityVerified") === "on",
+          no_fabricated_facts: form.get("noFabricatedFacts") === "on",
         }),
       });
       await refresh();
@@ -205,14 +249,27 @@ export default function GenerationReviewWorkbench({
         <div>
           <span className="card-kicker">后台成片 · 完成后验收</span>
           <h3 id="generation-review-title">提交后可以离开，完成后再回来看片</h3>
-          <p>故事和分镜预览会立即保留；照片或视频由家用生成节点在后台制作。生成成功不等于可以使用，完成后仍需家人逐项验收。</p>
+          <p>纪实故事影片会使用原声、档案照片、环境空镜和来源卡共同讲述，不会让一张照片占满全片。照片或视频由家用生成节点在后台制作。</p>
         </div>
         <span className="review-gate-badge"><FileVideo2 size={16} aria-hidden="true" />未验收不发布</span>
       </div>
 
       <form className="generation-task-form" onSubmit={registerTask}>
-        <label className="field"><span>制作类型</span><select name="generationType"><option value="photo_restore">老照片修复副本</option><option value="portrait_video">人物讲述视频</option><option value="scene_video">故事情景视频</option></select></label>
+        <label className="field"><span>制作类型</span><select name="generationType" value={generationType} onChange={(event) => setGenerationType(event.target.value)}><option value="scene_video">纪实故事影片</option><option value="photo_restore">老照片修复副本</option><option value="portrait_video">人物讲述视频</option></select></label>
         <label className="field"><span>对应故事</span><select name="storyId" required value={selectedStory?.story.id ?? ""} onChange={(event) => setSelectedStoryId(event.target.value)}>{timeline.map((item) => <option key={item.story.id} value={item.story.id}>{item.story.title}</option>)}</select></label>
+        {generationType === "scene_video" && (
+          <div className="generation-film-spec" aria-label="影片制作规格">
+            <label className="field"><span>目标时长</span><select name="targetDurationSeconds" value={targetDuration} onChange={(event) => setTargetDuration(Number(event.target.value))}><option value="45">45 秒 · 精简故事</option><option value="60">60 秒 · 推荐</option><option value="90">90 秒 · 完整讲述</option></select></label>
+            <label className="field"><span>观看画幅</span><select name="aspectRatio" value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value as "16:9" | "9:16")}><option value="16:9">横屏 16:9 · 电脑电视</option><option value="9:16">竖屏 9:16 · 手机</option></select></label>
+            <p><strong>预计拆成 {targetDuration === 45 ? 6 : targetDuration === 90 ? 10 : 8} 个镜头，默认使用原声，不克隆声音。</strong>单张照片最多约占三分之一时长，其余镜头来自原文对应的环境、物件、时间与来源说明。</p>
+          </div>
+        )}
+        {generationType === "scene_video" && (
+          <section className="generation-shot-preview" aria-label="纪实影片分镜预览">
+            <div><span>生成前分镜</span><strong>{matchingPlan ? `${matchingPlan.scenes.length} 个镜头 · 共 ${matchingPlan.production_spec.target_duration_seconds} 秒` : "正在整理镜头…"}</strong></div>
+            {matchingPlan && <ol>{matchingPlan.scenes.map((scene) => <li key={scene.scene}><span>{String(scene.scene).padStart(2, "0")} · {SCENE_KIND_LABELS[scene.kind] ?? scene.kind} · {scene.duration_seconds} 秒</span><p>{scene.subtitle}</p><small>{scene.source}</small></li>)}</ol>}
+          </section>
+        )}
         <label className="field"><span>确认人</span><input name="actorLabel" required defaultValue="家庭管理员" /></label>
         <label className="field"><span>单次预算上限（元）</span><input name="maxCostYuan" type="number" min="0" max="1000" step="0.01" defaultValue="1.00" required /></label>
         {selectedStory && (
@@ -241,6 +298,14 @@ export default function GenerationReviewWorkbench({
         {requests.map((request) => (
           <article className={`generation-request-card status-${request.status}`} key={request.id}>
             <header><div><small>{TYPE_LABELS[request.generation_type] ?? request.generation_type}</small><h4>{STATUS_LABELS[request.status] ?? request.status}</h4></div><span>预算 ¥{(request.max_cost_cents / 100).toFixed(2)}</span></header>
+            {request.generation_type === "scene_video" && request.production_spec.target_duration_seconds && (
+              <div className="generation-request-spec" aria-label="影片规格">
+                <span>{request.production_spec.target_duration_seconds} 秒</span>
+                <span>{request.production_spec.aspect_ratio === "9:16" ? "手机竖屏" : "横屏"}</span>
+                <span>原声优先</span>
+                <span>单张照片不超过 35%</span>
+              </div>
+            )}
 
             {(request.status === "queued" || request.status === "processing") && (
               <div className="generation-queue-progress" role="status">
@@ -248,7 +313,7 @@ export default function GenerationReviewWorkbench({
                 <div>
                   <strong>{request.progress_stage || "等待生成节点"}</strong>
                   <progress max="100" value={request.progress_percent} aria-label={`成片进度 ${request.progress_percent}%`} />
-                  <span>{request.status === "processing" ? `${request.progress_percent}% · 第 ${request.attempt_count} 次执行` : "家用电脑上线后会自动领取"} · {generationTimingLabel(request)}。可以离开本页，回来后会继续显示最新状态。</span>
+                  <span>{request.status === "processing" ? `${request.progress_percent}% · 第 ${request.attempt_count} 次执行` : "家用电脑上线后会自动领取"}{request.progress_detail.total_scene_count ? ` · 已完成镜头 ${request.progress_detail.completed_scene_count ?? 0}/${request.progress_detail.total_scene_count}` : ""} · {generationTimingLabel(request)}。可以离开本页，回来后会继续显示最新状态。</span>
                 </div>
                 <button className="button quiet" type="button" disabled={busyRequestId !== null} onClick={() => void cancelTask(request.id)}>取消任务</button>
               </div>
@@ -281,6 +346,14 @@ export default function GenerationReviewWorkbench({
               <video controls preload="metadata" src={mediaUrl(request.result_content_url) ?? undefined}>浏览器无法播放这段视频。</video>
             )}
 
+            {request.result_report.duration_seconds ? (
+              <div className="generation-result-report" aria-label="成片技术信息">
+                <span>实际 {request.result_report.duration_seconds} 秒</span>
+                {request.result_report.rendered_scene_count ? <span>{request.result_report.rendered_scene_count} 个镜头</span> : null}
+                {request.result_report.width && request.result_report.height ? <span>{request.result_report.width}×{request.result_report.height}</span> : null}
+              </div>
+            ) : null}
+
             {request.status === "pending_human_review" && (
               <form className="generation-review-form" onSubmit={(event) => reviewResult(event, request.id)}>
                 <p>请完整播放并在说话和停顿位置反复检查。当前类型的必检项目全部通过后，才能接受成片。</p>
@@ -290,6 +363,8 @@ export default function GenerationReviewWorkbench({
                   {request.generation_type === "portrait_video" && <label><input type="checkbox" name="pausesNatural" />停顿时闭嘴，不持续咀嚼</label>}
                   {request.generation_type !== "photo_restore" && <label><input type="checkbox" name="expressionNatural" />{request.generation_type === "portrait_video" ? "表情自然，没有异常抽动" : "画面运动自然，没有异常抽动"}</label>}
                   {request.generation_type !== "photo_restore" && <label><input type="checkbox" name="narrativeConsistent" />人物年龄、画面和故事一致</label>}
+                  {request.generation_type === "scene_video" && <label><input type="checkbox" name="shotContinuityVerified" />镜头衔接自然，不是互不相关的片段拼接</label>}
+                  {request.generation_type === "scene_video" && <label><input type="checkbox" name="noFabricatedFacts" />没有增加档案中不存在的人物、事件或因果</label>}
                   {request.generation_type !== "photo_restore" && <label><input type="checkbox" name="durationAppropriate" />时长足以承载当前内容</label>}
                   {request.generation_type === "photo_restore" && <label><input type="checkbox" name="sourcePreserved" />原图已保留，修复结果是独立副本</label>}
                   {request.generation_type === "photo_restore" && <label><input type="checkbox" name="identityPreserved" />人物身份、五官和原始构图没有被擅自改写</label>}

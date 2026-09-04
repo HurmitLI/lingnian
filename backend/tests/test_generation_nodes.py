@@ -116,7 +116,13 @@ def test_home_generation_node_claims_encrypted_package_and_uploads_review_result
     uploaded = client.post(
         f"/api/v1/generation-worker/tasks/{request_id}/result",
         headers={**lease_headers, "X-Content-Sha256": hashlib.sha256(video_bytes).hexdigest()},
-        data={"actual_cost_cents": "0"},
+        data={
+            "actual_cost_cents": "0",
+            "rendered_scene_count": "1",
+            "duration_seconds": "12.4",
+            "width": "1280",
+            "height": "720",
+        },
         files={"result": ("portrait.mp4", video_bytes, "video/mp4")},
     )
     assert uploaded.status_code == 200, uploaded.text
@@ -128,6 +134,12 @@ def test_home_generation_node_claims_encrypted_package_and_uploads_review_result
     assert completed["status"] == "pending_human_review"
     assert completed["progress_percent"] == 100
     assert completed["provider_key"].startswith("home_comfyui:")
+    assert completed["result_report"] == {
+        "rendered_scene_count": 1,
+        "duration_seconds": 12.4,
+        "width": 1280,
+        "height": 720,
+    }
     assert completed["result_content_url"]
 
 
@@ -197,9 +209,13 @@ def test_family_can_retry_a_failed_generation_without_admin_console(client, db):
             "no_impersonation": True,
             "allow_external_upload": True,
             "max_cost_cents": 100,
+            "target_duration_seconds": 90,
+            "aspect_ratio": "9:16",
         },
     )
     request_id = created.json()["id"]
+    assert created.json()["production_spec"]["target_duration_seconds"] == 90
+    assert created.json()["production_spec"]["aspect_ratio"] == "9:16"
     token = "ln_node_failed-task-with-enough-entropy-123456789"
     db.add(
         GenerationNode(
@@ -212,6 +228,19 @@ def test_family_can_retry_a_failed_generation_without_admin_console(client, db):
     db.commit()
     headers = {"Authorization": f"Bearer {token}"}
     task = client.post("/api/v1/generation-worker/tasks/claim", headers=headers).json()
+    assert task["production_spec"]["target_duration_seconds"] == 90
+    progress = client.patch(
+        f"/api/v1/generation-worker/tasks/{request_id}/progress",
+        headers={**headers, "X-Lingnian-Lease": task["lease_token"]},
+        json={
+            "progress_percent": 30,
+            "progress_stage": "已完成前三个镜头",
+            "completed_scene_count": 3,
+            "total_scene_count": 10,
+            "checkpoint_key": "scene-03",
+        },
+    )
+    assert progress.status_code == 200, progress.text
     failed = client.post(
         f"/api/v1/generation-worker/tasks/{request_id}/fail",
         headers={**headers, "X-Lingnian-Lease": task["lease_token"]},
@@ -228,8 +257,8 @@ def test_family_can_retry_a_failed_generation_without_admin_console(client, db):
     assert retried.status_code == 200, retried.text
     assert retried.json()["status"] == "queued"
     assert retried.json()["attempt_count"] == 0
-    assert retried.json()["progress_percent"] == 0
-    assert retried.json()["progress_stage"] == "等待家用生成节点"
+    assert retried.json()["progress_percent"] == 30
+    assert retried.json()["progress_stage"] == "等待节点从已完成镜头继续"
 
     denied = client.post(f"/api/v1/generative-media-requests/{request_id}/retry")
     assert denied.status_code == 409

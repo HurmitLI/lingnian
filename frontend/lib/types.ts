@@ -393,9 +393,30 @@ export type GenerativeMediaRequest = {
   estimated_cost_cents: number;
   actual_cost_cents: number;
   max_cost_cents: number;
+  production_spec: {
+    target_duration_seconds?: number;
+    aspect_ratio?: "16:9" | "9:16";
+    narrative_style?: string;
+    voice_strategy?: string;
+    synthetic_voice_allowed?: boolean;
+    single_photo_max_screen_ratio?: number;
+    subtitles_required?: boolean;
+    output?: { width: number; height: number; fps: number };
+  };
   attempt_count: number;
   progress_percent: number;
   progress_stage: string | null;
+  progress_detail: {
+    completed_scene_count?: number;
+    total_scene_count?: number;
+    checkpoint_key?: string;
+  };
+  result_report: {
+    rendered_scene_count?: number;
+    duration_seconds?: number;
+    width?: number;
+    height?: number;
+  };
   queued_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -406,6 +427,28 @@ export type GenerativeMediaRequest = {
   review_notes: string | null;
   reviewed_at: string | null;
   created_at: string;
+};
+
+export type DocumentaryPlanPreview = {
+  format: string;
+  version: number;
+  production_spec: GenerativeMediaRequest["production_spec"];
+  audio_plan: {
+    strategy: string;
+    exact_story_alignment_required: boolean;
+    synthetic_voice_allowed: boolean;
+    fallback: string;
+  };
+  scenes: Array<{
+    scene: number;
+    kind: "title_card" | "archival_photo" | "documentary_context" | "source_card";
+    duration_seconds: number;
+    narration: string;
+    subtitle: string;
+    source: string;
+    visual_direction: string;
+  }>;
+  review_checklist: string[];
 };
 
 export type Health = {

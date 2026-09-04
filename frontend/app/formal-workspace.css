@@ -1136,6 +1136,8 @@
 .app-shell .generation-task-form { padding: 16px; border: 1px solid var(--formal-line); border-radius: 10px; background: #f8f3ea; }
 .app-shell .generation-task-form fieldset,
 .app-shell .generation-task-form > button,
+.app-shell .generation-film-spec,
+.app-shell .generation-shot-preview,
 .app-shell .generation-story-preview,
 .app-shell .generation-result-form > p,
 .app-shell .generation-review-form > p,
@@ -1144,6 +1146,17 @@
 .app-shell .generation-task-form fieldset { display: grid; gap: 8px; padding: 13px 15px; border: 1px solid var(--formal-line); border-radius: 9px; }
 .app-shell .generation-task-form fieldset label,
 .app-shell .generation-review-checks label { display: flex; align-items: flex-start; gap: 8px; }
+.app-shell .generation-film-spec { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 16px; border: 1px solid rgba(39, 91, 67, .24); border-radius: 10px; background: #f3f7f2; }
+.app-shell .generation-film-spec > p { grid-column: 1 / -1; margin: 0; color: var(--formal-muted); line-height: 1.6; }
+.app-shell .generation-film-spec > p strong { color: var(--formal-green); }
+.app-shell .generation-shot-preview { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--formal-line); border-radius: 10px; background: #fff; }
+.app-shell .generation-shot-preview > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.app-shell .generation-shot-preview > div span { color: var(--formal-orange-deep); font-size: 11px; font-weight: 700; }
+.app-shell .generation-shot-preview > ol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.app-shell .generation-shot-preview li { min-width: 0; padding: 11px 12px; border-left: 3px solid rgba(180, 82, 37, .45); background: #faf7f1; }
+.app-shell .generation-shot-preview li span,
+.app-shell .generation-shot-preview li small { color: var(--formal-muted); font-size: 10px; }
+.app-shell .generation-shot-preview li p { overflow: hidden; margin: 4px 0; font-size: 13px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
 .app-shell .generation-story-preview { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 13px; padding: 16px; border: 1px solid rgba(180, 82, 37, .28); border-radius: 10px; background: #fffdf9; }
 .app-shell .generation-story-preview > svg { margin-top: 2px; color: var(--formal-orange-deep); }
 .app-shell .generation-story-preview > div { display: grid; gap: 5px; }
@@ -1158,6 +1171,10 @@
 .app-shell .generation-request-card > header small { color: var(--formal-muted); }
 .app-shell .generation-request-card > header h4 { margin: 2px 0 0; font-size: 18px; }
 .app-shell .generation-request-card > header > span { font-size: 12px; font-weight: 700; }
+.app-shell .generation-request-spec { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 18px 0; }
+.app-shell .generation-request-spec span { padding: 5px 9px; border: 1px solid var(--formal-line); border-radius: 999px; background: #f8f3ea; color: var(--formal-muted); font-size: 11px; }
+.app-shell .generation-result-report { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 10px 16px 0; }
+.app-shell .generation-result-report span { padding: 5px 9px; border-radius: 999px; background: #edf4ed; color: var(--formal-green); font-size: 11px; font-weight: 700; }
 .app-shell .generation-request-card.status-accepted > header { background: #eaf5e9; }
 .app-shell .generation-request-card.status-rejected > header { background: #f9e9e5; }
 .app-shell .generation-result-form,
@@ -1332,10 +1349,15 @@
   .app-shell .generation-review-checks { grid-template-columns: 1fr; }
   .app-shell .generation-task-form fieldset,
   .app-shell .generation-task-form > button,
+  .app-shell .generation-film-spec,
+  .app-shell .generation-shot-preview,
   .app-shell .generation-result-form > p,
   .app-shell .generation-review-form > p,
   .app-shell .generation-review-checks,
   .app-shell .generation-review-actions { grid-column: auto; }
+  .app-shell .generation-film-spec { grid-template-columns: 1fr; }
+  .app-shell .generation-film-spec > p { grid-column: auto; }
+  .app-shell .generation-shot-preview > ol { grid-template-columns: 1fr; }
   .app-shell .generation-review-actions { display: grid; }
 }
 

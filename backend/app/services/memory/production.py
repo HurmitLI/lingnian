@@ -11,6 +11,10 @@ from pathlib import Path
 from app.services.tts import prepare_tts_text
 
 
+DOCUMENTARY_DURATIONS = {45, 60, 90}
+DOCUMENTARY_ASPECT_RATIOS = {"16:9", "9:16"}
+
+
 @dataclass(frozen=True)
 class ProductionMedia:
     source_path: Path
@@ -19,33 +23,219 @@ class ProductionMedia:
     sha256: str
 
 
-def _storyboard(body: str, *, place_name: str | None, event_year: int | None) -> list[dict]:
-    sentences = [
-        item.strip()
-        for item in re.split(r"(?<=[。！？!?])|\n+", body)
-        if item.strip()
+def normalize_production_spec(
+    generation_type: str,
+    production_spec: dict | None = None,
+) -> dict:
+    """Return the stable, provider-neutral contract sent to a generation node."""
+
+    requested = production_spec or {}
+    if generation_type != "scene_video":
+        return {}
+    duration = requested.get("target_duration_seconds", 60)
+    aspect_ratio = requested.get("aspect_ratio", "16:9")
+    if duration not in DOCUMENTARY_DURATIONS:
+        duration = 60
+    if aspect_ratio not in DOCUMENTARY_ASPECT_RATIOS:
+        aspect_ratio = "16:9"
+    width, height = (1280, 720) if aspect_ratio == "16:9" else (720, 1280)
+    return {
+        "format_version": 1,
+        "target_duration_seconds": duration,
+        "aspect_ratio": aspect_ratio,
+        "narrative_style": "family_documentary",
+        "voice_strategy": "original_recording_first",
+        "synthetic_voice_allowed": False,
+        "single_photo_max_screen_ratio": 0.35,
+        "subtitles_required": True,
+        "output": {"width": width, "height": height, "fps": 24},
+    }
+
+
+def _story_units(body: str) -> list[str]:
+    sentences = [item.strip() for item in re.split(r"(?<=[。！？!?])|\n+", body) if item.strip()]
+    if len(sentences) >= 4:
+        return sentences
+    clauses = [item.strip() for item in re.split(r"(?<=[，；,;。！？!?])|\n+", body) if item.strip()]
+    return clauses or [body.strip()]
+
+
+def _select_evenly(items: list[str], limit: int) -> list[str]:
+    if len(items) <= limit:
+        return items
+    if limit <= 1:
+        return [items[0]]
+    indexes = [round(index * (len(items) - 1) / (limit - 1)) for index in range(limit)]
+    return [items[index] for index in indexes]
+
+
+def _scene_durations(total_seconds: int, scene_count: int) -> list[int]:
+    opening = 4
+    closing = 5
+    middle_count = max(1, scene_count - 2)
+    available = total_seconds - opening - closing
+    base, extra = divmod(available, middle_count)
+    return [opening, *[base + (1 if index < extra else 0) for index in range(middle_count)], closing]
+
+
+def _documentary_storyboard(
+    body: str,
+    *,
+    title: str,
+    story_id: str,
+    place_name: str | None,
+    event_year: int | None,
+    has_image: bool,
+    production_spec: dict,
+) -> list[dict]:
+    target_duration = production_spec["target_duration_seconds"]
+    target_scene_count = {45: 6, 60: 8, 90: 10}[target_duration]
+    quotes = _select_evenly(_story_units(body), target_scene_count - 2)
+    durations = _scene_durations(target_duration, len(quotes) + 2)
+    context = "、".join(
+        item for item in (str(event_year) if event_year else None, place_name) if item
+    )
+    scenes: list[dict] = [
+        {
+            "scene": 1,
+            "kind": "title_card",
+            "duration_seconds": durations[0],
+            "narration": "",
+            "spoken_narration": "",
+            "subtitle": title,
+            "source": "人工确认故事标题",
+            "source_story_id": story_id,
+            "visual_direction": "使用克制的家庭档案标题卡，不增加人物或事件信息。",
+            "camera_motion": "none",
+            "transition": "fade",
+            "review_required": True,
+        }
     ]
-    if not sentences:
-        sentences = [body.strip()]
-    scenes: list[dict] = []
-    for index, narration in enumerate(sentences[:8], start=1):
-        context = "、".join(
-            item for item in (str(event_year) if event_year else None, place_name) if item
-        )
+    motions = ("slow_push", "slow_pan_left", "slow_pan_right", "gentle_pull_back")
+    photo_slots: set[int] = set()
+    if has_image:
+        photo_budget = target_duration * production_spec["single_photo_max_screen_ratio"]
+        photo_seconds = 0
+        for slot in dict.fromkeys((0, max(0, len(quotes) - 1))):
+            slot_seconds = durations[slot + 1]
+            if photo_seconds + slot_seconds <= photo_budget:
+                photo_slots.add(slot)
+                photo_seconds += slot_seconds
+    for index, quote in enumerate(quotes):
+        uses_photo = index in photo_slots
+        scene_number = index + 2
         scenes.append(
             {
-                "scene": index,
-                "narration": narration,
-                "spoken_narration": prepare_tts_text(narration),
+                "scene": scene_number,
+                "kind": "archival_photo" if uses_photo else "documentary_context",
+                "duration_seconds": durations[index + 1],
+                "narration": quote,
+                "spoken_narration": prepare_tts_text(quote),
+                "subtitle": quote,
                 "source": "人工确认故事原文",
+                "source_story_id": story_id,
                 "visual_direction": (
-                    f"家庭纪实影像风格；{context + '；' if context else ''}"
-                    "只表现原文明确提到的环境和动作，不新增具体人物身份、事件或年代细节。"
+                    "使用已授权原图做轻微纪录片运镜，保留人物身份、五官和原始构图。"
+                    if uses_photo
+                    else (
+                        f"家庭纪实空镜或物件意象；{context + '；' if context else ''}"
+                        "只表现这句原文明确出现的环境、物件或动作，不生成具体真人正脸，"
+                        "不新增身份、对白、因果、地点或年代事实。"
+                    )
                 ),
+                "camera_motion": motions[index % len(motions)],
+                "transition": "crossfade",
                 "review_required": True,
             }
         )
+    scenes.append(
+        {
+            "scene": len(scenes) + 1,
+            "kind": "source_card",
+            "duration_seconds": durations[-1],
+            "narration": "",
+            "spoken_narration": "",
+            "subtitle": "这段记忆来自家人确认的口述与家庭档案",
+            "source": "聆年档案来源说明",
+            "source_story_id": story_id,
+            "visual_direction": "使用简洁来源卡收束影片，不展示未经授权的个人信息。",
+            "camera_motion": "none",
+            "transition": "fade",
+            "review_required": True,
+        }
+    )
     return scenes
+
+
+def _legacy_storyboard(
+    body: str,
+    *,
+    story_id: str,
+    place_name: str | None,
+    event_year: int | None,
+) -> list[dict]:
+    sentences = _story_units(body)
+    context = "、".join(
+        item for item in (str(event_year) if event_year else None, place_name) if item
+    )
+    return [
+        {
+            "scene": index,
+            "narration": narration,
+            "spoken_narration": prepare_tts_text(narration),
+            "subtitle": narration,
+            "source": "人工确认故事原文",
+            "source_story_id": story_id,
+            "visual_direction": (
+                f"家庭纪实影像风格；{context + '；' if context else ''}"
+                "只表现原文明确提到的环境和动作，不新增具体人物身份、事件或年代细节。"
+            ),
+            "review_required": True,
+        }
+        for index, narration in enumerate(sentences[:8], start=1)
+    ]
+
+
+def build_documentary_plan(
+    *,
+    story_id: str,
+    title: str,
+    body: str,
+    place_name: str | None,
+    event_year: int | None,
+    has_image: bool,
+    production_spec: dict | None = None,
+) -> dict:
+    normalized_spec = normalize_production_spec("scene_video", production_spec)
+    scenes = _documentary_storyboard(
+        body,
+        title=title,
+        story_id=story_id,
+        place_name=place_name,
+        event_year=event_year,
+        has_image=has_image,
+        production_spec=normalized_spec,
+    )
+    return {
+        "format": "lingnian-documentary-storyboard",
+        "version": 2,
+        "production_spec": normalized_spec,
+        "audio_plan": {
+            "strategy": "original_recording_first",
+            "exact_story_alignment_required": True,
+            "synthetic_voice_allowed": False,
+            "fallback": "没有对应原声时保留字幕和环境声，不仿制讲述者声音。",
+        },
+        "scenes": scenes,
+        "review_checklist": [
+            "声音完整",
+            "画面自然",
+            "故事一致",
+            "镜头连贯",
+            "没有新增家庭事实",
+            "时长合适",
+        ],
+    }
 
 
 def build_production_package(
@@ -66,6 +256,7 @@ def build_production_package(
     no_impersonation: bool,
     audio: ProductionMedia | None,
     image: ProductionMedia | None,
+    production_spec: dict | None = None,
     external_upload_authorized: bool = False,
     package_status: str = "local_preproduction_only",
 ) -> Path:
@@ -73,7 +264,26 @@ def build_production_package(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(UTC).isoformat()
-    storyboard = _storyboard(body, place_name=place_name, event_year=event_year)
+    normalized_spec = normalize_production_spec(generation_type, production_spec)
+    documentary_plan = None
+    if generation_type == "scene_video":
+        documentary_plan = build_documentary_plan(
+            title=title,
+            story_id=story_id,
+            body=body,
+            place_name=place_name,
+            event_year=event_year,
+            has_image=image is not None,
+            production_spec=normalized_spec,
+        )
+        storyboard = documentary_plan["scenes"]
+    else:
+        storyboard = _legacy_storyboard(
+            body,
+            story_id=story_id,
+            place_name=place_name,
+            event_year=event_year,
+        )
     if generation_type == "photo_restore":
         plan_path = "production/restoration-plan.json"
         plan = {
@@ -85,13 +295,28 @@ def build_production_package(
             ],
             "review_required": True,
         }
+    elif generation_type == "scene_video":
+        plan_path = "production/storyboard.json"
+        plan = documentary_plan
     else:
         plan_path = "production/storyboard.json"
-        plan = {"scenes": storyboard}
+        plan = {
+            "format": "lingnian-storyboard",
+            "version": 1,
+            "production_spec": normalized_spec,
+            "audio_plan": {
+                "strategy": "original_recording_first",
+                "exact_story_alignment_required": True,
+                "synthetic_voice_allowed": False,
+                "fallback": "没有对应原声时保留字幕和环境声，不仿制讲述者声音。",
+            },
+            "scenes": storyboard,
+            "review_checklist": ["声音完整", "嘴型与停顿自然", "人物与故事一致", "时长合适"],
+        }
     target_label = {
         "photo_restore": "老照片修复副本",
         "portrait_video": "人物讲述视频",
-        "scene_video": "故事情景视频",
+        "scene_video": "纪实故事影片",
     }[generation_type]
     preview_instruction = (
         "先生成低分辨率修复预览，家人并排确认后再输出高清副本。"
@@ -100,7 +325,7 @@ def build_production_package(
     )
     manifest = {
         "format": "lingnian-generation-production-package",
-        "version": 1,
+        "version": 2 if generation_type == "scene_video" else 1,
         "status": package_status,
         "generated_at": generated_at,
         "generation_type": generation_type,
@@ -120,6 +345,7 @@ def build_production_package(
             "no_impersonation": no_impersonation,
             "external_upload_authorized": external_upload_authorized,
         },
+        "production_spec": normalized_spec,
         "media": [
             {
                 "path": item.archive_path,

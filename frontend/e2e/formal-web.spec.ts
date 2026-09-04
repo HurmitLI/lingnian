@@ -162,6 +162,22 @@ async function mockLocalApi(page: Page) {
       body = null;
     } else if (path === "/api/v1/generative-media/capabilities") {
       body = [{ generation_type: "portrait_video", label: "人物讲述视频", available: false, provider_key: null, requires_external_upload: true, requires_subject_consent: true, estimated_cost_cents: null, unavailable_reason: "尚未配置付费服务。" }];
+    } else if (path.endsWith("/documentary-plan-preview")) {
+      body = {
+        format: "lingnian-documentary-storyboard",
+        version: 2,
+        production_spec: { target_duration_seconds: 60, aspect_ratio: "16:9" },
+        audio_plan: { strategy: "original_recording_first", exact_story_alignment_required: true, synthetic_voice_allowed: false, fallback: "保留字幕" },
+        scenes: [
+          { scene: 1, kind: "title_card", duration_seconds: 4, narration: "", subtitle: timelineItem.story.title, source: "人工确认故事标题", visual_direction: "标题卡" },
+          { scene: 2, kind: "documentary_context", duration_seconds: 13, narration: timelineItem.story.body, subtitle: timelineItem.story.body, source: "人工确认故事原文", visual_direction: "纪实空镜" },
+          { scene: 3, kind: "documentary_context", duration_seconds: 13, narration: timelineItem.story.body, subtitle: timelineItem.story.body, source: "人工确认故事原文", visual_direction: "纪实空镜" },
+          { scene: 4, kind: "documentary_context", duration_seconds: 12, narration: timelineItem.story.body, subtitle: timelineItem.story.body, source: "人工确认故事原文", visual_direction: "纪实空镜" },
+          { scene: 5, kind: "documentary_context", duration_seconds: 13, narration: timelineItem.story.body, subtitle: timelineItem.story.body, source: "人工确认故事原文", visual_direction: "纪实空镜" },
+          { scene: 6, kind: "source_card", duration_seconds: 5, narration: "", subtitle: "这段记忆来自家人确认的口述与家庭档案", source: "聆年档案来源说明", visual_direction: "来源卡" },
+        ],
+        review_checklist: ["声音完整", "镜头连贯", "没有新增家庭事实"],
+      };
     } else if (path.endsWith("/generative-media-requests")) {
       body = [];
     } else if (path.endsWith("/archive-questions")) {
@@ -403,6 +419,10 @@ test("家族记忆可以溯源回答并浏览人生轨迹", async ({ page }) => 
   await expect(page.getByRole("button", { name: "下载制作包" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "提交后可以离开，完成后再回来看片" })).toBeVisible();
   await expect(page.getByLabel("本次成片内容预览")).toContainText(timelineItem.story.title);
+  await expect(page.getByLabel("影片制作规格")).toContainText("默认使用原声，不克隆声音");
+  await expect(page.getByLabel("影片制作规格").getByLabel("目标时长")).toHaveValue("60");
+  await expect(page.getByLabel("纪实影片分镜预览")).toContainText("6 个镜头 · 共 60 秒");
+  await expect(page.getByLabel("纪实影片分镜预览")).toContainText("聆年档案来源说明");
   await expect(page.getByText("未验收不发布")).toBeVisible();
   await expect(page.getByRole("button", { name: "登记成片验收任务" })).toBeVisible();
   const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);

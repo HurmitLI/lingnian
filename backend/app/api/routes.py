@@ -62,6 +62,8 @@ from app.schemas.api import (
     ConfirmDraftRequest,
     BackupCreate,
     BackupRead,
+    DocumentaryPlanPreviewCreate,
+    DocumentaryPlanPreviewRead,
     ElderProfileCreate,
     ElderProfileRead,
     ElderProfileUpdate,
@@ -142,6 +144,7 @@ from app.services.memory import (
     ProductionMedia,
     SearchDocument,
     build_heritage_package,
+    build_documentary_plan,
     build_production_package,
     compose_grounded_answer,
     ensure_question_bank,
@@ -150,6 +153,7 @@ from app.services.memory import (
     render_memory_book_pdf,
     rank_archive,
     file_sha256,
+    normalize_production_spec,
     select_question,
     SelectedQuestion,
 )
@@ -739,9 +743,12 @@ def generative_request_read(
         estimated_cost_cents=request.estimated_cost_cents,
         actual_cost_cents=request.actual_cost_cents,
         max_cost_cents=request.max_cost_cents,
+        production_spec=request.production_spec or {},
         attempt_count=request.attempt_count,
         progress_percent=request.progress_percent,
         progress_stage=request.progress_stage,
+        progress_detail=request.progress_detail or {},
+        result_report=request.result_report or {},
         queued_at=request.queued_at,
         started_at=request.started_at,
         completed_at=request.completed_at,
@@ -4786,6 +4793,47 @@ def download_heritage_package(
     )
 
 
+@router.post(
+    "/elder-profiles/{profile_id}/documentary-plan-preview",
+    response_model=DocumentaryPlanPreviewRead,
+)
+def preview_documentary_plan(
+    profile_id: str,
+    payload: DocumentaryPlanPreviewCreate,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> DocumentaryPlanPreviewRead:
+    profile = require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
+    story = require(db, Story, payload.story_id, "STORY_NOT_FOUND", "没有找到这篇故事。")
+    if story.elder_id != profile.id:
+        raise DomainError("CROSS_ELDER_STORY", "不能使用其他讲述者的故事。", 409)
+    story_view = story_read(db, story, secret_store)
+    session = story.source_draft.session
+    has_image = db.scalar(
+        select(MediaAsset.id)
+        .where(
+            MediaAsset.session_id == session.id,
+            MediaAsset.kind.in_(["photo_original", "old_object_original"]),
+            MediaAsset.is_original.is_(True),
+        )
+        .limit(1)
+    ) is not None
+    detail = story_detail_read(db, story.detail, secret_store) if story.detail else None
+    plan = build_documentary_plan(
+        story_id=story.id,
+        title=story_view.title,
+        body=story_view.body,
+        place_name=detail.place_name if detail else None,
+        event_year=detail.event_year if detail else None,
+        has_image=has_image,
+        production_spec={
+            "target_duration_seconds": payload.target_duration_seconds,
+            "aspect_ratio": payload.aspect_ratio,
+        },
+    )
+    return DocumentaryPlanPreviewRead.model_validate(plan)
+
+
 @router.post("/elder-profiles/{profile_id}/production-package")
 def download_generation_production_package(
     profile_id: str,
@@ -4914,6 +4962,13 @@ def download_generation_production_package(
             no_impersonation=payload.no_impersonation,
             audio=audio_media,
             image=image_media,
+            production_spec=normalize_production_spec(
+                payload.generation_type,
+                {
+                    "target_duration_seconds": payload.target_duration_seconds,
+                    "aspect_ratio": payload.aspect_ratio,
+                },
+            ),
         )
         event = ConsentEvent(
             action=f"export_{payload.generation_type}_production_package",
@@ -5044,6 +5099,13 @@ def create_generative_media_request(
     if payload.allow_external_upload and payload.generation_type != "voice_replica":
         provider_key = "home_comfyui"
         status = "queued"
+    production_spec = normalize_production_spec(
+        payload.generation_type,
+        {
+            "target_duration_seconds": payload.target_duration_seconds,
+            "aspect_ratio": payload.aspect_ratio,
+        },
+    )
     canonical = json.dumps(
         {
             "elder_id": profile.id,
@@ -5051,6 +5113,7 @@ def create_generative_media_request(
             "generation_type": payload.generation_type,
             "allow_external_upload": payload.allow_external_upload,
             "max_cost_cents": payload.max_cost_cents,
+            "production_spec": production_spec,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -5069,9 +5132,12 @@ def create_generative_media_request(
         allow_external_upload=payload.allow_external_upload,
         estimated_cost_cents=estimated_cost,
         max_cost_cents=payload.max_cost_cents,
+        production_spec=production_spec,
         queued_at=now_utc() if status == "queued" else None,
         progress_percent=0,
         progress_stage="等待家用生成节点" if status == "queued" else None,
+        progress_detail={},
+        result_report={},
         request_sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
         error_code=None if status == "queued" else "PROVIDER_NOT_CONFIGURED",
     )
@@ -5184,6 +5250,8 @@ def review_generative_media_result(
         "duration_appropriate": payload.duration_appropriate,
         "source_preserved": payload.source_preserved,
         "identity_preserved": payload.identity_preserved,
+        "shot_continuity_verified": payload.shot_continuity_verified,
+        "no_fabricated_facts": payload.no_fabricated_facts,
     }
     required_checks = {
         "portrait_video": (
@@ -5198,6 +5266,8 @@ def review_generative_media_result(
             "audio_present",
             "expression_natural",
             "narrative_consistent",
+            "shot_continuity_verified",
+            "no_fabricated_facts",
             "duration_appropriate",
         ),
         "photo_restore": ("source_preserved", "identity_preserved"),

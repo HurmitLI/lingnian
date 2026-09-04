@@ -137,11 +137,16 @@ class WorkerTaskRead(BaseModel):
     package_url: str
     max_cost_cents: int
     attempt_count: int
+    production_spec: dict
+    resume_checkpoint: dict
 
 
 class WorkerProgress(BaseModel):
     progress_percent: int = Field(ge=0, le=99)
     progress_stage: str = Field(min_length=1, max_length=80)
+    completed_scene_count: int | None = Field(default=None, ge=0, le=10)
+    total_scene_count: int | None = Field(default=None, ge=1, le=10)
+    checkpoint_key: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class WorkerFailure(BaseModel):
@@ -349,11 +354,13 @@ def retry_generation_request(request_id: str, db: Session = Depends(get_db)) -> 
     request.assigned_node_id = None
     request.lease_token_hash = None
     request.lease_expires_at = None
-    request.progress_percent = 0
-    request.progress_stage = "等待家用生成节点"
+    has_checkpoint = bool((request.progress_detail or {}).get("checkpoint_key"))
+    request.progress_percent = request.progress_percent if has_checkpoint else 0
+    request.progress_stage = "等待节点从已完成镜头继续" if has_checkpoint else "等待家用生成节点"
     request.error_code = None
     request.last_error_message = None
     request.result_asset_id = None
+    request.result_report = {}
     db.commit()
     db.refresh(request)
     return queue_read(request)
@@ -383,9 +390,11 @@ def retry_family_generation_request(
     request.lease_token_hash = None
     request.lease_expires_at = None
     request.attempt_count = 0
-    request.progress_percent = 0
-    request.progress_stage = "等待家用生成节点"
+    has_checkpoint = bool((request.progress_detail or {}).get("checkpoint_key"))
+    request.progress_percent = request.progress_percent if has_checkpoint else 0
+    request.progress_stage = "等待节点从已完成镜头继续" if has_checkpoint else "等待家用生成节点"
     request.actual_cost_cents = 0
+    request.result_report = {}
     request.error_code = None
     request.last_error_message = None
     db.commit()
@@ -515,6 +524,8 @@ def claim_worker_task(
             package_url=f"/api/v1/generation-worker/tasks/{request.id}/package",
             max_cost_cents=request.max_cost_cents,
             attempt_count=request.attempt_count,
+            production_spec=request.production_spec or {},
+            resume_checkpoint=request.progress_detail or {},
         )
     db.commit()
     response.headers["X-Lingnian-No-Snapshot"] = "1"
@@ -610,6 +621,7 @@ def build_authorized_package(
         no_impersonation=request.no_impersonation,
         audio=audio_media,
         image=image_media,
+        production_spec=request.production_spec or {},
         external_upload_authorized=True,
         package_status="authorized_node_job",
     )
@@ -677,8 +689,20 @@ def report_worker_progress(
 ) -> WorkerAck:
     node, _ = authenticate_node(db, authorization)
     request = require_lease(db, node, request_id, lease_token)
+    if (
+        payload.completed_scene_count is not None
+        and payload.total_scene_count is not None
+        and payload.completed_scene_count > payload.total_scene_count
+    ):
+        raise DomainError("GENERATION_PROGRESS_INVALID", "已完成镜头数不能超过总镜头数。", 422)
     request.progress_percent = max(request.progress_percent, payload.progress_percent)
     request.progress_stage = payload.progress_stage.strip()
+    if payload.total_scene_count is not None:
+        request.progress_detail = {
+            "completed_scene_count": payload.completed_scene_count or 0,
+            "total_scene_count": payload.total_scene_count,
+            "checkpoint_key": payload.checkpoint_key,
+        }
     request.lease_expires_at = utc_now() + LEASE_WINDOW
     node.last_seen_at = utc_now()
     db.commit()
@@ -697,8 +721,14 @@ def fail_worker_task(
     request = require_lease(db, node, request_id, lease_token)
     retrying = payload.retryable and request.attempt_count < MAX_ATTEMPTS
     request.status = "queued" if retrying else "failed"
-    request.progress_percent = 0 if retrying else request.progress_percent
-    request.progress_stage = "生成中断，正在自动重试" if retrying else "生成失败，等待人工处理"
+    has_checkpoint = bool((request.progress_detail or {}).get("checkpoint_key"))
+    if retrying and has_checkpoint:
+        request.progress_stage = "生成中断，将从已完成镜头继续"
+    elif retrying:
+        request.progress_percent = 0
+        request.progress_stage = "生成中断，正在自动重试"
+    else:
+        request.progress_stage = "生成失败，等待人工处理"
     request.error_code = payload.error_code
     request.last_error_message = SAFE_WORKER_FAILURE_MESSAGES.get(
         payload.error_code,
@@ -717,6 +747,10 @@ async def upload_worker_result(
     request_id: str,
     result: UploadFile = File(...),
     actual_cost_cents: int = Form(default=0),
+    rendered_scene_count: int = Form(default=0),
+    duration_seconds: float = Form(default=0),
+    width: int = Form(default=0),
+    height: int = Form(default=0),
     authorization: str | None = Header(default=None),
     lease_token: str | None = Header(default=None, alias="X-Lingnian-Lease"),
     content_sha256: str | None = Header(default=None, alias="X-Content-Sha256"),
@@ -757,6 +791,12 @@ async def upload_worker_result(
     request.result_asset_id = asset.id
     request.provider_key = f"home_comfyui:{node.id}"
     request.actual_cost_cents = actual_cost_cents
+    request.result_report = {
+        "rendered_scene_count": max(0, rendered_scene_count),
+        "duration_seconds": max(0, round(duration_seconds, 3)),
+        "width": max(0, width),
+        "height": max(0, height),
+    }
     request.status = "pending_human_review"
     request.progress_percent = 100
     request.progress_stage = "生成完成，等待家人验收"

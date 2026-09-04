@@ -42,7 +42,7 @@ def capability_catalog() -> list[MediaCapability]:
         ),
         MediaCapability(
             generation_type="scene_video",
-            label="故事情景视频",
+            label="纪实故事影片",
             available=False,
             provider_key=None,
             requires_external_upload=True,

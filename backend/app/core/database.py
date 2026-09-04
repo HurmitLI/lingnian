@@ -102,6 +102,9 @@ def _upgrade_compatible_runtime_schema() -> None:
             "started_at": "DATETIME",
             "completed_at": "DATETIME",
             "last_error_message": "VARCHAR(500)",
+            "production_spec": "JSON NOT NULL DEFAULT '{}'",
+            "progress_detail": "JSON NOT NULL DEFAULT '{}'",
+            "result_report": "JSON NOT NULL DEFAULT '{}'",
         }
         for name, definition in additive_columns.items():
             if name not in request_columns:
