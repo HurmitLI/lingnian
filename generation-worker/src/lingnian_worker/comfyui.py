@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -17,6 +18,46 @@ PROMPT_TOKEN = "__LINGNIAN_PROMPT__"
 NEGATIVE_PROMPT_TOKEN = "__LINGNIAN_NEGATIVE_PROMPT__"
 SEED_TOKEN = "__LINGNIAN_SEED__"
 OUTPUT_PREFIX_TOKEN = "__LINGNIAN_OUTPUT_PREFIX__"
+MODEL_WIDTH_TOKEN = "__LINGNIAN_MODEL_WIDTH__"
+MODEL_HEIGHT_TOKEN = "__LINGNIAN_MODEL_HEIGHT__"
+
+
+def _model_dimensions(width: int, height: int) -> tuple[int, int]:
+    if height > width:
+        return 320, 512
+    return 512, 320
+
+
+def _english_scene_prompt(scene: dict[str, Any]) -> str:
+    raw = " ".join(
+        str(scene.get(key) or "")
+        for key in ("visual_direction", "narration", "subtitle")
+    )
+    concepts = {
+        "火车": "old passenger train",
+        "站台": "railway station platform",
+        "车站": "railway station",
+        "铁路": "railway tracks",
+        "蓝布包": "worn blue cloth satchel",
+        "布包": "cloth bag",
+        "乡村": "rural village",
+        "村庄": "rural village",
+        "农田": "farmland",
+        "河流": "river",
+        "老屋": "old family house",
+        "厨房": "traditional kitchen",
+        "学校": "old school",
+        "工厂": "old factory",
+        "山": "mountains",
+        "照片": "archival photograph",
+    }
+    translated = [english for chinese, english in concepts.items() if chinese in raw]
+    ascii_text = re.sub(r"[^\x20-\x7e]+", " ", raw)
+    ascii_text = re.sub(r"\s+", " ", ascii_text).strip(" ,.;")
+    detail = ", ".join(dict.fromkeys(translated))
+    if ascii_text:
+        detail = f"{detail}, {ascii_text}" if detail else ascii_text
+    return detail or "historical documentary context scene from the approved storyboard"
 
 
 def _replace_tokens(value: Any, replacements: dict[str, Any]) -> Any:
@@ -99,10 +140,11 @@ def _adapt_common_workflow(workflow: dict[str, Any], replacements: dict[str, Any
                 inputs[seed_key] = replacements[SEED_TOKEN]
         if "filename_prefix" in inputs:
             inputs["filename_prefix"] = replacements[OUTPUT_PREFIX_TOKEN]
+        dimension_prefix = "__LINGNIAN_MODEL_" if "latent" in class_type else "__LINGNIAN_"
         if "width" in inputs and not isinstance(inputs["width"], list):
-            inputs["width"] = replacements["__LINGNIAN_WIDTH__"]
+            inputs["width"] = replacements[f"{dimension_prefix}WIDTH__"]
         if "height" in inputs and not isinstance(inputs["height"], list):
-            inputs["height"] = replacements["__LINGNIAN_HEIGHT__"]
+            inputs["height"] = replacements[f"{dimension_prefix}HEIGHT__"]
         if "video" in class_type or "latentvideo" in class_type:
             for frame_key in ("frames", "num_frames", "video_frames", "length"):
                 if frame_key in inputs and not isinstance(inputs[frame_key], list):
@@ -216,22 +258,26 @@ class ComfyUiClient:
     ) -> Path:
         duration = int(scene["duration_seconds"])
         generated_duration = min(duration, self.max_generation_seconds)
-        scene_text = str(scene.get("narration") or scene.get("subtitle") or "").strip()
+        model_width, model_height = _model_dimensions(width, height)
         prompt = (
-            f"中国家庭纪实电影风格，克制、真实、自然光。第{scene.get('scene', '')}镜头；"
-            f"画面必须直接对应已确认原文「{scene_text}」。{scene['visual_direction']} "
-            "不出现文字水印，不生成可识别真人正脸，不增加故事之外的人物或事件。"
+            "Realistic Chinese family documentary film, restrained composition, natural light, "
+            "period-accurate objects and clothing, coherent photographic scene. "
+            f"{_english_scene_prompt(scene)}. "
+            "No text or watermark, no recognizable real-person close-up, no invented event."
         )
         image_name = self.upload_image(source_image) if source_image else ""
         workflow = self._load_workflow(
             {
                 "__LINGNIAN_PROMPT__": prompt,
                 "__LINGNIAN_NEGATIVE_PROMPT__": (
-                    "字幕，水印，标志，畸形人物，正脸，身份错乱，现代物品，虚构事件，"
-                    "无关城市航拍，通用城市天际线，重复画面，静止人物"
+                    "subtitles, watermark, logo, abstract art, colored noise, grid artifacts, "
+                    "deformed people, recognizable face, identity mismatch, modern objects, "
+                    "invented event, generic city skyline, duplicate scene, frozen motion"
                 ),
                 "__LINGNIAN_WIDTH__": width,
                 "__LINGNIAN_HEIGHT__": height,
+                "__LINGNIAN_MODEL_WIDTH__": model_width,
+                "__LINGNIAN_MODEL_HEIGHT__": model_height,
                 "__LINGNIAN_FPS__": fps,
                 "__LINGNIAN_FRAMES__": max(fps, generated_duration * fps),
                 "__LINGNIAN_DURATION_SECONDS__": generated_duration,

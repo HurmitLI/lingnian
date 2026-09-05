@@ -1,5 +1,7 @@
 from lingnian_worker.comfyui import (
     _adapt_common_workflow,
+    _english_scene_prompt,
+    _model_dimensions,
     _replace_tokens,
     _scene_seed,
     _workflow_binding_report,
@@ -60,12 +62,25 @@ def test_common_fixed_prompt_workflow_is_bound_through_sampler_edges():
         "__LINGNIAN_OUTPUT_PREFIX__": "lingnian/scene-03",
         "__LINGNIAN_WIDTH__": 1280,
         "__LINGNIAN_HEIGHT__": 720,
+        "__LINGNIAN_MODEL_WIDTH__": 512,
+        "__LINGNIAN_MODEL_HEIGHT__": 320,
         "__LINGNIAN_FRAMES__": 120,
     }
     rendered = _adapt_common_workflow(workflow, replacements)
     assert rendered["1"]["inputs"]["text"] == "1982年蓝布包近景"
     assert rendered["2"]["inputs"]["text"] == "现代高楼"
     assert rendered["3"]["inputs"]["seed"] == 1234
-    assert rendered["4"]["inputs"] == {"width": 1280, "height": 720}
+    assert rendered["4"]["inputs"] == {"width": 512, "height": 320}
     assert rendered["5"]["inputs"]["filename_prefix"] == "lingnian/scene-03"
     assert _workflow_binding_report(workflow) == {"prompt": True, "seed": True, "output": True}
+
+
+def test_model_resolution_is_separate_and_prompt_is_english_for_sd15():
+    assert _model_dimensions(1280, 720) == (512, 320)
+    assert _model_dimensions(720, 1280) == (320, 512)
+    prompt = _english_scene_prompt(
+        {"visual_direction": "1982年中国火车站台，绿色客车缓慢驶过"}
+    )
+    assert "passenger train" in prompt
+    assert "railway station platform" in prompt
+    assert not any("\u4e00" <= char <= "\u9fff" for char in prompt)

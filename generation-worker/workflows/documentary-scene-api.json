@@ -1,9 +1,59 @@
 {
-  "3":{"class_type":"KSampler","inputs":{"seed":"__LINGNIAN_SEED__","steps":20,"cfg":7,"sampler_name":"euler","scheduler":"normal","denoise":1,"model":["4",0],"positive":["6",0],"negative":["7",0],"latent_image":["5",0]}},
-  "4":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"v1-5-pruned-emaonly.safetensors"}},
-  "5":{"class_type":"EmptyLatentImage","inputs":{"width":"__LINGNIAN_WIDTH__","height":"__LINGNIAN_HEIGHT__","batch_size":1}},
-  "6":{"class_type":"CLIPTextEncode","inputs":{"text":"__LINGNIAN_PROMPT__","clip":["4",1]}},
-  "7":{"class_type":"CLIPTextEncode","inputs":{"text":"__LINGNIAN_NEGATIVE_PROMPT__","clip":["4",1]}},
-  "8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},
-  "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"__LINGNIAN_OUTPUT_PREFIX__","images":["8",0]}}
+  "1": {
+    "inputs": {"ckpt_name": "v1-5-pruned-emaonly.safetensors"},
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "2": {
+    "inputs": {"model": ["1", 0], "model_name": "mm_sd_v15_v2.ckpt", "beta_schedule": "sqrt_linear (AnimateDiff)"},
+    "class_type": "ADE_AnimateDiffLoaderGen1"
+  },
+  "3": {
+    "inputs": {"text": "__LINGNIAN_PROMPT__", "clip": ["1", 1]},
+    "class_type": "CLIPTextEncode"
+  },
+  "4": {
+    "inputs": {"text": "__LINGNIAN_NEGATIVE_PROMPT__", "clip": ["1", 1]},
+    "class_type": "CLIPTextEncode"
+  },
+  "5": {
+    "inputs": {"value": "__LINGNIAN_MODEL_WIDTH__"},
+    "class_type": "PrimitiveInt"
+  },
+  "6": {
+    "inputs": {"value": "__LINGNIAN_MODEL_HEIGHT__"},
+    "class_type": "PrimitiveInt"
+  },
+  "7": {
+    "inputs": {"width": ["5", 0], "height": ["6", 0], "batch_size": 16},
+    "class_type": "EmptyLatentImage"
+  },
+  "8": {
+    "inputs": {
+      "model": ["2", 0],
+      "seed": "__LINGNIAN_SEED__",
+      "steps": 20,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "latent_image": ["7", 0],
+      "denoise": 1.0
+    },
+    "class_type": "KSampler"
+  },
+  "9": {
+    "inputs": {"samples": ["8", 0], "vae": ["1", 2]},
+    "class_type": "VAEDecode"
+  },
+  "10": {
+    "inputs": {
+      "images": ["9", 0],
+      "filename_prefix": "__LINGNIAN_OUTPUT_PREFIX__",
+      "codec": "vp9",
+      "fps": 8.0,
+      "crf": 28.0
+    },
+    "class_type": "SaveWEBM"
+  }
 }
