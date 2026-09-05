@@ -1,0 +1,68 @@
+{
+  "format": "lingnian-continuity-trial",
+  "version": 1,
+  "fictional_only": true,
+  "reference_sha256": "ecd82d4dff016f02eea7e4cd33c91fb63e99b68df8e74dd04099b13c6d8a7056",
+  "reference_policy": "first_reference_then_previous_last_frame",
+  "review_notes": [
+    "虚构人物年轻时期参考图v2已由主端检查，年龄观感更接近19岁的年轻成人；不是对真实历史人物相貌的还原。",
+    "必须观看首段检查脸部、包、衣服及冷暖色调，不因生成成功自动通过；不通过就不生成后两段。",
+    "render_bible和render_action为人工核对的英文整片描述与镜头动作，不采用旧关键词映射。"
+  ],
+  "source_text": "沈素琴（虚构演示）回忆道，那个蓝布包她一直没舍得扔。1982年春天，她19岁，第一次一个人坐火车去无锡的纺织厂。",
+  "film_bible": {
+    "summary": "一位年轻女性带着蓝布包第一次独自乘火车，目的地是无锡的纺织厂；本片仅表现同一次出发前在站台的连续片刻。",
+    "character": "全程为新版参考图中的同一位19岁虚构年轻女性，黑色双辫子、自然皮肤、闭嘴的平静表情，不能变成中老年人、换脸或做夸张口部动作。",
+    "wardrobe": "始终保持参考图浅色小花长袖衬衫、深蓝裤子和原有发型，不换装。",
+    "prop": "始终只有参考图中同一个褪色深蓝色帆布旅行包，灰色布带、长方形圆角包身；没有金色绣纹，没有棕色皮带，不另造一个包。",
+    "era": "1982年春天，中国普通铁路站台，保留输入图的普通绿色客车。原文未提供机车型号，不擅自新增蒸汽机车或现代高铁画面。",
+    "location": "保持输入图的湿润站台与旁边同一列深绿色普通客车，没有新的地标；出发城市未知，不能擅自写成无锡站。",
+    "journey": "她正准备前往无锡的纺织厂，不是离开无锡；本片没有表现已经抵达无锡，也不生成未经证实的工厂外观。",
+    "visual_style": "固定输入图的阴天中性偏冷光线、曝光、白平衡、低饱和度和自然肤色，不加金黄色、棕褐色滤镜，不自动提对比，不突然暖场，不改为黑白。",
+    "forbidden_changes": "禁止换脸、年龄变化、换服装、换包、换车、换颜色、突然换场和凭空增加亲属；镜头动作是虚构影像演绎，不回写为新的家庭事实。"
+  },
+  "opening_state": "她站在同一列绿色客车旁，双手抱着参考图中的蓝布包。",
+  "segments": [
+    {
+      "id": 1,
+      "duration_seconds": 5,
+      "source_quotes": [
+        "那个蓝布包她一直没舍得扔。",
+        "第一次一个人坐火车去无锡的纺织厂。"
+      ],
+      "before": "她站在同一列绿色客车旁，双手抱着参考图中的蓝布包。",
+      "action": "她自然呼吸，轻轻握稳怀里的同一个蓝布包，目光缓缓转向身旁客车的车门；身体动作克制，不做夸张表情。",
+      "camera": "保持输入图中景和稳定机位，不推进，不变焦，不换构图；让脸、上身、布包和身旁车厢同时可辨认。",
+      "after": "她仍抱着同一个蓝布包，目光朝向身旁绿色客车的车门。",
+      "staging_note": "握包和看向车门是表达准备出发的演绎动作，不是声称原文记载了具体姿势。",
+      "render_action": "Medium shot matching the input composition. She gently steadies the bag in her arms and slowly shifts her gaze toward the nearby carriage doorway, with only a slight head turn. End still holding the same bag beside the carriage. Stable camera; no zoom. Background passengers make small natural movements."
+    },
+    {
+      "id": 2,
+      "duration_seconds": 5,
+      "source_quotes": [
+        "1982年春天，她19岁，第一次一个人坐火车去无锡的纺织厂。"
+      ],
+      "before": "她仍抱着同一个蓝布包，目光朝向身旁绿色客车的车门。",
+      "action": "从上一段结束姿态平滑延续，她抱着包缓慢转身，朝同一列客车车门方向迈出一小步；脸、辫子、衣服和包不改变。",
+      "camera": "同样的中景，轻微侧向跟随，仍保留她和身旁车厢，不突然切到列车远景。",
+      "after": "她抱着同一个蓝布包，朝车门方向迈出一步，仍在同一站台上。",
+      "staging_note": "这是出发前的连续演绎，不表示发生了新增家庭事件。",
+      "render_action": "Begin exactly at the preceding frame: the same woman holds the same bag looking toward the doorway. She slowly turns her torso in that direction and takes one small step, keeping the bag in her arms. The camera follows slightly from the same side without cutting. End on the same platform, one step closer."
+    },
+    {
+      "id": 3,
+      "duration_seconds": 5,
+      "source_quotes": [
+        "第一次一个人坐火车去无锡的纺织厂。"
+      ],
+      "before": "她抱着同一个蓝布包，朝车门方向迈出一步，仍在同一站台上。",
+      "action": "继续上一段的同一动作，她抱着同一个包沿客车旁缓慢走出第二小步，准备上车但不突然跳到车内；列车仍停靠。",
+      "camera": "同向缓慢跟随，不换轴线，不换人物；结尾仍可辨认她、包和同一列绿色客车。",
+      "after": "她抱着同一个蓝布包停在靠近车门的位置，画面仍处于出发前的同一空间。",
+      "staging_note": "不生成到达无锡或进入纺织厂的场景，避免把未知信息表现为事实。",
+      "render_action": "Continue directly from the preceding frame and movement. The same woman takes a second small step toward the same carriage doorway, holding the same bag in the same way. Gently follow from the same side. End near the doorway, still on the platform; do not jump inside the train."
+    }
+  ],
+  "render_bible": "Story context: in spring 1982, a fictional 19-year-old Chinese woman is about to travel alone by train to a textile factory in Wuxi. Her departure city is unknown. Show only the continuous moment before boarding, not arrival. She is the SAME young adult woman from the input: same eyes, nose, black twin braids, pale small-pattern long-sleeved shirt and navy trousers. Her lips remain gently closed; subtle breathing, no speech or chewing. She holds the SAME faded dark-blue canvas travel bag with gray cloth handles, unchanged seams and shape. No leather or embroidery. Remain beside the SAME stationary green passenger carriage on the SAME wet platform. Preserve neutral cool overcast light, natural skin texture, muted blue-green colors and soft contrast from the input. Lock exposure, white balance and color grading. No sepia, golden light, beauty retouching, aging, black-and-white, steam locomotive, modern train or new location."
+}

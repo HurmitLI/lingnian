@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture
 def plan():
-    return json.loads((ROOT / "generation-worker/examples/1982-departure-continuity.json").read_text())
+    return json.loads((ROOT / "generation-worker/examples/1982-departure-continuity.json").read_text(encoding="utf-8"))
 
 
 def test_fictional_plan_has_grounded_story_and_linked_states(plan):
@@ -159,7 +159,7 @@ def test_trial_carries_tail_forward_and_resumes_verified_segments(plan, tmp_path
     (result.parent / "segment-01-tail.png").write_bytes(b"corrupted")
     c.run_trial(plan_path, reference, tmp_path / "output", **kwargs)
     assert len(graphs) == 6  # A broken anchor invalidates the entire later chain.
-    report = json.loads((result.parent / "report.json").read_text())
+    report = json.loads((result.parent / "report.json").read_text(encoding="utf-8"))
     assert report["review_status"] == "not_reviewed"
     assert report["audio"] == "silent_visual_test"
 
@@ -170,3 +170,19 @@ def test_trial_rejects_nonlocal_endpoint_before_reading_files(tmp_path):
 
     with pytest.raises(ConfigurationError, match="本机"):
         run_trial(tmp_path / "missing", tmp_path / "missing", tmp_path, base_url="https://example.com", renderer=None, segments=1)
+
+
+def test_young_v2_has_own_reference_and_compact_whole_story_treatment():
+    p = json.loads((ROOT / "generation-worker/examples/1982-departure-young-v2.json").read_text(encoding="utf-8"))
+    ref = ROOT / "generation-worker/assets/shen-suqin-station-1982-young-v2.png"
+    validate_plan(p, ref)
+    for segment in p["segments"]:
+        prompt = segment_prompt(p, segment)
+        assert len(prompt.split()) < 350
+        assert "19-year-old" in prompt and "Wuxi" in prompt and "departure city is unknown" in prompt
+        assert "Fixed exposure and white balance" in prompt
+        assert segment["render_action"] in prompt and p["render_bible"] in prompt
+        assert prompt.index(segment["render_action"]) < prompt.index(p["render_bible"])
+    del p["segments"][1]["render_action"]
+    with pytest.raises(PackageError, match="每一段"):
+        validate_plan(p, ref)

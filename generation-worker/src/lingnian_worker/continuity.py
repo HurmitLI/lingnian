@@ -71,9 +71,26 @@ def validate_plan(plan: dict, reference: Path) -> None:
         if not isinstance(quotes, list) or not quotes or any(not isinstance(q, str) or not q or q not in source for q in quotes):
             raise PackageError("片段必须引用完整故事中的真实原文，不能编造出处。")
         previous_state = scene["after"]
+    if "render_bible" in plan:
+        if not isinstance(plan["render_bible"], str) or not plan["render_bible"].strip():
+            raise PackageError("精简渲染设定不能为空。")
+        for scene in scenes:
+            if not isinstance(scene.get("render_action"), str) or not scene["render_action"].strip():
+                raise PackageError("精简渲染模式必须包含每一段的连续动作。")
+            if len((plan["render_bible"] + " " + scene["render_action"]).split()) > 300:
+                raise PackageError("渲染描述过长，请在保留整片事实和当前动作后精简。")
 
 
 def segment_prompt(plan: dict, segment: dict) -> str:
+    if "render_bible" in plan:
+        # Authored whole-film treatment, not word-by-word keyword extraction.
+        # Keep shot/action first. The full source and bilingual audit stay in plan.
+        return "\n".join([
+            "Continue the input image as one continuous live-action shot.",
+            segment["render_action"],
+            plan["render_bible"],
+            "Keep the exact input face, bag, clothing and color response. Fixed exposure and white balance throughout. No cuts or style changes.",
+        ])
     bible = plan["film_bible"]
     return "\n".join([
         "把输入图作为本段第一帧。连续拍摄同一个人的同一段经历，不是独立的关键词插画。",
@@ -158,7 +175,7 @@ def run_trial(plan_path: Path, reference: Path, output_root: Path, *, base_url: 
     target_dir = output_root / fingerprint[:16]
     target_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = target_dir / "checkpoint.json"
-    state = json.loads(checkpoint_path.read_text()) if checkpoint_path.exists() else {"fingerprint": fingerprint, "segments": []}
+    state = json.loads(checkpoint_path.read_text(encoding="utf-8")) if checkpoint_path.exists() else {"fingerprint": fingerprint, "segments": []}
     if state.get("fingerprint") != fingerprint:
         raise PackageError("方案或模型配置改变，不允许复用旧片段。")
     if not isinstance(state.get("segments"), list) or not all(isinstance(s, dict) for s in state["segments"]):
