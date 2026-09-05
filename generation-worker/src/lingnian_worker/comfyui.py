@@ -302,6 +302,16 @@ class ComfyUiClient:
                 "__LINGNIAN_SEED__": _scene_seed(scene, seed_offset),
             }
         )
+        return self.run_workflow(workflow, output_path=output_path, on_wait=on_wait)
+
+    def run_workflow(
+        self,
+        workflow: dict[str, Any],
+        *,
+        output_path: Path,
+        on_wait: Callable[[], None] | None = None,
+    ) -> Path:
+        """Execute an explicit graph without legacy prompt/dimension rewriting."""
         try:
             submitted = self._client.post("/prompt", json={"prompt": workflow, "client_id": self.client_id})
             submitted.raise_for_status()
