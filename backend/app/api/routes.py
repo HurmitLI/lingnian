@@ -5098,6 +5098,7 @@ def get_generative_media_capabilities(
 )
 def list_generative_media_requests(
     profile_id: str,
+    trash_only: bool = False,
     db: Session = Depends(get_db),
     secret_store: SecretStore = Depends(get_secret_store),
 ) -> list[GenerativeMediaRequestRead]:
@@ -5105,9 +5106,43 @@ def list_generative_media_requests(
     requests = db.scalars(
         select(GenerativeMediaRequest)
         .where(GenerativeMediaRequest.elder_id == profile_id)
+        .where(GenerativeMediaRequest.status == "deleted" if trash_only else GenerativeMediaRequest.status != "deleted")
         .order_by(GenerativeMediaRequest.created_at.desc())
     ).all()
     return [generative_request_read(db, item, secret_store) for item in requests]
+
+
+REMOVABLE_GENERATION_STATUSES = {"pending_human_review", "rejected", "failed", "cancelled"}
+
+
+@router.delete("/generative-media-requests/{request_id}", status_code=204)
+def trash_generative_media_request(request_id: str, db: Session = Depends(get_db)) -> Response:
+    item = require(db, GenerativeMediaRequest, request_id, "GENERATION_REQUEST_NOT_FOUND", "没有找到这项影像制作任务。")
+    if item.status == "deleted":
+        return Response(status_code=204)
+    if item.status not in REMOVABLE_GENERATION_STATUSES:
+        raise DomainError("GENERATION_DELETE_NOT_ALLOWED", "这里只能清理未通过的已结束任务；已通过或正在制作的结果不能删除。", 409)
+    # Soft deletion preserves encrypted results, source assets and review evidence.
+    item.progress_detail = {**(item.progress_detail or {}), "trash_previous_status": item.status, "trashed_at": now_utc().isoformat()}
+    item.status = "deleted"
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/generative-media-requests/{request_id}/restore", response_model=GenerativeMediaRequestRead)
+def restore_generative_media_request(
+    request_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> GenerativeMediaRequestRead:
+    item = require(db, GenerativeMediaRequest, request_id, "GENERATION_REQUEST_NOT_FOUND", "没有找到这项影像制作任务。")
+    prior = (item.progress_detail or {}).get("trash_previous_status")
+    if item.status != "deleted" or prior not in REMOVABLE_GENERATION_STATUSES:
+        raise DomainError("GENERATION_RESTORE_NOT_ALLOWED", "这项任务不在可恢复的回收区。", 409)
+    item.status = prior
+    item.progress_detail = {key: value for key, value in item.progress_detail.items() if key not in {"trash_previous_status", "trashed_at"}}
+    db.commit()
+    return generative_request_read(db, item, secret_store)
 
 
 @router.post(

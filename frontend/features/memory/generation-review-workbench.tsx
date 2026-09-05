@@ -58,6 +58,9 @@ export default function GenerationReviewWorkbench({
   onError,
 }: Props) {
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
+  const [showTrash, setShowTrash] = useState(false);
+  const [trashProfileId, setTrashProfileId] = useState("");
+  const [trashedRequests, setTrashedRequests] = useState<GenerativeMediaRequest[]>([]);
   const [generationType, setGenerationType] = useState("scene_video");
   const [targetDuration, setTargetDuration] = useState(60);
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9");
@@ -124,6 +127,38 @@ export default function GenerationReviewWorkbench({
 
   async function refresh() {
     onRequestsChange(await loadRequests(profileId));
+  }
+
+  async function openTrash() {
+    setBusyRequestId("trash");
+    try {
+      setTrashedRequests(await api<GenerativeMediaRequest[]>(`/api/v1/elder-profiles/${profileId}/generative-media-requests?trash_only=true`));
+      setTrashProfileId(profileId);
+      setShowTrash(true);
+    } catch (error) { onError(error); }
+    finally { setBusyRequestId(null); }
+  }
+
+  async function trashResult(requestId: string) {
+    if (!window.confirm("移到回收区？原始录音、照片和故事不会删除，生成结果仍可恢复。")) return;
+    setBusyRequestId(requestId);
+    try {
+      await api(`/api/v1/generative-media-requests/${requestId}`, { method: "DELETE" });
+      await refresh();
+      onNotice("已移到回收区；原始资料没有删除，可通过下方回收区恢复。");
+    } catch (error) { onError(error); }
+    finally { setBusyRequestId(null); }
+  }
+
+  async function restoreResult(requestId: string) {
+    setBusyRequestId(requestId);
+    try {
+      await api(`/api/v1/generative-media-requests/${requestId}/restore`, { method: "POST" });
+      setTrashedRequests((items) => items.filter((item) => item.id !== requestId));
+      await refresh();
+      onNotice("已恢复到原来的验收状态，不会自动通过或重新生成。");
+    } catch (error) { onError(error); }
+    finally { setBusyRequestId(null); }
   }
 
   async function registerTask(event: FormEvent<HTMLFormElement>) {
@@ -312,6 +347,7 @@ export default function GenerationReviewWorkbench({
         {requests.map((request) => (
           <article className={`generation-request-card status-${request.status}`} key={request.id}>
             <header><div><small>{TYPE_LABELS[request.generation_type] ?? request.generation_type}</small><h4>{STATUS_LABELS[request.status] ?? request.status}</h4></div><span>预算 ¥{(request.max_cost_cents / 100).toFixed(2)}</span></header>
+            {["pending_human_review", "rejected", "failed", "cancelled"].includes(request.status) && <button type="button" className="button quiet" disabled={busyRequestId !== null} onClick={() => void trashResult(request.id)}>删除此结果（可恢复）</button>}
             {request.generation_type === "scene_video" && request.production_spec.target_duration_seconds && (
               <div className="generation-request-spec" aria-label="影片规格">
                 <span>{request.production_spec.target_duration_seconds} 秒</span>
@@ -406,6 +442,14 @@ export default function GenerationReviewWorkbench({
           </article>
         ))}
       </div>
+      <section aria-label="生成结果回收区">
+        <button type="button" className="button quiet" disabled={busyRequestId !== null} onClick={() => showTrash && trashProfileId === profileId ? setShowTrash(false) : void openTrash()}>{showTrash && trashProfileId === profileId ? "收起回收区" : "查看已删除结果"}</button>
+        {showTrash && trashProfileId === profileId && <div>
+          <p>这里只保留已删除的生成任务。恢复不会重新生成，也不会自动通过验收。</p>
+          {trashedRequests.length === 0 && <p>回收区为空。</p>}
+          {trashedRequests.map((item) => <article key={item.id}><span>{TYPE_LABELS[item.generation_type] ?? item.generation_type} · {item.production_spec.target_duration_seconds ? `${item.production_spec.target_duration_seconds} 秒 · ` : ""}{new Date(item.created_at).toLocaleString("zh-CN")}</span><button type="button" className="button quiet" disabled={busyRequestId !== null} onClick={() => void restoreResult(item.id)}>恢复结果</button></article>)}
+        </div>}
+      </section>
     </section>
   );
 }

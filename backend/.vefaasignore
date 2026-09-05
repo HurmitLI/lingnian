@@ -5,6 +5,7 @@
 data/
 .model-cache/
 .pytest_cache/
+.test-data/
 tests/
 htmlcov/
 __pycache__/
