@@ -49,6 +49,7 @@ frontend/test-results/
 .runtime/
 
 # Home generation worker runtime (may contain decrypted authorized material)
+.worker-data/
 generation-worker/.worker-data/
 generation-worker/dist/
 generation-worker/build/
