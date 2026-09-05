@@ -29,17 +29,21 @@ def _model_dimensions(width: int, height: int) -> tuple[int, int]:
 
 
 def _english_scene_prompt(scene: dict[str, Any]) -> str:
-    raw = " ".join(
-        str(scene.get(key) or "")
-        for key in ("visual_direction", "narration", "subtitle")
-    )
+    direction = str(scene.get("visual_direction") or "")
+    # The direction embeds the WHOLE story and negative constraints. Mining all
+    # its words makes every shot depict the same objects, including forbidden ones.
+    focus = str(scene.get("narration") or scene.get("subtitle") or "").strip()
+    if not focus:
+        match = re.search(r"当前镜头必须直接对应「(.*?)」", direction)
+        focus = match.group(1) if match else direction
     concepts = {
-        "火车": "old passenger train",
+        "蓝布包": "a worn blue cloth satchel, close-up of blue fabric and stitching",
+        "布包": "a cloth bag, close-up of fabric and stitching",
+        "纺织厂": "a textile factory, close-up of textile machinery",
+        "火车": "a Chinese passenger train, railway station platform beside passenger carriages",
         "站台": "railway station platform",
         "车站": "railway station",
         "铁路": "railway tracks",
-        "蓝布包": "worn blue cloth satchel",
-        "布包": "cloth bag",
         "乡村": "rural village",
         "村庄": "rural village",
         "农田": "farmland",
@@ -48,16 +52,29 @@ def _english_scene_prompt(scene: dict[str, Any]) -> str:
         "厨房": "traditional kitchen",
         "学校": "old school",
         "工厂": "old factory",
-        "山": "mountains",
-        "照片": "archival photograph",
+        "山脉": "mountains",
+        "大山": "mountains",
     }
-    translated = [english for chinese, english in concepts.items() if chinese in raw]
-    ascii_text = re.sub(r"[^\x20-\x7e]+", " ", raw)
-    ascii_text = re.sub(r"\s+", " ", ascii_text).strip(" ,.;")
-    detail = ", ".join(dict.fromkeys(translated))
-    if ascii_text:
-        detail = f"{detail}, {ascii_text}" if detail else ascii_text
-    return detail or "historical documentary context scene from the approved storyboard"
+
+    def subject(text: str) -> str:
+        hits = [(text.index(word), -len(word), value) for word, value in concepts.items() if word in text]
+        return min(hits)[2] if hits else ""
+
+    detail = subject(focus)
+    # A date/age-only shot may use an object explicitly present in the approved
+    # story; unknown prose must not silently become unrelated generic imagery.
+    temporal_only = bool(re.fullmatch(r"[\d\s年岁春夏秋冬天季年月日她他那时当时，。、；：]+", focus))
+    if not detail and temporal_only:
+        context = re.search(r"整段已确认故事仅为「(.*?)」", direction)
+        detail = subject(context.group(1)) if context else ""
+    if not detail and re.search(r"[A-Za-z]{3,}", focus) and not re.search(r"[\u4e00-\u9fff]", focus):
+        detail = focus
+    if not detail:
+        raise ConfigurationError("当前镜头缺少可用的英文画面主体，请先补充分镜翻译，不能用无关场景代替。")
+    year = re.search(r"(?<!\d)((?:18|19|20)\d{2})年", focus + " " + direction)
+    period = f"China in {year.group(1)}" if year else "China"
+    season = next((en for zh, en in (("春", "spring"), ("夏", "summer"), ("秋", "autumn"), ("冬", "winter")) if zh in focus), "")
+    return f"{detail}, {period}" + (f", {season}" if season else "")
 
 
 def _replace_tokens(value: Any, replacements: dict[str, Any]) -> Any:
@@ -260,10 +277,9 @@ class ComfyUiClient:
         generated_duration = min(duration, self.max_generation_seconds)
         model_width, model_height = _model_dimensions(width, height)
         prompt = (
-            "Realistic Chinese family documentary film, restrained composition, natural light, "
-            "period-accurate objects and clothing, coherent photographic scene. "
             f"{_english_scene_prompt(scene)}. "
-            "No text or watermark, no recognizable real-person close-up, no invented event."
+            "Realistic color documentary, natural light, restrained motion, "
+            "period-accurate objects, coherent photographic scene, no face close-up."
         )
         image_name = self.upload_image(source_image) if source_image else ""
         workflow = self._load_workflow(

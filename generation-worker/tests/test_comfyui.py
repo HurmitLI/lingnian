@@ -6,6 +6,9 @@ from lingnian_worker.comfyui import (
     _scene_seed,
     _workflow_binding_report,
 )
+import pytest
+
+from lingnian_worker.models import ConfigurationError
 
 
 def test_workflow_tokens_keep_numeric_types_and_replace_embedded_text():
@@ -84,3 +87,28 @@ def test_model_resolution_is_separate_and_prompt_is_english_for_sd15():
     assert "passenger train" in prompt
     assert "railway station platform" in prompt
     assert not any("\u4e00" <= char <= "\u9fff" for char in prompt)
+
+
+def test_shot_subject_does_not_leak_from_whole_story_or_negative_direction():
+    direction = (
+        "整段已确认故事仅为「那个蓝布包她一直没舍得扔。1982年春天，她19岁，坐火车去纺织厂。」；"
+        "当前镜头必须直接对应「那个蓝布包她一直没舍得扔。」。时代固定为1982年前后的中国；"
+        "禁止无关火车站台或山脉。"
+    )
+    bag = _english_scene_prompt({"narration": "那个蓝布包她一直没舍得扔。", "visual_direction": direction})
+    assert bag.startswith("a worn blue cloth satchel")
+    assert "1982" in bag
+    assert all(term not in bag for term in ("train", "factory", "mountains"))
+    train = _english_scene_prompt({"narration": "第一次一个人坐火车去无锡的纺织厂。", "visual_direction": direction})
+    assert train.startswith("a Chinese passenger train")
+    assert "satchel" not in train
+
+
+def test_date_only_shot_reuses_grounded_object_but_unknown_story_is_not_invented():
+    prompt = _english_scene_prompt({
+        "narration": "1982年春天，她19岁，",
+        "visual_direction": "整段已确认故事仅为「蓝布包一直没舍得扔。坐火车去纺织厂。」",
+    })
+    assert "satchel" in prompt and "1982" in prompt and "spring" in prompt
+    with pytest.raises(ConfigurationError, match="分镜翻译"):
+        _english_scene_prompt({"narration": "她终于懂得了那句话的意思。"})
