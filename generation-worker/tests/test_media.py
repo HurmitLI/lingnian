@@ -6,7 +6,8 @@ import imageio_ffmpeg
 import pytest
 from PIL import Image
 
-from lingnian_worker.media import MediaRenderer
+from lingnian_worker.api import MAX_RESULT_UPLOAD_BYTES
+from lingnian_worker.media import MAX_RESULT_BYTES, MediaRenderer
 
 
 def test_visual_fingerprint_ignores_container_and_distinguishes_scenes(tmp_path):
@@ -50,6 +51,12 @@ def test_renders_and_assembles_a_real_short_mp4(tmp_path):
     result = renderer.assemble([clip], tmp_path / "result.mp4", audio=None, duration=1)
     metadata = renderer.probe(result)
     assert result.stat().st_size > 1000
+    assert result.stat().st_size <= MAX_RESULT_BYTES
     assert metadata["width"] == 320
     assert metadata["height"] == 180
     assert 0.8 <= metadata["duration"] <= 1.2
+
+
+def test_result_ceiling_leaves_one_mib_for_multipart_headroom():
+    assert MAX_RESULT_BYTES == 15 * 1024 * 1024
+    assert MAX_RESULT_UPLOAD_BYTES == MAX_RESULT_BYTES

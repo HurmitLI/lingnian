@@ -11,6 +11,10 @@ from PIL import Image, ImageDraw, ImageFont
 from .models import AudioDurationMismatch, PackageError
 
 
+TARGET_RESULT_BYTES = 14 * 1024 * 1024
+MAX_RESULT_BYTES = 15 * 1024 * 1024
+
+
 def _run(command: list[str], *, description: str) -> None:
     completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if completed.returncode != 0:
@@ -233,6 +237,15 @@ class MediaRenderer:
             [self.ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file), "-c", "copy", str(silent)],
             description="镜头拼接",
         )
+        video_kbps = max(
+            600,
+            min(4500, int(((TARGET_RESULT_BYTES * 8) / max(1, duration) - 160_000) / 1000)),
+        )
+        video_encoding = [
+            "-c:v", "libx264", "-preset", "medium",
+            "-b:v", f"{video_kbps}k", "-maxrate", f"{video_kbps}k",
+            "-bufsize", f"{video_kbps * 2}k",
+        ]
         if audio:
             audio_duration = self.probe(audio)["duration"]
             if audio_duration > duration + 1.0:
@@ -241,7 +254,7 @@ class MediaRenderer:
                 [
                     self.ffmpeg, "-y", "-i", str(silent), "-i", str(audio),
                     "-filter_complex", "[1:a]apad[a]", "-map", "0:v:0", "-map", "[a]",
-                    "-t", str(duration), "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(target),
+                    "-t", str(duration), *video_encoding, "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(target),
                 ],
                 description="原声合成",
             )
@@ -249,8 +262,10 @@ class MediaRenderer:
             _run(
                 [
                     self.ffmpeg, "-y", "-i", str(silent), "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-                    "-t", str(duration), "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(target),
+                    "-t", str(duration), *video_encoding, "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(target),
                 ],
                 description="静音轨合成",
             )
+        if target.stat().st_size > MAX_RESULT_BYTES:
+            raise PackageError("Rendered video exceeds the safe upload size.")
         return target

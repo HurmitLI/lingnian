@@ -6,7 +6,10 @@ from typing import Any
 
 import httpx
 
-from .models import RenderReport, TemporaryWorkerError, WorkerTask
+from .models import PackageError, RenderReport, TemporaryWorkerError, WorkerTask
+
+
+MAX_RESULT_UPLOAD_BYTES = 15 * 1024 * 1024
 
 
 class WorkerApi:
@@ -26,6 +29,10 @@ class WorkerApi:
             response = self._client.request(method, path, **kwargs)
             response.raise_for_status()
             return response.json()
+        except httpx.HTTPStatusError as exc:
+            raise TemporaryWorkerError(
+                f"Cloud worker API returned HTTP {exc.response.status_code}."
+            ) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise TemporaryWorkerError("云端节点接口暂时不可用。") from exc
 
@@ -81,6 +88,8 @@ class WorkerApi:
         )
 
     def upload_result(self, task: WorkerTask, report: RenderReport) -> None:
+        if report.result_path.stat().st_size > MAX_RESULT_UPLOAD_BYTES:
+            raise PackageError("Rendered video exceeds the safe upload size before upload.")
         payload = report.result_path.read_bytes()
         self._json(
             "POST",
