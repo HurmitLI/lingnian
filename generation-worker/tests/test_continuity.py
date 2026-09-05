@@ -85,3 +85,88 @@ def test_each_segment_uses_whole_film_bible_and_current_action(plan):
     assert first != second
     assert plan["segments"][0]["after"] in second
     assert plan["film_bible"]["prop"] in first and plan["film_bible"]["prop"] in second
+
+
+def test_trial_carries_tail_forward_and_resumes_verified_segments(plan, tmp_path, monkeypatch):
+    from lingnian_worker import continuity as c
+
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan))
+    reference = ROOT / "frontend/public/showcase/shen-suqin-station-1982.png"
+    uploads, graphs = [], []
+
+    class FakeComfy:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def upload_image(self, path):
+            uploads.append(path)
+            return path.name
+
+        def run_workflow(self, graph, *, output_path):
+            graphs.append(graph)
+            output_path.write_bytes(f"raw-{len(graphs)}".encode())
+            return output_path
+
+        def close(self):
+            pass
+
+    info = {n["class_type"]: {} for n in c.build_wan_graph(plan, plan["segments"][0], image_name="ref", prefix="test").values()}
+    for node, field, model in (("UNETLoader", "unet_name", "unet"), ("CLIPLoader", "clip_name", "clip"), ("VAELoader", "vae_name", "vae")):
+        info[node] = {"input": {"required": {field: [[c.MODEL_FILES[model]]]}}}
+
+    class FakeHttp:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def get(self, path):
+            assert path == "/object_info"
+            return self
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return info
+
+    class Renderer:
+        def assemble(self, clips, output, *, audio, duration):
+            assert audio is None
+            output.write_bytes(b"".join(p.read_bytes() for p in clips))
+
+        def probe(self, path):
+            return {"duration": 15}
+
+    def media_stub(renderer, raw, target, seconds):
+        target.write_bytes(raw.read_bytes() + target.name.encode())
+
+    monkeypatch.setattr(c, "ComfyUiClient", FakeComfy)
+    monkeypatch.setattr(c.httpx, "Client", FakeHttp)
+    for name in ("normalize_segment", "tail_frame", "contact_sheet"):
+        monkeypatch.setattr(c, name, media_stub)
+    kwargs = dict(base_url="http://127.0.0.1:8188", renderer=Renderer(), segments=3)
+    result = c.run_trial(plan_path, reference, tmp_path / "output", **kwargs)
+    assert uploads == [reference, result.parent / "segment-01-tail.png", result.parent / "segment-02-tail.png"]
+    assert graphs[1]["4"]["inputs"]["image"] == "segment-01-tail.png"
+    c.run_trial(plan_path, reference, tmp_path / "output", **kwargs)
+    assert len(graphs) == 3  # Verified restart performs no extra generation.
+    (result.parent / "segment-01-tail.png").write_bytes(b"corrupted")
+    c.run_trial(plan_path, reference, tmp_path / "output", **kwargs)
+    assert len(graphs) == 6  # A broken anchor invalidates the entire later chain.
+    report = json.loads((result.parent / "report.json").read_text())
+    assert report["review_status"] == "not_reviewed"
+    assert report["audio"] == "silent_visual_test"
+
+
+def test_trial_rejects_nonlocal_endpoint_before_reading_files(tmp_path):
+    from lingnian_worker.continuity import run_trial
+    from lingnian_worker.models import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="本机"):
+        run_trial(tmp_path / "missing", tmp_path / "missing", tmp_path, base_url="https://example.com", renderer=None, segments=1)

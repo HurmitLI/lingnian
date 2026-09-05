@@ -77,13 +77,13 @@ def segment_prompt(plan: dict, segment: dict) -> str:
     bible = plan["film_bible"]
     return "\n".join([
         "把输入图作为本段第一帧。连续拍摄同一个人的同一段经历，不是独立的关键词插画。",
-        f"完整故事：{plan['source_text']}",
-        *[f"{key}：{value}" for key, value in bible.items()],
         f"开场状态：{segment['before']}",
         f"本段动作：{segment['action']}",
         f"摄影：{segment['camera']}",
         f"结束状态：{segment['after']}",
         "脸、发型、衣着、包的结构与颜色、列车和光线延续输入画面。动作缓慢自然，不换演员，不突然换场。",
+        *[f"{key}：{value}" for key, value in bible.items()],
+        f"完整故事：{plan['source_text']}",
     ])
 
 
@@ -161,6 +161,8 @@ def run_trial(plan_path: Path, reference: Path, output_root: Path, *, base_url: 
     state = json.loads(checkpoint_path.read_text()) if checkpoint_path.exists() else {"fingerprint": fingerprint, "segments": []}
     if state.get("fingerprint") != fingerprint:
         raise PackageError("方案或模型配置改变，不允许复用旧片段。")
+    if not isinstance(state.get("segments"), list) or not all(isinstance(s, dict) for s in state["segments"]):
+        raise PackageError("接续记录损坏，请保留产物后检查，不能盲目复用。")
     client = ComfyUiClient(base_url, plan_path, timeout_seconds=3600)
     input_image = reference
     clips = []
@@ -172,6 +174,14 @@ def run_trial(plan_path: Path, reference: Path, output_root: Path, *, base_url: 
             graph = build_wan_graph(plan, plan["segments"][0], image_name="anchor", prefix="check")
             if any(node["class_type"] not in info for node in graph.values()):
                 raise ConfigurationError("ComfyUI 缺少 Wan 原生节点，不能退回 AnimateDiff。")
+            for node_name, field, filename in (
+                ("UNETLoader", "unet_name", MODEL_FILES["unet"]),
+                ("CLIPLoader", "clip_name", MODEL_FILES["clip"]),
+                ("VAELoader", "vae_name", MODEL_FILES["vae"]),
+            ):
+                choices = info[node_name].get("input", {}).get("required", {}).get(field, [])
+                if not choices or not isinstance(choices[0], list) or filename not in choices[0]:
+                    raise ConfigurationError(f"本机没有登记所需模型 {filename}，不能启动试验。")
         for segment in plan["segments"][:segments]:
             index, seconds = segment["id"], segment["duration_seconds"]
             prefix = f"segment-{index:02d}"
