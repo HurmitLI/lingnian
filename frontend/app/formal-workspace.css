@@ -112,6 +112,23 @@
 }
 .app-shell .sidebar-note svg { color: var(--formal-green); }
 .app-shell .sidebar-note small { color: var(--formal-muted); }
+.app-shell .comfort-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  color: var(--formal-ink);
+  border: 1.5px solid rgba(23, 23, 23, .5);
+  border-radius: 11px;
+  background: var(--formal-panel);
+  cursor: pointer;
+}
+.app-shell .desktop-comfort-toggle { width: calc(100% - 6px); min-height: 50px; margin: auto 3px 0; padding: 8px 11px; }
+.app-shell .desktop-comfort-toggle + .sidebar-note { margin: 10px 3px 0; }
+.app-shell .comfort-toggle span { display: grid; gap: 1px; text-align: left; }
+.app-shell .comfort-toggle small { color: var(--formal-muted); font-size: 10px; }
+.app-shell .comfort-toggle[aria-pressed="true"] { border-color: var(--formal-charcoal); background: #fff1e6; box-shadow: 3px 3px 0 rgba(255, 111, 30, .18); }
+.app-shell .mobile-comfort-toggle { display: none; }
 
 /* 编辑式页头：标题更大，信息更少，留白更明显。 */
 .app-shell .workspace-main {
@@ -748,6 +765,57 @@
 .app-shell .interview-skip { justify-self: end; }
 .app-shell .interview-finished-summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin-bottom: 20px; padding: 15px 17px; border: 1px dashed var(--formal-line); border-radius: 10px; background: #fff8ef; }
 .app-shell .interview-finished-summary span { color: var(--formal-muted); font-size: 13px; }
+.app-shell .interview-progress-strip {
+  display: grid;
+  grid-template-columns: minmax(180px, .7fr) minmax(220px, 1fr);
+  align-items: center;
+  gap: 8px 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--formal-line);
+  border-radius: 10px;
+  background: #fffaf4;
+}
+.app-shell .interview-progress-strip > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.app-shell .interview-progress-strip > div span,
+.app-shell .interview-progress-strip small { color: var(--formal-muted); font-size: 12px; }
+.app-shell .interview-progress-strip progress { width: 100%; height: 10px; accent-color: var(--formal-orange-deep); }
+.app-shell .interview-progress-strip small { grid-column: 1 / -1; }
+
+.app-shell .timed-audio-transcript {
+  display: grid;
+  gap: 11px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--formal-line);
+  border-radius: 10px;
+  background: #fffaf4;
+}
+.app-shell .timed-audio-transcript.compact { margin-top: 10px; padding: 12px; }
+.app-shell .timed-audio-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.app-shell .timed-audio-heading small { color: var(--formal-muted); }
+.app-shell .timed-cue-list { display: grid; gap: 7px; max-height: 290px; overflow: auto; }
+.app-shell .timed-cue-list button {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 11px;
+  color: var(--formal-ink);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .72);
+  text-align: left;
+  cursor: pointer;
+}
+.app-shell .timed-cue-list button:hover,
+.app-shell .timed-cue-list button:focus-visible { border-color: var(--formal-orange-deep); background: #fff; }
+.app-shell .timed-cue-list button > span { display: flex; align-items: center; gap: 5px; color: var(--formal-orange-deep); font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 700; }
+.app-shell .timed-cue-list p,
+.app-shell .timed-audio-fallback { margin: 0; line-height: 1.65; }
+.app-shell .timed-audio-fallback { color: var(--formal-muted); font-size: 13px; }
+.app-shell .story-source-status { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.app-shell .story-source-status span { display: inline-flex; align-items: center; gap: 5px; padding: 6px 9px; border-radius: 999px; color: #405848; background: #edf5ef; font-size: 12px; }
 
 .app-shell .archive-library { padding: clamp(24px, 3vw, 34px); }
 .app-shell .archive-toolbar {
@@ -882,6 +950,43 @@
   background: var(--formal-canvas);
   box-shadow: var(--formal-button-shadow);
 }
+
+.app-shell .memory-global-search {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 11px 14px;
+  color: var(--formal-muted);
+  border: 1.5px solid rgba(23, 23, 23, .36);
+  border-radius: 11px;
+  background: var(--formal-panel);
+}
+.app-shell .memory-global-search label { min-width: 0; }
+.app-shell .memory-global-search input { width: 100%; min-height: 42px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--formal-ink); font-size: 14px; }
+.app-shell .memory-global-search > span { white-space: nowrap; font-size: 12px; }
+.app-shell .memory-global-search > button { padding: 7px 10px; color: var(--formal-orange-deep); border: 0; background: transparent; cursor: pointer; }
+.app-shell .studio-paused-banner { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 13px; margin: 8px 0 18px; padding: 18px; color: #60491c; border: 1.5px solid #d6b972; border-radius: 10px; background: #fff8dc; }
+.app-shell .studio-paused-banner p { margin: 4px 0 0; line-height: 1.65; }
+.app-shell .studio-legacy-tools { border-top: 1px solid var(--formal-line); }
+.app-shell .studio-legacy-tools > summary { padding: 15px 2px; color: var(--formal-muted); cursor: pointer; font-weight: 650; }
+
+html[data-comfort-mode="on"] .app-shell { font-size: 18px; line-height: 1.75; }
+html[data-comfort-mode="on"] .app-shell .workspace-main { width: min(1160px, calc(100% - 54px)); }
+html[data-comfort-mode="on"] .app-shell p,
+html[data-comfort-mode="on"] .app-shell li,
+html[data-comfort-mode="on"] .app-shell label,
+html[data-comfort-mode="on"] .app-shell .field > span { font-size: 17px; line-height: 1.8; }
+html[data-comfort-mode="on"] .app-shell small { font-size: 14px; line-height: 1.55; }
+html[data-comfort-mode="on"] .app-shell button,
+html[data-comfort-mode="on"] .app-shell .button,
+html[data-comfort-mode="on"] .app-shell input,
+html[data-comfort-mode="on"] .app-shell select { min-height: 54px; font-size: 17px; }
+html[data-comfort-mode="on"] .app-shell textarea { font-size: 18px; line-height: 1.8; }
+html[data-comfort-mode="on"] .app-shell .primary-nav a { min-height: 58px; font-size: 17px; }
+html[data-comfort-mode="on"] .app-shell .archive-story-content p,
+html[data-comfort-mode="on"] .app-shell .memory-answer-text { font-size: 19px; }
 .app-shell .reminder-list { border-top-color: var(--formal-line); }
 .app-shell .reminder-list > div { border-bottom-color: var(--formal-line); }
 .app-shell .profile-health-lock {
@@ -1213,6 +1318,16 @@
 
 @media (max-width: 980px) {
   .app-shell { display: block; }
+  .app-shell .mobile-comfort-toggle {
+    position: fixed;
+    z-index: 35;
+    right: 14px;
+    bottom: 98px;
+    display: flex;
+    min-height: 48px;
+    padding: 8px 12px;
+    box-shadow: 0 5px 20px rgba(43, 26, 7, .16);
+  }
   .app-shell .workspace-main {
     width: min(100% - 30px, 880px);
     padding: 23px 0 132px;
@@ -1290,6 +1405,8 @@
   .app-shell .stage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .app-shell .interview-identity-grid { grid-template-columns: 1fr; }
   .app-shell .guided-interview-card { gap: 15px; }
+  .app-shell .interview-progress-strip { grid-template-columns: 1fr; }
+  .app-shell .interview-progress-strip small { grid-column: auto; }
   .app-shell .current-interview-question { grid-template-columns: auto minmax(0, 1fr); padding: 18px 15px; }
   .app-shell .current-interview-question .speak-button { grid-column: 1 / -1; width: 100%; justify-content: center; }
   .app-shell .guided-trigger { grid-template-columns: 1fr; }
@@ -1319,6 +1436,10 @@
     border-bottom: 1.5px solid rgba(23, 23, 23, .34);
   }
   .app-shell .archive-story-image img { min-height: 210px; max-height: 310px; }
+  .app-shell .timed-audio-heading { display: grid; }
+  .app-shell .timed-cue-list button { grid-template-columns: 58px minmax(0, 1fr); padding-inline: 8px; }
+  .app-shell .memory-global-search { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .app-shell .memory-global-search > button { grid-column: 2 / -1; justify-self: end; }
   .app-shell .memory-hub-main { width: calc(100% - 20px); }
   .app-shell .memory-hub-tabs { overflow-x: auto; grid-template-columns: repeat(6, minmax(108px, 1fr)); }
   .app-shell .memory-hub-tabs button { min-height: 48px; font-size: 12px; }

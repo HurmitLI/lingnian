@@ -62,7 +62,7 @@ export default function GenerationReviewWorkbench({
   const [trashProfileId, setTrashProfileId] = useState("");
   const [trashedRequests, setTrashedRequests] = useState<GenerativeMediaRequest[]>([]);
   const [generationType, setGenerationType] = useState("scene_video");
-  const [targetDuration, setTargetDuration] = useState(60);
+  const [targetDuration, setTargetDuration] = useState(30);
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9");
   const [planPreview, setPlanPreview] = useState<DocumentaryPlanPreview | null>(null);
   const [selectedStoryId, setSelectedStoryId] = useState(timeline[0]?.story.id ?? "");
@@ -292,7 +292,7 @@ export default function GenerationReviewWorkbench({
         <div>
           <span className="card-kicker">后台成片 · 完成后验收</span>
           <h3 id="generation-review-title">提交后可以离开，完成后再回来看片</h3>
-          <p>纪实故事影片会使用原声、档案照片、环境空镜和来源卡共同讲述，不会让一张照片占满全片。照片或视频由家用生成节点在后台制作。</p>
+          <p>网页提交后由家用生成节点自动制作并回传，不需要先在外部做好视频再上传。30秒稳定模式不生成眨眼、眼球、说话或转头，只使用固定画面和受控镜头运动。</p>
         </div>
         <span className="review-gate-badge"><FileVideo2 size={16} aria-hidden="true" />未验收不发布</span>
       </div>
@@ -302,9 +302,9 @@ export default function GenerationReviewWorkbench({
         <label className="field"><span>对应故事</span><select name="storyId" required value={selectedStory?.story.id ?? ""} onChange={(event) => setSelectedStoryId(event.target.value)}>{timeline.map((item) => <option key={item.story.id} value={item.story.id}>{item.story.title}</option>)}</select></label>
         {generationType === "scene_video" && (
           <div className="generation-film-spec" aria-label="影片制作规格">
-            <label className="field"><span>目标时长</span><select name="targetDurationSeconds" value={targetDuration} onChange={(event) => setTargetDuration(Number(event.target.value))}><option value="45">45 秒 · 精简故事</option><option value="60">60 秒 · 推荐</option><option value="90">90 秒 · 完整讲述</option></select></label>
+            <label className="field"><span>目标时长</span><select name="targetDurationSeconds" value={targetDuration} onChange={(event) => setTargetDuration(Number(event.target.value))}><option value="30">30 秒 · 稳定故事片</option><option value="45">45 秒 · 精简故事</option><option value="60">60 秒 · 完整故事</option><option value="90">90 秒 · 长篇讲述</option></select></label>
             <label className="field"><span>观看画幅</span><select name="aspectRatio" value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value as "16:9" | "9:16")}><option value="16:9">横屏 16:9 · 电脑电视</option><option value="9:16">竖屏 9:16 · 手机</option></select></label>
-            <p><strong>预计拆成 {targetDuration === 45 ? 6 : targetDuration === 90 ? 10 : 8} 个镜头，默认使用原声，不克隆声音。</strong>单张照片最多约占三分之一时长，其余镜头来自原文对应的环境、物件、时间与来源说明。</p>
+            <p><strong>预计拆成 {targetDuration <= 45 ? 6 : targetDuration === 90 ? 10 : 8} 个镜头，默认使用原声，不克隆声音。</strong>{targetDuration === 30 ? "人物照片保持原样，环境与物件画面只做缓慢推拉，不生成脸部动作。" : "单张照片最多约占三分之一时长，其余镜头来自原文对应的环境、物件、时间与来源说明。"}</p>
           </div>
         )}
         {generationType === "scene_video" && (
@@ -339,7 +339,7 @@ export default function GenerationReviewWorkbench({
             <p>{selectedCapability.unavailable_reason}</p>
           </aside>
         )}
-        <button className="button secondary" disabled={busyRequestId !== null || timeline.length === 0 || submissionBlocked}>{submissionBlocked ? `升级到 ${selectedCapability?.minimum_worker_version} 后可提交` : "登记成片验收任务"}</button>
+        <button className="button secondary" disabled={busyRequestId !== null || timeline.length === 0 || submissionBlocked}>{submissionBlocked ? `升级到 ${selectedCapability?.minimum_worker_version} 后可提交` : "提交给家庭节点自动生成"}</button>
       </form>
 
       <div className="generation-request-list">
@@ -354,6 +354,7 @@ export default function GenerationReviewWorkbench({
                 <span>{request.production_spec.aspect_ratio === "9:16" ? "手机竖屏" : "横屏"}</span>
                 <span>原声优先</span>
                 <span>单张照片不超过 35%</span>
+                {request.production_spec.visual_strategy === "stable_montage" && <span>脸部不生成运动</span>}
               </div>
             )}
 

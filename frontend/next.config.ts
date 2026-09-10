@@ -7,6 +7,10 @@ const phoneDevOrigins = (process.env.NIANNIAN_ALLOWED_DEV_ORIGINS ?? "")
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1", ...phoneDevOrigins],
+  // veFaaS 的运行目录不可写，直接输出原图可避免 Next.js 在运行时写图片缓存失败。
+  images: {
+    unoptimized: true,
+  },
   output: "standalone",
   reactStrictMode: true,
   async rewrites() {

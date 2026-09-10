@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./formal-workspace.css";
+import "./memory-design.css";
 
 export const metadata: Metadata = {
   title: {

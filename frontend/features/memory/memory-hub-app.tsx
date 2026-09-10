@@ -13,6 +13,7 @@ import {
   Mic2,
   NotebookTabs,
   Route,
+  Search,
   ShieldCheck,
   Sparkles,
   Users,
@@ -22,7 +23,9 @@ import { useRouter } from "next/navigation";
 
 import AppShell from "@/components/layout/app-shell";
 import GenerationReviewWorkbench from "@/features/memory/generation-review-workbench";
+import ShortScenePreview from "@/features/memory/short-scene-preview";
 import { api, apiDownload, mediaUrl } from "@/lib/api";
+import { matchesArchiveSearch } from "@/lib/memory/archive-search";
 import { IS_FORMAL_CLOUD } from "@/lib/runtime";
 import type {
   ArchiveAnswer,
@@ -91,6 +94,7 @@ export default function MemoryHubApp() {
   const [tab, setTab] = useState<HubTab>("ask");
   const [answer, setAnswer] = useState<ArchiveAnswer | null>(null);
   const [question, setQuestion] = useState("");
+  const [memoryQuery, setMemoryQuery] = useState("");
   const [activeStoryId, setActiveStoryId] = useState("");
   const [productionType, setProductionType] = useState<"photo_restore" | "portrait_video" | "scene_video">("scene_video");
   const [busy, setBusy] = useState(false);
@@ -99,20 +103,24 @@ export default function MemoryHubApp() {
   const [notice, setNotice] = useState("");
 
   const selectedProfile = profiles.find((item) => item.id === selectedProfileId) ?? null;
-  const activeStory = timeline.find((item) => item.story.id === activeStoryId) ?? timeline[0] ?? null;
-  const audioStories = useMemo(() => timeline.filter((item) => item.audio_url), [timeline]);
+  const visibleTimeline = useMemo(
+    () => timeline.filter((item) => matchesArchiveSearch(item, memoryQuery)),
+    [timeline, memoryQuery],
+  );
+  const activeStory = visibleTimeline.find((item) => item.story.id === activeStoryId) ?? visibleTimeline[0] ?? null;
+  const audioStories = useMemo(() => visibleTimeline.filter((item) => item.audio_url), [visibleTimeline]);
   const interviewQuestions = useMemo(
     () => recentSessions.filter((item) => item.life_stage === "家人提问" && !["ARCHIVED", "SKIPPED"].includes(item.status)),
     [recentSessions],
   );
   const themeAlbums = useMemo(() => {
     const groups = new Map<string, TimelineItem[]>();
-    for (const item of timeline.filter((value) => value.image_url)) {
+    for (const item of visibleTimeline.filter((value) => value.image_url)) {
       const tags = item.detail?.theme_tags.length ? item.detail.theme_tags : [item.life_stage];
       for (const tag of tags) groups.set(tag, [...(groups.get(tag) ?? []), item]);
     }
     return Array.from(groups.entries()).map(([name, stories]) => ({ name, stories }));
-  }, [timeline]);
+  }, [visibleTimeline]);
 
   const showError = useCallback((value: unknown) => {
     setNotice("");
@@ -407,7 +415,7 @@ export default function MemoryHubApp() {
           subject_consent: form.get("subjectConsent") === "on",
           rights_confirmed: form.get("rightsConfirmed") === "on",
           no_impersonation: form.get("noImpersonation") === "on",
-          target_duration_seconds: Number(form.get("targetDurationSeconds") || 60),
+          target_duration_seconds: Number(form.get("targetDurationSeconds") || 30),
           aspect_ratio: form.get("aspectRatio") || "16:9",
         }),
         timeoutMs: 10 * 60 * 1000,
@@ -427,7 +435,7 @@ export default function MemoryHubApp() {
         <header className="workspace-header memory-hub-header">
           <div className="workspace-heading">
             <p className="eyebrow">家庭记忆 · 持续生长</p>
-            <h1>让后来的人，不只看到一份文件</h1>
+            <h1>让记忆，在家人之间生长</h1>
             <p className="subtitle">可以听见原声、追溯出处、补充不同记忆，也可以继续提出下一次要问的问题。</p>
           </div>
           <div className="workspace-controls">
@@ -450,6 +458,18 @@ export default function MemoryHubApp() {
             return <button key={item.key} type="button" aria-current={tab === item.key ? "page" : undefined} onClick={() => setTab(item.key)}><Icon size={18} aria-hidden="true" /><span>{item.label}</span></button>;
           })}
         </nav>
+
+        {!loading && selectedProfile && timeline.length > 0 && tab !== "studio" && (
+          <div className="memory-global-search" role="search">
+            <Search size={18} aria-hidden="true" />
+            <label>
+              <span className="sr-only">搜索全部家庭记忆</span>
+              <input type="search" value={memoryQuery} onChange={(event) => setMemoryQuery(event.target.value)} placeholder="搜索人物、地点、年份、标签、原故事或家人补充" />
+            </label>
+            <span>{visibleTimeline.length} 篇</span>
+            {memoryQuery && <button type="button" onClick={() => setMemoryQuery("")}>清除</button>}
+          </div>
+        )}
 
         {loading && <section className="card memory-hub-loading">正在读取家庭记忆…</section>}
         {!loading && !selectedProfile && <section className="card memory-hub-empty"><h2>先建立一位讲述者档案</h2><Link className="button primary button-link" href="/family">前往家庭管理</Link></section>}
@@ -499,8 +519,8 @@ export default function MemoryHubApp() {
         {!loading && selectedProfile && tab === "journey" && (
           <section className="card life-journey">
             <div className="section-heading"><span>03</span><div><h2>人生轨迹</h2><p>把年份、地点、人物和故事放回一生的脉络里；不确定的信息继续保留为待核实。</p></div></div>
-            {timeline.length === 0 ? <p className="empty">还没有已确认故事。</p> : <div className="life-route">
-              {[...timeline].sort((a, b) => (a.detail?.event_year ?? 9999) - (b.detail?.event_year ?? 9999)).map((item) => <article key={item.story.id}>
+            {visibleTimeline.length === 0 ? <p className="empty">没有找到符合条件的已确认故事。</p> : <div className="life-route">
+              {[...visibleTimeline].sort((a, b) => (a.detail?.event_year ?? 9999) - (b.detail?.event_year ?? 9999)).map((item) => <article key={item.story.id}>
                 <div className="life-route-marker"><span>{displayYear(item)}</span></div>
                 <div className="life-route-story"><div className="story-route-meta"><span>{item.life_stage}</span>{item.detail?.place_name && <span><MapPin size={14} aria-hidden="true" />{item.detail.place_name}</span>}</div><h3>{item.story.title}</h3><p>{item.detail?.summary || item.story.body}</p><div className="tags">{item.detail?.theme_tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div>
               </article>)}
@@ -513,7 +533,7 @@ export default function MemoryHubApp() {
           <section className="memory-family-layout">
             <div className="card memory-story-picker">
               <div className="section-heading"><span>04</span><div><h2>选择一篇故事</h2><p>补充内容与原故事并列保存，不会静默改写老人的原话。</p></div></div>
-              <div className="memory-story-list">{timeline.map((item) => <button type="button" key={item.story.id} aria-current={activeStory?.story.id === item.story.id ? "true" : undefined} onClick={() => setActiveStoryId(item.story.id)}><strong>{item.story.title}</strong><small>{item.life_stage} · {item.contributions.length} 条补充</small></button>)}</div>
+              <div className="memory-story-list">{visibleTimeline.map((item) => <button type="button" key={item.story.id} aria-current={activeStory?.story.id === item.story.id ? "true" : undefined} onClick={() => setActiveStoryId(item.story.id)}><strong>{item.story.title}</strong><small>{item.life_stage} · {item.contributions.length} 条补充</small></button>)}</div>
             </div>
             {activeStory && <div className="memory-family-editor">
               <section className="card"><span className="card-kicker">原故事</span><h2>{activeStory.story.title}</h2><p className="story-body">{activeStory.story.body}</p>{activeStory.audio_url && <audio controls preload="metadata" src={mediaUrl(activeStory.audio_url) ?? undefined} />}</section>
@@ -533,11 +553,16 @@ export default function MemoryHubApp() {
 
         {!loading && selectedProfile && tab === "studio" && (
           <section className="card generation-studio">
-            <div className="section-heading"><span>06</span><div><h2>影像与声音实验室</h2><p>生成式能力独立于家庭档案；未选择服务、预算和真人授权前，不会上传任何素材。</p></div></div>
-            <form className="production-package-form" onSubmit={downloadProductionPackage}><div><span className="card-kicker">生成前准备 · 不自动提交</span><h3>先把修复或生成需要的材料整理好</h3><p>下载包内含原始素材、故事原文、素材校验值，以及待人工复核的修复计划或纪实分镜，不会直接调用生成服务。</p></div><label className="field"><span>制作方向</span><select name="generationType" value={productionType} onChange={(event) => setProductionType(event.target.value as typeof productionType)}><option value="scene_video">纪实故事影片制作包</option><option value="photo_restore">老照片修复制作包</option><option value="portrait_video">人物讲述视频制作包</option></select></label><label className="field"><span>选择故事</span><select name="storyId" required>{timeline.map((item) => <option key={item.story.id} value={item.story.id}>{item.story.title}{item.image_url ? " · 有照片" : " · 无照片"}</option>)}</select></label>{productionType === "scene_video" && <><label className="field"><span>目标时长</span><select name="targetDurationSeconds" defaultValue="60"><option value="45">45 秒</option><option value="60">60 秒</option><option value="90">90 秒</option></select></label><label className="field"><span>观看画幅</span><select name="aspectRatio" defaultValue="16:9"><option value="16:9">横屏 16:9</option><option value="9:16">竖屏 9:16</option></select></label></>}<label className="field"><span>确认人</span><input name="actorLabel" required defaultValue="家庭管理员" /></label><fieldset><legend>本次材料整理确认</legend>{productionType === "photo_restore" ? <label><input type="checkbox" name="subjectConsent" />如照片人物仍健在，已经取得其修复和家庭展示同意</label> : <label><input type="checkbox" name="subjectConsent" required />讲述者本人同意将这段故事用于家庭影像演绎</label>}<label><input type="checkbox" name="rightsConfirmed" required />我确认有权使用所选原声与照片</label><label><input type="checkbox" name="noImpersonation" required />不会用于冒充本人或误导公众</label></fieldset><button className="button primary" disabled={busy || timeline.length === 0}><Download size={17} aria-hidden="true" />下载制作包</button><small>纪实影片默认使用原声且不克隆声音；单张照片不会占满全片。这里只整理文件，不代表已经允许上传第三方。</small></form>
+            <div className="section-heading"><span>06</span><div><h2>影像实验室（暂停打磨）</h2><p>当前先把真实采访、原声、故事与家人共建做好。已有任务和结果仍然保留。</p></div></div>
+            <div className="studio-paused-banner"><Sparkles size={22} aria-hidden="true" /><div><strong>人物视频暂不作为核心功能</strong><p>现阶段的动作真实性和人物一致性还没有达到正式产品标准，因此不会在这里引导家人继续生成。</p></div></div>
+            <details className="studio-legacy-tools">
+              <summary>查看已有实验任务和技术入口</summary>
+            <ShortScenePreview key={selectedProfile.id} timeline={timeline} />
+            <form className="production-package-form" onSubmit={downloadProductionPackage}><div><span className="card-kicker">生成前准备 · 不自动提交</span><h3>先把修复或生成需要的材料整理好</h3><p>下载包内含原始素材、故事原文、素材校验值，以及待人工复核的修复计划或纪实分镜，不会直接调用生成服务。</p></div><label className="field"><span>制作方向</span><select name="generationType" value={productionType} onChange={(event) => setProductionType(event.target.value as typeof productionType)}><option value="scene_video">纪实故事影片制作包</option><option value="photo_restore">老照片修复制作包</option><option value="portrait_video">人物讲述视频制作包</option></select></label><label className="field"><span>选择故事</span><select name="storyId" required>{timeline.map((item) => <option key={item.story.id} value={item.story.id}>{item.story.title}{item.image_url ? " · 有照片" : " · 无照片"}</option>)}</select></label>{productionType === "scene_video" && <><label className="field"><span>目标时长</span><select name="targetDurationSeconds" defaultValue="30"><option value="30">30 秒 · 稳定故事片</option><option value="45">45 秒</option><option value="60">60 秒</option><option value="90">90 秒</option></select></label><label className="field"><span>观看画幅</span><select name="aspectRatio" defaultValue="16:9"><option value="16:9">横屏 16:9</option><option value="9:16">竖屏 9:16</option></select></label></>}<label className="field"><span>确认人</span><input name="actorLabel" required defaultValue="家庭管理员" /></label><fieldset><legend>本次材料整理确认</legend>{productionType === "photo_restore" ? <label><input type="checkbox" name="subjectConsent" />如照片人物仍健在，已经取得其修复和家庭展示同意</label> : <label><input type="checkbox" name="subjectConsent" required />讲述者本人同意将这段故事用于家庭影像演绎</label>}<label><input type="checkbox" name="rightsConfirmed" required />我确认有权使用所选原声与照片</label><label><input type="checkbox" name="noImpersonation" required />不会用于冒充本人或误导公众</label></fieldset><button className="button primary" disabled={busy || timeline.length === 0}><Download size={17} aria-hidden="true" />下载制作包</button><small>纪实影片默认使用原声且不克隆声音；30秒稳定模式不会生成脸部动作。这里只整理文件，不代表已经允许上传第三方。</small></form>
             <GenerationReviewWorkbench profileId={selectedProfile.id} timeline={timeline} requests={generationRequests} capabilities={capabilities} onRequestsChange={setGenerationRequests} onNotice={(message) => { setError(""); setNotice(message); }} onError={showError} />
             <div className="generation-capabilities">{capabilities.map((item) => <article key={item.generation_type}><div><span className="generation-status">{item.submission_blocked ? "节点需升级" : item.available ? "家用节点在线" : item.provider_key === "home_comfyui" ? "可以先排队" : "尚未启用"}</span><h3>{item.label}</h3></div><p>{item.unavailable_reason}</p><dl><div><dt>真人授权</dt><dd>{item.requires_subject_consent ? "必须" : "按素材判断"}</dd></div><div><dt>素材发送</dt><dd>{item.requires_external_upload ? "每项任务单独确认" : "不需要"}</dd></div><div><dt>平台费用</dt><dd>{item.estimated_cost_cents === null ? "选择供应商后显示" : `¥${(item.estimated_cost_cents / 100).toFixed(2)}`}</dd></div></dl><button className="button secondary" disabled>{item.submission_blocked ? `升级到 ${item.minimum_worker_version} 后再提交` : item.available ? "在下方登记任务" : item.provider_key === "home_comfyui" ? "节点上线后自动执行" : "等待配置"}</button></article>)}</div>
             <div className="generation-current"><NotebookTabs size={23} aria-hidden="true" /><div><strong>现在仍可使用零费用的快速影像导出</strong><p>它只把原始录音、照片和文字合成 MP4，不是人物视频，已经从主导航降级为辅助工具。</p></div><Link className="button quiet button-link" href={`/keepsake?elder=${selectedProfile.id}`}>打开快速影像导出</Link></div>
+            </details>
           </section>
         )}
       </main>

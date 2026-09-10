@@ -134,6 +134,107 @@ const timelineItem = {
 
 const unexpectedBrowserErrors = new WeakMap<Page, string[]>();
 
+async function openStudioTools(page: Page) {
+  await page.getByRole("button", { name: "影像实验室" }).click();
+  await expect(page.getByText("人物视频暂不作为核心功能")).toBeVisible();
+  await page.getByText("查看已有实验任务和技术入口").click();
+}
+
+test("10秒片段预览展示真实时间并明确未生成", async ({ page }, testInfo) => {
+  await page.route("**/short-scene-preview", async (route) => {
+    await route.fulfill({ json: { status: "candidates_ready", generation_ready: false, candidates: [
+      { id: "short-test", text: "我站在车站等车。", start_frame: 176000, end_frame: 320000, sample_rate: 16000, duration_seconds: 9 },
+    ] } });
+  });
+  await page.goto("/memory");
+  await openStudioTools(page);
+  const panel = page.getByRole("region", { name: "10秒回忆片段" });
+  await panel.getByRole("button", { name: "查看约10秒原声候选" }).click();
+  await expect(panel.getByText("我站在车站等车。")).toBeVisible();
+  await expect(panel.getByText(/原录音 11.0～20.0 秒/)).toBeVisible();
+  await expect(panel.getByText(/不代表影片已经生成/)).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+  await panel.screenshot({ path: testInfo.outputPath("short-scene-preview.png") });
+});
+
+test("10秒自动选景授权后保存并可重新查看", async ({ page }, testInfo) => {
+  let calls = 0;
+  let saved: unknown[] = [];
+  const hash = "a".repeat(64);
+  await page.route("**/short-scene-preview", (route) => route.fulfill({ json: {
+    status: "candidates_ready", generation_ready: false, candidates: [
+      { id: "candidate", text: "我站在车站等车。", start_frame: 16000, end_frame: 160000, sample_rate: 16000, duration_seconds: 9 },
+    ],
+  } }));
+  await page.route("**/short-scene-selection-input", (route) => route.fulfill({ json: {
+    status: "awaiting_purpose_specific_consent", input_sha256: hash,
+    payload: { answers: [{ question: "您讲的是外公年轻时等车吗？", text: "我站在车站等车。后来才到无锡。" }],
+      interview_context: { subject_label: "外公", narrator_label: "妈妈", narrator_is_subject: false } },
+  } }));
+  await page.route("**/short-scene-plans", async (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: saved });
+    calls += 1;
+    expect(route.request().postDataJSON()).toMatchObject({ authorize_text_send: true, input_sha256: hash });
+    const plan = { id: "plan", input_sha256: hash, status: "awaiting_scene_context_review", result: {
+      candidate: { text: "我站在车站等车。", duration_seconds: 9 }, selection: { reason: "单一等车场景", scene: {
+        context_summary: "前往无锡之前，不是离开无锡。", opening_state: "人物已站在站台", action: "自然站立等待",
+        facts: [{ field: "era", status: "unknown", value: null }], illustrative_details: ["长相为示意设计"],
+      } },
+    } };
+    saved = [plan];
+    await route.fulfill({ json: plan });
+  });
+  await page.goto("/memory");
+  await openStudioTools(page);
+  const panel = page.getByRole("region", { name: "10秒回忆片段" });
+  await panel.getByRole("button", { name: "查看约10秒原声候选" }).click();
+  await panel.getByRole("button", { name: "准备单场景方案" }).click();
+  const submit = panel.getByRole("button", { name: "同意并选择一个场景" });
+  await expect(submit).toBeDisabled();
+  expect(calls).toBe(0);
+  await panel.getByText("查看本次发送的采访文字").click();
+  await expect(panel.getByText(/记录对象：外公；讲述者：妈妈/)).toBeVisible();
+  await expect(panel.getByText(/提问（不是事实依据）/)).toBeVisible();
+  await panel.getByRole("region", { name: "单场景方案" }).screenshot({ path: testInfo.outputPath("short-scene-context.png") });
+  await panel.getByRole("checkbox").check();
+  await submit.click();
+  await expect(panel.getByText("待核对的单场景方案 · 尚未生成影片")).toBeVisible();
+  await panel.getByRole("button", { name: "查看选景结果" }).click();
+  await expect(panel.getByText("原文未说明，不能当成已知事实")).toBeVisible();
+  expect(calls).toBe(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+  await panel.getByRole("region", { name: "单场景方案" }).screenshot({ path: testInfo.outputPath("short-scene-selection.png") });
+});
+
+test("十秒任务查看取消和候选回看不冒充生成完成", async ({ page }, testInfo) => {
+  let cancellations = 0;
+  const pending = { id: "short-job", plan_id: "plan", status: "queued", progress_percent: 0, result_asset_id: null };
+  await page.route("**/short-scene-jobs", (route) => route.fulfill({ json: [pending,
+    { ...pending, id: "candidate-job", status: "awaiting_full_playback_review", result_asset_id: "candidate-asset" },
+  ] }));
+  await page.route("**/short-scene-jobs/short-job/cancel", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    cancellations += 1;
+    pending.status = "cancelled";
+    await route.fulfill({ json: pending });
+  });
+  await page.goto("/memory");
+  await openStudioTools(page);
+  const panel = page.getByRole("region", { name: "十秒制作任务" });
+  await panel.getByRole("button", { name: "查看十秒制作任务" }).click();
+  await expect(panel.getByText("等待生成节点领取 · 尚未开始生成")).toBeVisible();
+  const candidate = panel.getByLabel("待验收十秒候选 2");
+  await expect(candidate).toHaveAttribute("preload", "none");
+  await expect(panel.getByText(/不是合格成片/)).toBeVisible();
+  await panel.getByRole("button", { name: "取消本次制作" }).click();
+  expect(cancellations).toBe(0);
+  await panel.getByRole("button", { name: "确认取消本次制作" }).click();
+  await expect(panel.getByText("已取消任务授权")).toBeVisible();
+  expect(cancellations).toBe(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+  await panel.screenshot({ path: testInfo.outputPath("short-scene-jobs.png") });
+});
+
 async function mockLocalApi(page: Page) {
   let guidedTurns: Array<Record<string, unknown>> = [];
   await page.route("**/api/v1/**", async (route) => {
@@ -384,10 +485,25 @@ test("回忆档案可以搜索并清除筛选", async ({ page }) => {
   await page.goto("/archive");
   await expect(page.getByRole("heading", { name: timelineItem.story.title })).toBeVisible();
   const search = page.getByRole("searchbox", { name: "搜索故事" });
+  await search.fill("测试女儿");
+  await expect(page.getByRole("heading", { name: timelineItem.story.title })).toBeVisible();
+  await search.fill("车票");
+  await expect(page.getByRole("heading", { name: timelineItem.story.title })).toBeVisible();
   await search.fill("找不到的内容");
   await expect(page.getByRole("heading", { name: "没有找到符合条件的故事" })).toBeVisible();
   await page.getByRole("button", { name: "清除筛选" }).click();
   await expect(page.getByRole("heading", { name: timelineItem.story.title })).toBeVisible();
+});
+
+test("长辈大字模式开启后刷新仍然保留", async ({ page, isMobile }) => {
+  await page.goto("/archive");
+  const toggle = page.locator(isMobile ? ".mobile-comfort-toggle" : ".desktop-comfort-toggle");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("html")).toHaveAttribute("data-comfort-mode", "on");
+  await page.reload();
+  await expect(page.locator(isMobile ? ".mobile-comfort-toggle" : ".desktop-comfort-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("html")).toHaveAttribute("data-comfort-mode", "on");
 });
 
 test("回忆档案能找回未完成记录并展开完整采访", async ({ page }) => {
@@ -400,9 +516,9 @@ test("回忆档案能找回未完成记录并展开完整采访", async ({ page 
   await expect(page.getByText("为这篇故事补一张照片（可选）")).toBeVisible();
 });
 
-test("家族记忆可以溯源回答并浏览人生轨迹", async ({ page }) => {
+test("家族记忆可以溯源回答、浏览人生轨迹并明确影像实验暂停", async ({ page }) => {
   await page.goto("/memory");
-  await expect(page.getByRole("heading", { level: 1, name: "让后来的人，不只看到一份文件" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "让记忆，在家人之间生长" })).toBeVisible();
   await expect(page.getByRole("link", { name: /年轻时第一次离开家乡/ })).toBeVisible();
   await page.getByLabel("你想知道什么？").fill("小时候常去哪里？");
   await page.getByRole("button", { name: "从家庭档案里找答案" }).click();
@@ -415,16 +531,9 @@ test("家族记忆可以溯源回答并浏览人生轨迹", async ({ page }) => 
   await page.getByRole("button", { name: "确认这条补充" }).click();
   await expect(page.getByText("家人核对状态已经保存。")).toBeVisible();
   await page.getByRole("button", { name: "影像实验室" }).click();
-  await expect(page.getByRole("heading", { name: "先把修复或生成需要的材料整理好" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "下载制作包" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "提交后可以离开，完成后再回来看片" })).toBeVisible();
-  await expect(page.getByLabel("本次成片内容预览")).toContainText(timelineItem.story.title);
-  await expect(page.getByLabel("影片制作规格")).toContainText("默认使用原声，不克隆声音");
-  await expect(page.getByLabel("影片制作规格").getByLabel("目标时长")).toHaveValue("60");
-  await expect(page.getByLabel("纪实影片分镜预览")).toContainText("6 个镜头 · 共 60 秒");
-  await expect(page.getByLabel("纪实影片分镜预览")).toContainText("聆年档案来源说明");
-  await expect(page.getByText("未验收不发布")).toBeVisible();
-  await expect(page.getByRole("button", { name: "登记成片验收任务" })).toBeVisible();
+  await expect(page.getByText("人物视频暂不作为核心功能")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "先把修复或生成需要的材料整理好" })).toBeHidden();
+  await expect(page.getByText("查看已有实验任务和技术入口")).toBeVisible();
   const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(hasOverflow).toBe(false);
   const accessibility = await new AxeBuilder({ page }).analyze();
@@ -436,10 +545,10 @@ test("平板和宽屏断点保持可用", async ({ page, isMobile }) => {
   for (const width of [768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/family");
-    await expect(page.getByRole("heading", { level: 1, name: "把人物、意愿和安全设置好" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "一家人的记忆，从这里开始" })).toBeVisible();
     const layout = await page.evaluate(() => ({
       overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-      minButtonHeight: Math.min(...Array.from(document.querySelectorAll("button")).map((button) => button.getBoundingClientRect().height)),
+      minButtonHeight: Math.min(...Array.from(document.querySelectorAll("button")).map((button) => button.getBoundingClientRect().height).filter((height) => height > 0)),
     }));
     expect(layout.overflow).toBe(false);
     expect(layout.minButtonHeight).toBeGreaterThanOrEqual(48);
@@ -473,4 +582,48 @@ test("手机家庭管理去掉重复选择，话题设置默认收起", async ({
   await expect(page.getByLabel("当前人物档案")).toHaveCount(1);
   await expect(page.getByText("查看或修改 7 个话题意愿", { exact: true })).toBeVisible();
   await expect(page.getByText("童年", { exact: true })).toBeHidden();
+});
+
+test("老人模式简化操作且切回后恢复完整入口", async ({ page, isMobile }) => {
+  await page.goto("/");
+  const toggle = page.locator(isMobile ? ".mobile-comfort-toggle" : ".desktop-comfort-toggle");
+  await toggle.click();
+  await expect(page.getByRole("link", { name: "开始聊聊", exact: true })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "家庭回忆进度" })).toBeHidden();
+  const navigation = page.getByRole("navigation", { name: isMobile ? "手机主导航" : "桌面主导航" });
+  await expect(navigation.getByRole("link")).toHaveCount(3);
+  await page.getByRole("link", { name: "开始聊聊", exact: true }).click();
+  await expect(page.getByRole("button", { name: "就聊这个", exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: /今天谁来讲/ })).toBeHidden();
+  await page.locator(".record-identity-settings > summary").click();
+  await expect(page.getByRole("combobox", { name: /今天谁来讲/ })).toBeVisible();
+  await page.locator(".record-identity-settings > summary").click();
+  await expect(page.getByRole("list", { name: "记录回忆的四个步骤" })).toHaveCount(0);
+  const dimensions = await page.getByRole("button", { name: "就聊这个", exact: true }).evaluate((el) => ({ height: el.getBoundingClientRect().height, font: parseFloat(getComputedStyle(el).fontSize) }));
+  expect(dimensions.height).toBeGreaterThanOrEqual(60);
+  expect(dimensions.font).toBeGreaterThanOrEqual(20);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
+  expect(accessibility.violations).toEqual([]);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "就聊这个", exact: true })).toBeVisible();
+  await toggle.click();
+  await expect(navigation.getByRole("link", { name: "家庭管理" })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: /今天谁来讲/ })).toBeVisible();
+  await expect(page.getByRole("list", { name: "记录回忆的四个步骤" })).toBeVisible();
+});
+
+test("老人模式录音会话保留原问题并收起管理操作", async ({ page, isMobile }) => {
+  await page.goto(`/record?elder=${profile.id}&session=${guidedSession.id}`);
+  const toggle = page.locator(isMobile ? ".mobile-comfort-toggle" : ".desktop-comfort-toggle");
+  await toggle.click();
+  await expect(page.getByText(guidedSession.question_text, { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "开始听题并录音", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "手动录一段", exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: "放弃整次采访并清理临时内容" })).toBeHidden();
+  await page.locator(".manual-recording-options > summary").click();
+  await expect(page.getByRole("button", { name: "手动录一段", exact: true })).toBeVisible();
+  await toggle.click();
+  await expect(page.getByRole("button", { name: "开始连续采访", exact: true })).toBeVisible();
+  await expect(page.getByText(guidedSession.question_text, { exact: true })).toBeVisible();
 });

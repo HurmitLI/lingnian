@@ -397,6 +397,7 @@ export type GenerativeMediaRequest = {
   max_cost_cents: number;
   production_spec: {
     target_duration_seconds?: number;
+    visual_strategy?: "stable_montage" | "generated_motion";
     aspect_ratio?: "16:9" | "9:16";
     narrative_style?: string;
     voice_strategy?: string;

@@ -1,0 +1,44 @@
+import { beforeEach, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import Reference from "@/features/memory/short-scene-reference";
+import Review from "@/features/memory/short-scene-reference-review";
+import { api } from "@/lib/api";
+vi.mock("@/lib/api", () => ({ api: vi.fn(), mediaUrl: (p: string) => p }));
+const props = { sessionId: "s", planId: "p", inputSha256: "a".repeat(64), referenceMode: "illustrative" as const };
+beforeEach(() => { cleanup(); vi.mocked(api).mockReset(); localStorage.clear(); Object.defineProperty(navigator, "locks", { configurable: true, value: { request: async (_key: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}) } }); });
+it("无照片只发送文字依据，丢失响应后查询原任务而非重投", async () => {
+  vi.mocked(api).mockResolvedValueOnce([]).mockResolvedValueOnce({ brief_sha256: "b".repeat(64), brief: { scene: { opening_state: "厨房坐着", action: "望向窗外" } } }).mockRejectedValueOnce(new Error("连接中断")).mockResolvedValueOnce([{ id: "ref", plan_id: "p", status: "queued" }]);
+  render(<Reference {...props} />);
+  fireEvent.click(screen.getByText("查看或准备参考画面"));
+  fireEvent.click(await screen.findByRole("checkbox"));
+  fireEvent.click(screen.getByText("准备参考方案"));
+  fireEvent.click(await screen.findByText("生成一张参考画面"));
+  expect(await screen.findByRole("alert")).toHaveTextContent("不要再次生成");
+  expect(localStorage.getItem("lingnian-reference-attempt:s:p")).toBeTruthy();
+  const form = vi.mocked(api).mock.calls[2][1]?.body as FormData;
+  expect(form.has("photo")).toBe(false);
+  fireEvent.click(screen.getByText("刷新参考任务"));
+  expect(await screen.findByText(/参考画面已排队/)).toBeVisible();
+  expect(vi.mocked(api).mock.calls.filter(c => c[0].endsWith("/reference-jobs") && c[1]?.method === "POST")).toHaveLength(1);
+});
+const review = { review_input_sha256: "r".repeat(64), source_current: true, required_checks: ["complete_sentence", "face_and_eyes"], reference_image_url: "/image", source_audio_url: "/audio", source_photo_url: null, review_decision: null, candidate: { text: "虚构回忆", start_frame: 0, end_frame: 144000, sample_rate: 16000 }, scene: { context_summary: "测试", opening_state: "厨房", action: "望向窗外" }, answers: [] };
+it("集中确认先保存素材核对，再复用参考资产提交视频", async () => {
+  vi.mocked(api).mockResolvedValueOnce(review).mockResolvedValueOnce([]).mockResolvedValueOnce({ decision: "accepted" }).mockResolvedValueOnce({ id: "video" });
+  render(<Review {...props} referenceJobId="ref" />);
+  fireEvent.click(screen.getByText("查看原声与参考画面"));
+  const checkbox = await screen.findByRole("checkbox");
+  expect(screen.getByText("确认画面并制作10秒视频")).toBeDisabled();
+  fireEvent.click(checkbox); fireEvent.click(screen.getByText("确认画面并制作10秒视频"));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("十秒视频任务已保存"));
+  expect(vi.mocked(api).mock.calls[2][0]).toBe("/api/v1/short-reference-jobs/ref/review");
+  expect(vi.mocked(api).mock.calls[3][0]).toBe("/api/v1/short-reference-jobs/ref/video-job");
+  expect(vi.mocked(api).mock.calls[3][1]?.body).not.toBeInstanceOf(FormData);
+});
+it("原文已变化时无法确认或制作", async () => {
+  vi.mocked(api).mockResolvedValueOnce({ ...review, source_current: false }).mockResolvedValueOnce([]);
+  render(<Review {...props} referenceJobId="ref" />);
+  fireEvent.click(screen.getByText("查看原声与参考画面"));
+  expect(await screen.findByRole("alert")).toHaveTextContent("旧确认已失效");
+  expect(screen.getByRole("checkbox")).toBeDisabled();
+  expect(screen.getByText("确认画面并制作10秒视频")).toBeDisabled();
+});
