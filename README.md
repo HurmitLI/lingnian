@@ -70,7 +70,7 @@ uv sync --directory backend --extra dev --extra asr
 - 本地网页：[127.0.0.1:3011](http://127.0.0.1:3011/)
 - 本地接口文档：[127.0.0.1:8011/docs](http://127.0.0.1:8011/docs)
 
-前端对接已有后端时，参考 [生产配置示例](frontend/.env.production.example) 设置 `NIANNIAN_BACKEND_URL` 与登录模式。部署方法见 [产品上线部署手册](产品上线部署手册.md)。
+前端对接已有后端时，参考 [生产配置示例](frontend/.env.production.example) 设置 `NIANNIAN_BACKEND_URL` 与登录模式。部署方法见 [产品上线部署手册](docs/开发文档/产品上线部署手册.md)。
 
 ## 开发检查
 
