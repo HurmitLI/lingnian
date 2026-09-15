@@ -9,6 +9,7 @@ import re
 from typing import Protocol
 
 from app.core.config import get_settings
+from app.services.asr.timing import source_timing
 
 
 @dataclass
@@ -48,7 +49,7 @@ class FunASRProvider:
         self.model = AutoModel(model=model_id, disable_update=True)
 
     def transcribe(self, audio_path: Path) -> ASRResult:
-        result = self.model.generate(input=str(audio_path))
+        result = self.model.generate(input=str(audio_path), pred_timestamp=True)
         if not result:
             raise RuntimeError("本地 ASR 没有返回转写结果。")
         first = result[0] if isinstance(result, list) else result
@@ -60,7 +61,8 @@ class FunASRProvider:
             text=text,
             provider="funasr",
             model=self.model_id,
-            metadata={"segments": len(result) if isinstance(result, list) else 1},
+            metadata={"segments": len(result) if isinstance(result, list) else 1,
+                      "timing": source_timing(audio_path, first, "funasr")},
         )
 
 
@@ -116,6 +118,7 @@ class DashScopeASRProvider:
             metadata={
                 "sentence_count": len(sentences) if isinstance(sentences, list) else 1,
                 "request_id": request_id,
+                "timing": source_timing(audio_path, sentences, "dashscope"),
             },
         )
 

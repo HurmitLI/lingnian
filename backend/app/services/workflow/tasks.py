@@ -127,7 +127,6 @@ def process_transcription(task_id: str, secret_store: SecretStore | None = None)
                 .where(
                     MediaAsset.session_id == session.id,
                     MediaAsset.kind == "audio_original",
-                    MediaAsset.is_original.is_(True),
                     MediaAsset.status == "ready",
                 )
                 .order_by(MediaAsset.created_at.desc())

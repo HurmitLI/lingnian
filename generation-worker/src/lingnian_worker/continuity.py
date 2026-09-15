@@ -79,6 +79,10 @@ def validate_plan(plan: dict, reference: Path) -> None:
                 raise PackageError("精简渲染模式必须包含每一段的连续动作。")
             if len((plan["render_bible"] + " " + scene["render_action"]).split()) > 300:
                 raise PackageError("渲染描述过长，请在保留整片事实和当前动作后精简。")
+    if "render_negative" in plan:
+        negative = plan["render_negative"]
+        if not isinstance(negative, str) or not negative.strip() or len(negative) > 2000:
+            raise PackageError("镜头反向约束须为非空文本，且不能超过 2000 字符。")
 
 
 def segment_prompt(plan: dict, segment: dict) -> str:
@@ -89,7 +93,8 @@ def segment_prompt(plan: dict, segment: dict) -> str:
             "Continue the input image as one continuous live-action shot.",
             segment["render_action"],
             plan["render_bible"],
-            "Keep the exact input face, bag, clothing and color response. Fixed exposure and white balance throughout. No cuts or style changes.",
+            "Preserve the identities, clothing and objects actually visible in this scene's input image. "
+            "Do not introduce objects from other scenes. Fixed exposure and white balance throughout. No cuts or style changes.",
         ])
     bible = plan["film_bible"]
     return "\n".join([
@@ -98,7 +103,7 @@ def segment_prompt(plan: dict, segment: dict) -> str:
         f"本段动作：{segment['action']}",
         f"摄影：{segment['camera']}",
         f"结束状态：{segment['after']}",
-        "脸、发型、衣着、包的结构与颜色、列车和光线延续输入画面。动作缓慢自然，不换演员，不突然换场。",
+        "人物身份、发型、衣着及本场输入图中实际可见的物体、环境和光线延续输入画面。不要引入其他场景的物品。动作缓慢自然，不换演员，不突然换场。",
         *[f"{key}：{value}" for key, value in bible.items()],
         f"完整故事：{plan['source_text']}",
     ])
@@ -116,7 +121,7 @@ def build_wan_graph(plan: dict, segment: dict, *, image_name: str, prefix: str) 
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": MODEL_FILES["vae"]}},
         "4": {"class_type": "LoadImage", "inputs": {"image": image_name}},
         "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": segment_prompt(plan, segment)}},
-        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": "换脸，年龄突变，服装变化，包的形状颜色变化，皮质肩带，刺绣图案，黑白，蒸汽机车，现代高铁，突然切镜，跳跃位移，肢体畸形，彩色噪纹，背景闪烁，字幕，水印"}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": "换脸，年龄突变，服装变化，物体凭空出现，物体形状颜色变化，突然切镜，跳跃位移，肢体畸形，彩色噪纹，背景闪烁，字幕，水印" + ("\n" + plan["render_negative"] if plan.get("render_negative") else "")}},
         "7": {"class_type": "Wan22ImageToVideoLatent", "inputs": {"vae": ["3", 0], "start_image": ["4", 0], "width": 1280, "height": 704, "length": frames, "batch_size": 1}},
         "8": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1", 0], "shift": 8.0}},
         "9": {"class_type": "KSampler", "inputs": {"model": ["8", 0], "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["7", 0], "seed": 198200 + segment["id"], "steps": 20, "cfg": 5.0, "sampler_name": "uni_pc", "scheduler": "simple", "denoise": 1.0}},
@@ -215,9 +220,11 @@ def run_trial(plan_path: Path, reference: Path, output_root: Path, *, base_url: 
                 # Any changed segment invalidates all later segments in the chain.
                 state["segments"] = state["segments"][:index - 1]
                 started = time.monotonic()
+                print(f"Rendering segment {index}/{segments} ({seconds}s); visual review required.", flush=True)
                 image_name = client.upload_image(input_image)
                 graph = build_wan_graph(plan, segment, image_name=image_name, prefix=f"lingnian-continuity/{fingerprint[:12]}-{index}")
-                raw = client.run_workflow(graph, output_path=raw)
+                raw = client.run_workflow(graph, output_path=raw,
+                                          journal_path=target_dir / f"{prefix}-job.json")
                 if raw.suffix.lower() != ".mp4":
                     raise PackageError("连续试验只接受真实 MP4 视频。")
                 normalize_segment(renderer, raw, clip, seconds)
@@ -230,6 +237,9 @@ def run_trial(plan_path: Path, reference: Path, output_root: Path, *, base_url: 
                     "review_status": "not_reviewed",
                 })
                 checkpoint_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+                print(f"Segment {index} saved after {state['segments'][-1]['wall_seconds']}s; NOT accepted.", flush=True)
+            else:
+                print(f"Reusing segment {index}: input and output hashes verified.", flush=True)
             input_image = tail
             clips.append(clip)
         output = target_dir / "continuity-trial.mp4"

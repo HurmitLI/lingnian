@@ -39,6 +39,7 @@ const SCENE_KIND_LABELS: Record<string, string> = {
   title_card: "片头",
   archival_photo: "档案照片",
   documentary_context: "纪实空镜",
+  memory_action: "回忆场景",
   source_card: "来源说明",
 };
 
@@ -62,7 +63,9 @@ export default function GenerationReviewWorkbench({
   const [trashProfileId, setTrashProfileId] = useState("");
   const [trashedRequests, setTrashedRequests] = useState<GenerativeMediaRequest[]>([]);
   const [generationType, setGenerationType] = useState("scene_video");
-  const [targetDuration, setTargetDuration] = useState(30);
+  const [targetDuration, setTargetDuration] = useState(60);
+  const [renderMode, setRenderMode] = useState<"documentary" | "native_memory">("native_memory");
+  const [referenceMode, setReferenceMode] = useState<"illustrative" | "user_photo">("illustrative");
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9");
   const [planPreview, setPlanPreview] = useState<DocumentaryPlanPreview | null>(null);
   const [selectedStoryId, setSelectedStoryId] = useState(timeline[0]?.story.id ?? "");
@@ -91,6 +94,8 @@ export default function GenerationReviewWorkbench({
         story_id: selectedStory.story.id,
         target_duration_seconds: targetDuration,
         aspect_ratio: aspectRatio,
+        render_mode: renderMode,
+        reference_mode: referenceMode,
       }),
     })
       .then((plan) => {
@@ -102,10 +107,11 @@ export default function GenerationReviewWorkbench({
     return () => {
       active = false;
     };
-  }, [aspectRatio, generationType, profileId, selectedStory, targetDuration]);
+  }, [aspectRatio, generationType, profileId, selectedStory, targetDuration, renderMode, referenceMode]);
   const matchingPlan = planPreview
     && planPreview.production_spec.target_duration_seconds === targetDuration
     && planPreview.production_spec.aspect_ratio === aspectRatio
+    && (planPreview.production_spec.render_mode ?? "documentary") === renderMode
     ? planPreview
     : null;
 
@@ -168,9 +174,7 @@ export default function GenerationReviewWorkbench({
     setBusyRequestId("new");
     try {
       const maxCostYuan = Number(form.get("maxCostYuan") || 0);
-      await api(`/api/v1/elder-profiles/${profileId}/generative-media-requests`, {
-        method: "POST",
-        body: JSON.stringify({
+      const payload = {
           story_id: form.get("storyId"),
           generation_type: form.get("generationType"),
           actor_label: form.get("actorLabel") || "家庭管理员",
@@ -181,8 +185,19 @@ export default function GenerationReviewWorkbench({
           max_cost_cents: Math.round(maxCostYuan * 100),
           target_duration_seconds: Number(form.get("targetDurationSeconds") || 60),
           aspect_ratio: form.get("aspectRatio") || "16:9",
-        }),
+          render_mode: renderMode,
+          reference_mode: referenceMode,
+          model_planning_authorized: form.get("modelPlanningAuthorized") === "on",
+      };
+      const submissionKey = `lingnian.generation-submit.${profileId}`;
+      const signature = JSON.stringify(payload);
+      const saved = JSON.parse(window.localStorage.getItem(submissionKey) || "null") as { signature: string; key: string } | null;
+      const key = saved?.signature === signature ? saved.key : crypto.randomUUID();
+      window.localStorage.setItem(submissionKey, JSON.stringify({ signature, key }));
+      await api(`/api/v1/elder-profiles/${profileId}/generative-media-requests`, {
+        method: "POST", body: JSON.stringify({ ...payload, idempotency_key: key }),
       });
+      window.localStorage.removeItem(submissionKey);
       await refresh();
       formElement.reset();
       setExternalUploadAuthorized(false);
@@ -292,24 +307,30 @@ export default function GenerationReviewWorkbench({
         <div>
           <span className="card-kicker">后台成片 · 完成后验收</span>
           <h3 id="generation-review-title">提交后可以离开，完成后再回来看片</h3>
-          <p>网页提交后由家用生成节点自动制作并回传，不需要先在外部做好视频再上传。30秒稳定模式不生成眨眼、眼球、说话或转头，只使用固定画面和受控镜头运动。</p>
+          <p>选择动态回忆影片后，会根据讲述准备统一人物参考，生成不同场景并合成原声影片。提交后可离开页面，回来查看进度与成片。</p>
         </div>
         <span className="review-gate-badge"><FileVideo2 size={16} aria-hidden="true" />未验收不发布</span>
       </div>
 
       <form className="generation-task-form" onSubmit={registerTask}>
+        {generationType === "scene_video" && renderMode === "native_memory" && <label><input type="checkbox" name="modelPlanningAuthorized" required />同意将这篇故事发送给已配置的文字模型整理分镜，并由家用节点生成动态示意影像。人物演绎不代表真实历史影像，声音使用这篇故事已保存的音频；AI 配音会明确标注。</label>}
+
         <label className="field"><span>制作类型</span><select name="generationType" value={generationType} onChange={(event) => setGenerationType(event.target.value)}><option value="scene_video">纪实故事影片</option><option value="photo_restore">老照片修复副本</option><option value="portrait_video">人物讲述视频</option></select></label>
         <label className="field"><span>对应故事</span><select name="storyId" required value={selectedStory?.story.id ?? ""} onChange={(event) => setSelectedStoryId(event.target.value)}>{timeline.map((item) => <option key={item.story.id} value={item.story.id}>{item.story.title}</option>)}</select></label>
         {generationType === "scene_video" && (
           <div className="generation-film-spec" aria-label="影片制作规格">
-            <label className="field"><span>目标时长</span><select name="targetDurationSeconds" value={targetDuration} onChange={(event) => setTargetDuration(Number(event.target.value))}><option value="30">30 秒 · 稳定故事片</option><option value="45">45 秒 · 精简故事</option><option value="60">60 秒 · 完整故事</option><option value="90">90 秒 · 长篇讲述</option></select></label>
-            <label className="field"><span>观看画幅</span><select name="aspectRatio" value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value as "16:9" | "9:16")}><option value="16:9">横屏 16:9 · 电脑电视</option><option value="9:16">竖屏 9:16 · 手机</option></select></label>
-            <p><strong>预计拆成 {targetDuration <= 45 ? 6 : targetDuration === 90 ? 10 : 8} 个镜头，默认使用原声，不克隆声音。</strong>{targetDuration === 30 ? "人物照片保持原样，环境与物件画面只做缓慢推拉，不生成脸部动作。" : "单张照片最多约占三分之一时长，其余镜头来自原文对应的环境、物件、时间与来源说明。"}</p>
+            <label className="field"><span>画面方式</span><select aria-label="画面方式" value={renderMode} onChange={(event) => { setRenderMode(event.target.value as typeof renderMode); setAspectRatio("16:9"); }}><option value="native_memory">动态回忆影片 · 随讲述进入场景</option><option value="documentary">原有纪实模式</option></select></label>
+            {renderMode === "native_memory" && <label className="field"><span>人物参考</span><select aria-label="人物参考" value={referenceMode} onChange={(event) => setReferenceMode(event.target.value as typeof referenceMode)}><option value="illustrative">使用示意人物</option><option value="user_photo">使用故事照片中的人物</option></select></label>}
+
+            <label className="field"><span>目标时长</span><select name="targetDurationSeconds" value={targetDuration} onChange={(event) => setTargetDuration(Number(event.target.value))}><option value="30">{renderMode === "native_memory" ? "30 秒 · 短篇故事" : "30 秒 · 稳定故事片"}</option><option value="45">45 秒 · 精简故事</option><option value="60">60 秒 · 完整故事</option><option value="90">90 秒 · 长篇讲述</option></select></label>
+            <label className="field"><span>观看画幅</span><select name="aspectRatio" value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value as "16:9" | "9:16")}><option value="16:9">横屏 16:9 · 电脑电视</option><option disabled={renderMode === "native_memory"} value="9:16">竖屏 9:16 · 手机</option></select></label>
+            {renderMode === "native_memory" ? <p><strong>预计生成 {targetDuration / 5} 个动态镜头，保留完整音频。</strong>按录音中的讲述安排场景，人物和道具沿用统一参考。时长不匹配时会说明原因，不自动截断录音。</p> : <p><strong>预计拆成 {targetDuration <= 45 ? 6 : targetDuration === 90 ? 10 : 8} 个镜头，默认使用原声，不克隆声音。</strong>{targetDuration === 30 ? "人物照片保持原样，环境与物件画面只做缓慢推拉，不生成脸部动作。" : "单张照片最多约占三分之一时长，其余镜头来自原文对应的环境、物件、时间与来源说明。"}</p>}
           </div>
         )}
         {generationType === "scene_video" && (
           <section className="generation-shot-preview" aria-label="纪实影片分镜预览">
-            <div><span>生成前分镜</span><strong>{matchingPlan ? `${matchingPlan.scenes.length} 个镜头 · 共 ${matchingPlan.production_spec.target_duration_seconds} 秒` : "正在整理镜头…"}</strong></div>
+            <div><span>{renderMode === "native_memory" ? "故事内容预览" : "生成前分镜"}</span><strong>{matchingPlan ? `${matchingPlan.scenes.length} 个镜头 · 共 ${matchingPlan.production_spec.target_duration_seconds} 秒` : "正在整理镜头…"}</strong></div>
+            {renderMode === "native_memory" && <p>下方先展示故事内容。提交后会按录音的实际时间安排镜头，最终分镜与这里的文字分段可能不同。</p>}
             {matchingPlan && <ol>{matchingPlan.scenes.map((scene) => <li key={scene.scene}><span>{String(scene.scene).padStart(2, "0")} · {SCENE_KIND_LABELS[scene.kind] ?? scene.kind} · {scene.duration_seconds} 秒</span><p>{scene.subtitle}</p><small>{scene.source}</small></li>)}</ol>}
           </section>
         )}
@@ -346,14 +367,14 @@ export default function GenerationReviewWorkbench({
         {requests.length === 0 && <p className="generation-empty">还没有成片验收任务。下载制作包不会自动上传素材或产生费用。</p>}
         {requests.map((request) => (
           <article className={`generation-request-card status-${request.status}`} key={request.id}>
-            <header><div><small>{TYPE_LABELS[request.generation_type] ?? request.generation_type}</small><h4>{STATUS_LABELS[request.status] ?? request.status}</h4></div><span>预算 ¥{(request.max_cost_cents / 100).toFixed(2)}</span></header>
+            <header><div><small>{TYPE_LABELS[request.generation_type] ?? request.generation_type}</small><p>{timeline.find((item) => item.story.id === request.story_id)?.story.title ?? "回忆影片"}</p><h4>{STATUS_LABELS[request.status] ?? request.status}</h4></div><span>预算 ¥{(request.max_cost_cents / 100).toFixed(2)}</span></header>
             {["pending_human_review", "rejected", "failed", "cancelled"].includes(request.status) && <button type="button" className="button quiet" disabled={busyRequestId !== null} onClick={() => void trashResult(request.id)}>删除此结果（可恢复）</button>}
             {request.generation_type === "scene_video" && request.production_spec.target_duration_seconds && (
               <div className="generation-request-spec" aria-label="影片规格">
                 <span>{request.production_spec.target_duration_seconds} 秒</span>
                 <span>{request.production_spec.aspect_ratio === "9:16" ? "手机竖屏" : "横屏"}</span>
-                <span>原声优先</span>
-                <span>单张照片不超过 35%</span>
+                <span>{request.production_spec.source_audio_origin === "synthetic_narration" ? "AI 合成配音 · 非家人原声" : "原声优先"}</span>
+                <span>{request.production_spec?.render_mode === "native_memory" ? "统一人物 · 多场景动态" : "单张照片不超过 35%"}</span>
                 {request.production_spec.visual_strategy === "stable_montage" && <span>脸部不生成运动</span>}
               </div>
             )}
@@ -394,7 +415,7 @@ export default function GenerationReviewWorkbench({
             )}
 
             {request.result_content_url && request.generation_type !== "photo_restore" && (
-              <video controls preload="metadata" src={mediaUrl(request.result_content_url) ?? undefined}>浏览器无法播放这段视频。</video>
+              <><video controls preload="metadata" src={mediaUrl(request.result_content_url) ?? undefined}>浏览器无法播放这段视频。</video><a className="button secondary" href={mediaUrl(request.result_content_url) ?? undefined} download="聆年-回忆影片.mp4">下载影片</a></>
             )}
 
             {request.result_report.duration_seconds ? (
@@ -403,8 +424,8 @@ export default function GenerationReviewWorkbench({
                 {request.result_report.rendered_scene_count ? <span>{request.result_report.rendered_scene_count} 个镜头</span> : null}
                 {request.result_report.width && request.result_report.height ? <span>{request.result_report.width}×{request.result_report.height}</span> : null}
                 {request.result_report.automated_quality_status === "passed" ? <span>自动查重通过</span> : null}
-                {request.result_report.generated_context_scene_count ? <span>空镜去重 {request.result_report.unique_generated_visual_count}/{request.result_report.generated_context_scene_count}</span> : null}
-                {request.result_report.generated_video_scene_count !== undefined ? <span>动态空镜 {request.result_report.generated_video_scene_count}</span> : null}
+                {request.result_report.generated_context_scene_count ? <span>镜头去重 {request.result_report.unique_generated_visual_count}/{request.result_report.generated_context_scene_count}</span> : null}
+                {request.result_report.generated_video_scene_count !== undefined ? <span>动态镜头 {request.result_report.generated_video_scene_count}</span> : null}
               </div>
             ) : null}
 
@@ -435,7 +456,7 @@ export default function GenerationReviewWorkbench({
 
             {(request.status === "accepted" || request.status === "rejected") && (
               <div className="generation-review-result">
-                <strong>{request.status === "accepted" ? "已通过家庭人工验收" : "已驳回，不会进入正式展示"}</strong>
+                <strong>{request.status === "accepted" ? "已通过本次验收" : "已驳回，不会进入正式展示"}</strong>
                 <p>{request.review_notes || "没有填写补充说明。"}</p>
                 <small>验收人：{request.reviewed_by || "未记录"}{request.actual_cost_cents > 0 ? ` · 实际费用 ¥${(request.actual_cost_cents / 100).toFixed(2)}` : " · 未登记费用"}</small>
               </div>

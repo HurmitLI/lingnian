@@ -4,7 +4,7 @@ import re
 
 
 MINIMUM_WORKER_VERSIONS: dict[str, tuple[int, int, int]] = {
-    "scene_video": (2, 0, 2),
+    "scene_video": (2, 1, 0),
 }
 
 

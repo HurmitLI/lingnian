@@ -326,8 +326,11 @@ class QwenLLMProvider:
         self.story_prompt = (PROMPT_ROOT / "story_organizer_v1.md").read_text("utf-8")
 
     def _complete(self, system_prompt: str, user_content: str) -> str:
-        response = self.client.chat.completions.create(
+        # Keep a paid organization request bounded; an ambiguous response must
+        # be recovered by the workflow instead of silently billed again.
+        response = self.client.with_options(max_retries=0).chat.completions.create(
             model=self.model_name,
+            max_tokens=4096,
             temperature=0.2,
             response_format={"type": "json_object"},
             messages=[
@@ -340,6 +343,27 @@ class QwenLLMProvider:
         if not content:
             raise RuntimeError("主模型返回了空内容。")
         return content
+
+    def plan_memory_film(self, system_prompt: str, user_content: str) -> dict:
+        response = self.client.with_options(max_retries=0, timeout=90).chat.completions.create(
+            model=self.model_name, temperature=0.2, max_tokens=9000,
+            response_format={"type": "json_object"},
+            messages=[{"role": "system", "content": system_prompt},
+                      {"role": "user", "content": user_content}],
+            extra_body={"enable_thinking": False},
+        )
+        return parse_json_object(response.choices[0].message.content or "")
+
+    def select_short_scene(self, system_prompt: str, user_content: str) -> dict:
+        # A single consent-bound attempt. Never retry an ambiguous paid request.
+        response = self.client.with_options(max_retries=0, timeout=30).chat.completions.create(
+            model=self.model_name, temperature=0.2, max_tokens=2400,
+            response_format={"type": "json_object"},
+            messages=[{"role": "system", "content": system_prompt},
+                      {"role": "user", "content": user_content}],
+            extra_body={"enable_thinking": False},
+        )
+        return parse_json_object(response.choices[0].message.content or "")
 
     def generate_question(self, preferred_name: str, life_stage: str) -> QuestionOutput:
         raw = self._complete(

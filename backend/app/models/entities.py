@@ -259,6 +259,9 @@ class MemorySession(TimestampMixin, Base):
     tasks: Mapped[list[WorkflowTask]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
+    short_scene_plans: Mapped[list[ShortScenePlan]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
 
 
 class InterviewTurn(TimestampMixin, Base):
@@ -497,6 +500,80 @@ class ModelConsentEvent(Base):
     used_at: Mapped[datetime | None] = mapped_column()
     revoked_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(default=now_utc)
+
+
+class ShortScenePlan(TimestampMixin, Base):
+    __tablename__ = "short_scene_plans"
+    __table_args__ = (
+        UniqueConstraint("session_id", "idempotency_key", name="uq_short_scene_key"),
+        UniqueConstraint("session_id", "input_sha256", name="uq_short_scene_input"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(ForeignKey("family_archives.id", ondelete="CASCADE"))
+    session_id: Mapped[str] = mapped_column(ForeignKey("memory_sessions.id", ondelete="CASCADE"))
+    consent_id: Mapped[str] = mapped_column(ForeignKey("model_consent_events.id", ondelete="RESTRICT"))
+    idempotency_key: Mapped[str] = mapped_column(String(80))
+    input_sha256: Mapped[str] = mapped_column(String(64))
+    reference_mode: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(40), default="dispatching")
+    provider: Mapped[str] = mapped_column(String(40))
+    model: Mapped[str] = mapped_column(String(160))
+    request_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    result_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    deadline_at: Mapped[datetime] = mapped_column()
+    session: Mapped[MemorySession] = relationship(back_populates="short_scene_plans")
+
+
+class ShortSceneJob(TimestampMixin, Base):
+    __tablename__ = "short_scene_jobs"
+    __table_args__ = (UniqueConstraint("family_id", "idempotency_key", name="uq_short_job_key"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(ForeignKey("family_archives.id", ondelete="CASCADE"))
+    session_id: Mapped[str] = mapped_column(ForeignKey("memory_sessions.id", ondelete="CASCADE"))
+    plan_id: Mapped[str] = mapped_column(ForeignKey("short_scene_plans.id", ondelete="CASCADE"))
+    package_asset_id: Mapped[str] = mapped_column(ForeignKey("media_assets.id", ondelete="RESTRICT"))
+    result_asset_id: Mapped[str | None] = mapped_column(ForeignKey("media_assets.id", ondelete="SET NULL"))
+    consent_id: Mapped[str] = mapped_column(ForeignKey("model_consent_events.id", ondelete="RESTRICT"))
+    idempotency_key: Mapped[str] = mapped_column(String(80))
+    input_sha256: Mapped[str] = mapped_column(String(64))
+    bundle_sha256: Mapped[str] = mapped_column(String(64))
+    input_review: Mapped[dict] = mapped_column(JSON, default=dict)
+    reference_review_sha256: Mapped[str | None] = mapped_column(String(64), unique=True)
+    status: Mapped[str] = mapped_column(String(40), default="queued", index=True)
+    assigned_node_id: Mapped[str | None] = mapped_column(ForeignKey("generation_nodes.id", ondelete="SET NULL"))
+    claim_request_key: Mapped[str | None] = mapped_column(String(80), unique=True)
+    lease_token_hash: Mapped[str | None] = mapped_column(String(64))
+    lease_expires_at: Mapped[datetime | None] = mapped_column()
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+
+
+class ShortSceneReferenceJob(TimestampMixin, Base):
+    __tablename__ = "short_scene_reference_jobs"
+    __table_args__ = (
+        UniqueConstraint("family_id", "idempotency_key", name="uq_reference_job_key"),
+        UniqueConstraint("plan_id", "brief_sha256", name="uq_reference_job_brief"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(ForeignKey("family_archives.id", ondelete="CASCADE"))
+    session_id: Mapped[str] = mapped_column(ForeignKey("memory_sessions.id", ondelete="CASCADE"))
+    plan_id: Mapped[str] = mapped_column(ForeignKey("short_scene_plans.id", ondelete="CASCADE"))
+    package_asset_id: Mapped[str] = mapped_column(ForeignKey("media_assets.id", ondelete="RESTRICT"))
+    consent_id: Mapped[str] = mapped_column(ForeignKey("model_consent_events.id", ondelete="RESTRICT"))
+    idempotency_key: Mapped[str] = mapped_column(String(80))
+    brief_sha256: Mapped[str] = mapped_column(String(64))
+    bundle_sha256: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(40), default="queued", index=True)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    assigned_node_id: Mapped[str | None] = mapped_column(ForeignKey("generation_nodes.id", ondelete="SET NULL"), index=True)
+    claim_request_key: Mapped[str | None] = mapped_column(String(80), unique=True)
+    lease_token_hash: Mapped[str | None] = mapped_column(String(64))
+    lease_expires_at: Mapped[datetime | None] = mapped_column()
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0)
+    result_asset_id: Mapped[str | None] = mapped_column(ForeignKey("media_assets.id", ondelete="SET NULL"))
+    result_report: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class PersonRelationship(TimestampMixin, Base):
@@ -804,6 +881,7 @@ class GenerationNode(TimestampMixin, Base):
 class GenerativeMediaRequest(TimestampMixin, Base):
     __tablename__ = "generative_media_requests"
 
+    idempotency_key: Mapped[str | None] = mapped_column(String(100), unique=True)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     elder_id: Mapped[str] = mapped_column(
         ForeignKey("elder_profiles.id", ondelete="CASCADE")
@@ -829,6 +907,7 @@ class GenerativeMediaRequest(TimestampMixin, Base):
     actual_cost_cents: Mapped[int] = mapped_column(Integer, default=0)
     max_cost_cents: Mapped[int] = mapped_column(Integer, default=0)
     production_spec: Mapped[dict] = mapped_column(JSON, default=dict)
+    production_direction: Mapped[dict] = mapped_column(JSON, default=dict)
     request_sha256: Mapped[str] = mapped_column(String(64))
     lease_token_hash: Mapped[str | None] = mapped_column(String(64))
     lease_expires_at: Mapped[datetime | None] = mapped_column(index=True)

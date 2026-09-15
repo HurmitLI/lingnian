@@ -105,7 +105,7 @@ export default function TimedAudioTranscript({
     <section className={`timed-audio-transcript${compact ? " compact" : ""}`} aria-label={label}>
       <div className="timed-audio-heading">
         <strong>{label}</strong>
-        <small>{cues.length ? "点一句，就从当时的原声开始播放" : "可播放完整原声"}</small>
+        <small>{cues.length ? "点一句，就从对应的声音位置开始播放" : "可播放完整音频"}</small>
       </div>
       <audio ref={audioRef} controls preload="metadata" src={audioUrl} className="audio-player" />
       {cues.length > 0 ? (

@@ -7,7 +7,9 @@ from sqlalchemy import select
 
 from app.api import routes
 from app.main import app
-from app.models import EncryptedField, InterviewTurn, MediaAsset
+from app.models import EncryptedField, InterviewTurn, MediaAsset, Transcript
+from app.services.asr.provider import ASRResult
+from app.services.asr.timing import source_timing
 from app.services.llm.provider import MockLLMProvider
 from app.services.security import InMemorySecretStore, get_secret_store
 from app.services.tts.provider import SpeechResult
@@ -145,6 +147,52 @@ def test_guided_interview_keeps_subject_and_narrator_separate(client):
     merged_response = client.get(merged["content_url"])
     with wave.open(io.BytesIO(merged_response.content), "rb") as audio:
         assert audio.getnframes() / audio.getframerate() >= 0.3
+        timeline = detail["transcript"]["asr_metadata"]["interview_timeline"]
+        assert timeline["frames"] == audio.getnframes()
+        assert timeline["segments"][-1]["asr_timing"]["status"] == "unavailable"
+
+
+def test_two_turn_timeline_counts_questions_and_keeps_answer_clock_relative(client, monkeypatch):
+    class TimedASR:
+        def transcribe(self, path):
+            return ASRResult("妈妈", "test", "test-only", {"timing": source_timing(
+                path, {"text": "妈 妈", "timestamp": [[10, 50], [50, 100]]}, "funasr")})
+
+    class QuestionTTS:
+        def synthesize(self, text):
+            return SpeechResult(audio=wav_bytes(0.2), provider="test", model="test", voice="test")
+
+    monkeypatch.setattr(routes, "get_asr_provider", lambda: TimedASR())
+    monkeypatch.setattr(routes, "get_tts_provider", lambda: QuestionTTS())
+    subject, narrator = create_subject_and_narrator(client)
+    session = client.post("/api/v1/memory-sessions", json={
+        "elder_id": subject["id"], "narrator_person_id": narrator["id"],
+        "interview_mode": "guided_voice", "life_stage": "童年",
+    }).json()
+    base = f"/api/v1/memory-sessions/{session['id']}"
+    turn_ids = []
+    for _ in range(2):
+        uploaded = client.post(f"{base}/interview-turns/audio",
+            files={"audio": ("answer.wav", wav_bytes(0.15), "audio/wav")})
+        assert uploaded.status_code == 201, uploaded.text
+        turn_ids.append(uploaded.json()["id"])
+        continued = client.post(f"{base}/interview-turns/{turn_ids[-1]}/continue",
+            json={"corrected_answer_text": "妈妈。", "allow_cloud_followup": False})
+        assert continued.status_code == 200, continued.text
+    finalized = client.post(f"{base}/interview-finalize")
+    assert finalized.status_code == 200, finalized.text
+    detail = finalized.json()
+    timeline = detail["transcript"]["asr_metadata"]["interview_timeline"]
+    segments = timeline["segments"]
+    assert [s["role"] for s in segments] == ["question", "answer", "question", "answer"]
+    assert [s["turn_id"] for s in segments] == [turn_ids[0]] * 2 + [turn_ids[1]] * 2
+    assert [s["start_frame"] for s in segments] == [0, 3200, 5600, 8800]
+    assert timeline["frames"] == 11200
+    for index in (1, 3):
+        assert segments[index]["asr_timing"]["items"][0]["start_ms"] == 10
+    asset = next(a for a in detail["media_assets"] if a["kind"] == "audio_original")
+    with wave.open(io.BytesIO(client.get(asset["content_url"]).content), "rb") as audio:
+        assert audio.getnframes() == timeline["frames"]
 
 
 def test_family_recollection_keeps_narrator_provenance_in_archive_and_book(client):
@@ -226,7 +274,12 @@ def test_guided_interview_rejects_narrator_from_another_family(client):
     assert response.json()["error"]["code"] == "NARRATOR_FAMILY_MISMATCH"
 
 
-def test_guided_interview_remains_encrypted_for_real_family_data(client, db):
+def test_guided_interview_remains_encrypted_for_real_family_data(client, db, monkeypatch):
+    class TimedASR:
+        def transcribe(self, path):
+            return ASRResult("测试", "test", "test-only", {"timing": source_timing(
+                path, {"text": "测 试", "timestamp": [[0, 50], [50, 100]]}, "funasr")})
+    monkeypatch.setattr(routes, "get_asr_provider", lambda: TimedASR())
     store = InMemorySecretStore()
     app.dependency_overrides[get_secret_store] = lambda: store
     passphrase = "虚构采访恢复口令-长度足够-2026"
@@ -288,10 +341,21 @@ def test_guided_interview_remains_encrypted_for_real_family_data(client, db):
         )
         assert finalized.status_code == 200, finalized.text
         assert "这是一段只保存在本机的加密采访回答。" in finalized.json()["transcript"]["corrected_text"]
+        timeline = finalized.json()["transcript"]["asr_metadata"]["interview_timeline"]
+        question_segment, answer_segment = timeline["segments"]
+        assert question_segment["role"] == "question"
+        assert answer_segment["start_frame"] == question_segment["end_frame"] > 0
+        assert answer_segment["asr_timing"]["status"] == "available"
+        assert answer_segment["asr_timing"]["items"][0]["text"] == "测"
+        assert answer_segment["asr_timing"]["text_basis"] == "raw_asr"
+        assert timeline["frames"] == answer_segment["end_frame"]
 
         db.expire_all()
         turn = db.get(InterviewTurn, turn_payload["id"])
         assert turn.corrected_answer_text == "[niannian:encrypted:v1]"
+        assert turn.asr_metadata == {}
+        transcript = db.scalar(select(Transcript).where(Transcript.session_id == session["id"]))
+        assert transcript.asr_metadata == {}
         assert db.scalars(
             select(EncryptedField).where(EncryptedField.object_id == turn.id)
         ).all()

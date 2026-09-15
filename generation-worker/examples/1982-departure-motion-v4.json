@@ -1,0 +1,51 @@
+{
+  "format": "lingnian-continuity-trial",
+  "version": 1,
+  "fictional_only": true,
+  "reference_sha256": "ebfb9f80a9dfaf174777bc5787a27fa5ee9cad15e5ddeb41d43d290909a54dd7",
+  "reference_policy": "first_reference_then_previous_last_frame",
+  "review_notes": [
+    "针对 v3 跟拍拉远与经过车门的失败，不更换故事、人物、衣服或蓝包。",
+    "复用 v2 首段实际尾帧；把转身和一步走位分成两个四秒镜头。",
+    "新增反向摄影约束真正接入 negative conditioning。先做转身一段，检查后才续下一段。"
+  ],
+  "source_text": "沈素琴（虚构演示）回忆道，那个蓝布包她一直没舍得扔。1982年春天，她19岁，第一次一个人坐火车去无锡的纺织厂。",
+  "film_bible": {
+    "summary": "同一次出发前，她抱包看向列车，转身准备靠近车门；不是已经到达目的地。",
+    "character": "参考图中同一虚构年轻成年女性，同一黑色双辫子和面部。",
+    "wardrobe": "浅色小花长袖衬衫、深蓝裤子。",
+    "prop": "同一褪色深蓝帆布包、灰色布提手，始终抱在怀里。",
+    "era": "1982年春，绿色普通客车；不指定未经证实的具体车型。",
+    "location": "同一湿润站台，列车车门就在她身旁，出发城市未知。",
+    "journey": "准备去无锡的纺织厂，不是离开无锡。",
+    "visual_style": "阴天中性冷光，原参考图色彩、曝光、白平衡；固定相机。",
+    "forbidden_changes": "不换人、包、衣服、列车、场地；不杜撰新的家族事实。"
+  },
+  "opening_state": "她站在车厢旁抱包，脸已看向车门，身体仍朝向镜头。",
+  "segments": [
+    {
+      "id": 1,
+      "duration_seconds": 4,
+      "source_quotes": ["第一次一个人坐火车去无锡的纺织厂。"],
+      "before": "她站在车厢旁抱包，脸已看向车门，身体仍朝向镜头。",
+      "action": "双脚位置不变，抱包将肩膀缓缓转向正在看的车厢，然后停住。只转身、不走路。",
+      "camera": "固定三脚架中景，保持首帧尺度与构图，车窗和车门在画面中的大小位置不变。",
+      "after": "她双脚仍在原位，肩膀和脸都朝向身旁的车厢，抱包停住。",
+      "staging_note": "出发前的克制转身为影像演绎，不声称原文记载具体姿势。",
+      "render_action": "A stationary tripod medium shot, identical framing for all four seconds. The woman is already looking at the carriage to her left. Her feet stay planted in the SAME spot. She slowly rotates only her shoulders to face the carriage, cradling the blue bag close to her torso, then settles and pauses. This is a turn in place, not walking. The train windows stay exactly the same size and position in frame. Keep her at the original medium-shot scale."
+    },
+    {
+      "id": 2,
+      "duration_seconds": 4,
+      "source_quotes": ["第一次一个人坐火车去无锡的纺织厂。"],
+      "before": "她双脚仍在原位，肩膀和脸都朝向身旁的车厢，抱包停住。",
+      "action": "抱稳同一个包，向身旁的车厢方向缓缓迈半步并停住，不沿站台横穿，不超过车門。",
+      "camera": "保持原固定机位、中景和车厢位置，不跟拍、不变焦。",
+      "after": "她抱包停在更靠近同一车厢的位置，仍在站台，没有上车或越过车门。",
+      "staging_note": "只表现上车前的一次靠近，不生成未记载的目的地。",
+      "render_action": "Same stationary tripod medium shot. Continuing her existing pose facing the carriage, she keeps the blue bag close and takes ONE very small half-step toward the train beside her, then stands still. A restrained weight shift toward the carriage, NOT walking along the platform. End with her still beside the same doorway, without passing it. Train windows and camera framing remain fixed."
+    }
+  ],
+  "render_bible": "Continuous moment on the same wet Chinese railway platform in spring 1982. Same young adult woman, black twin braids, pale small-pattern shirt, navy trousers, faded blue canvas bag with gray fabric handles, stationary green passenger carriage. Original face, bag geometry and wardrobe. Cool overcast light and original neutral color. Relaxed closed mouth, subtle natural breathing. No narration or new events. Fixed tripod view, medium shot throughout.",
+  "render_negative": "camera motion, camera pan, tilting camera, zoom in, zoom out, dolly, tracking shot, handheld camera, moving viewpoint, changing framing, wide shot, distant figure, moving train, retreating camera, walking toward the viewer, walking past the door, running, large steps, sliding feet, changing face, changing clothes, changing bag, new straps, exaggerated mouth motion, talking, chewing, flicker, jump cut, body deformation"
+}

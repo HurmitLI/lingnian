@@ -56,6 +56,7 @@ class WorkerApi:
         try:
             response = self._client.get(
                 task.package_url,
+                timeout=240.0,
                 headers={"X-Lingnian-Lease": task.lease_token},
             )
             response.raise_for_status()
@@ -106,6 +107,7 @@ class WorkerApi:
                 "height": str(report.height),
                 "generated_context_scene_count": str(report.generated_context_scene_count),
                 "generated_video_scene_count": str(report.generated_video_scene_count),
+                "stable_visual_scene_count": str(report.stable_visual_scene_count),
                 "unique_generated_visual_count": str(report.unique_generated_visual_count),
                 "duplicate_visual_check_passed": str(report.duplicate_visual_check_passed).lower(),
             },

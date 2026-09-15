@@ -11,7 +11,7 @@ from pathlib import Path
 from app.services.tts import prepare_tts_text
 
 
-DOCUMENTARY_DURATIONS = {45, 60, 90}
+DOCUMENTARY_DURATIONS = {30, 45, 60, 90}
 DOCUMENTARY_ASPECT_RATIOS = {"16:9", "9:16"}
 
 
@@ -39,17 +39,35 @@ def normalize_production_spec(
     if aspect_ratio not in DOCUMENTARY_ASPECT_RATIOS:
         aspect_ratio = "16:9"
     width, height = (1280, 720) if aspect_ratio == "16:9" else (720, 1280)
-    return {
-        "format_version": 1,
+    result = {
+        "format_version": 2 if duration == 30 else 1,
         "target_duration_seconds": duration,
         "aspect_ratio": aspect_ratio,
         "narrative_style": "family_documentary",
         "voice_strategy": "original_recording_first",
         "synthetic_voice_allowed": False,
         "single_photo_max_screen_ratio": 0.35,
+        "visual_strategy": "stable_montage" if duration == 30 else "generated_motion",
+        "generated_face_motion_allowed": False,
+        "generated_eye_motion_allowed": False,
+        "generated_head_turn_allowed": False,
         "subtitles_required": True,
         "output": {"width": width, "height": height, "fps": 24},
     }
+
+
+    if requested.get("render_mode") == "native_memory":
+        if aspect_ratio != "16:9":
+            raise ValueError("原生回忆影片目前支持横屏，请选择16:9。")
+        result.update(render_mode="native_memory", format_version=4,
+                      visual_strategy="native_memory", generated_face_motion_allowed=True,
+                      generated_eye_motion_allowed=True, generated_head_turn_allowed=True,
+                      reference_mode=requested.get("reference_mode", "illustrative"),
+                      model_planning_authorized=requested.get("model_planning_authorized") is True,
+                      native_clip_seconds=5, minimum_worker_version=(requested.get("minimum_worker_version") if requested.get("minimum_worker_version") in {"2.2.0", "2.2.1"} else "2.2.1"))
+        if requested.get("source_audio_origin") == "synthetic_narration":
+            result.update(source_audio_origin="synthetic_narration", voice_strategy="provided_synthetic_narration")
+    return result
 
 
 def _story_units(body: str) -> list[str]:
@@ -102,7 +120,7 @@ def _documentary_storyboard(
     production_spec: dict,
 ) -> list[dict]:
     target_duration = production_spec["target_duration_seconds"]
-    target_scene_count = {45: 6, 60: 8, 90: 10}[target_duration]
+    target_scene_count = {30: 6, 45: 6, 60: 8, 90: 10}[target_duration]
     quotes = _select_evenly(_story_units(body), target_scene_count - 2)
     durations = _scene_durations(target_duration, len(quotes) + 2)
     context = "、".join(
@@ -168,6 +186,12 @@ def _documentary_storyboard(
                         f"{period_guard}{place_guard}"
                         "优先中近景、物件、动作和环境细节，禁止无关城市航拍或通用城市全景；"
                         "不生成具体真人正脸，不新增身份、对白、因果、地点或年代事实。"
+                        + (
+                            "本镜头只生成一张稳定的环境或物件画面，再由本地确定性运镜形成视频；"
+                            "禁止生成眨眼、眼球、说话、转头或其他脸部运动。"
+                            if production_spec.get("visual_strategy") == "stable_montage"
+                            else ""
+                        )
                     )
                 ),
                 "camera_motion": motions[index % len(motions)],
@@ -234,6 +258,18 @@ def build_documentary_plan(
     production_spec: dict | None = None,
 ) -> dict:
     normalized_spec = normalize_production_spec("scene_video", production_spec)
+    if normalized_spec.get("visual_strategy") == "native_memory":
+        from .memory_film import source_segments
+        scenes = [{**slot, "kind": "memory_action", "subtitle": slot["source_quote"],
+                   "narration": slot["source_quote"], "source_story_id": story_id,
+                   "source": "人工确认故事原文", "visual_direction": "根据本段讲述生成动作、人物或物件场景",
+                   "review_required": True} for slot in source_segments(body, normalized_spec["target_duration_seconds"])]
+        return {"format": "lingnian-documentary-storyboard", "version": 4,
+                "production_spec": normalized_spec, "scenes": scenes,
+                "audio_plan": {"strategy": "original_recording_first", "synthetic_voice_allowed": False,
+                               "timing_basis": "editorial_preview_not_audio_alignment"},
+                "review_checklist": ["原声完整", "人物一致", "动作自然", "内容对应", "道具连贯"],
+                "planning_status": "source_preview_only"}
     scenes = _documentary_storyboard(
         body,
         title=title,
@@ -245,7 +281,7 @@ def build_documentary_plan(
     )
     return {
         "format": "lingnian-documentary-storyboard",
-        "version": 2,
+        "version": 3 if normalized_spec.get("visual_strategy") == "stable_montage" else 2,
         "production_spec": normalized_spec,
         "audio_plan": {
             "strategy": "original_recording_first",
@@ -286,6 +322,7 @@ def build_production_package(
     production_spec: dict | None = None,
     external_upload_authorized: bool = False,
     package_status: str = "local_preproduction_only",
+    memory_direction: dict | None = None,
 ) -> Path:
     """Create a local-only, provider-neutral production handoff package."""
 
@@ -303,6 +340,11 @@ def build_production_package(
             has_image=image is not None,
             production_spec=normalized_spec,
         )
+        if normalized_spec.get("visual_strategy") == "native_memory" and package_status == "authorized_node_job":
+            if not memory_direction:
+                raise ValueError("尚未准备原生影片分镜。")
+            documentary_plan["direction"] = memory_direction
+            documentary_plan["planning_status"] = "direction_ready"
         storyboard = documentary_plan["scenes"]
     else:
         storyboard = _legacy_storyboard(

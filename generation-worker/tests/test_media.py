@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import shutil
+import json
+from types import SimpleNamespace
 
 import imageio_ffmpeg
 import pytest
@@ -60,3 +62,17 @@ def test_renders_and_assembles_a_real_short_mp4(tmp_path):
 def test_result_ceiling_leaves_one_mib_for_multipart_headroom():
     assert MAX_RESULT_BYTES == 15 * 1024 * 1024
     assert MAX_RESULT_UPLOAD_BYTES == MAX_RESULT_BYTES
+
+
+@pytest.mark.parametrize("streams,expected", [
+    ([{"codec_type": "audio", "duration": "3.5"}], 3.5),
+    ([{"codec_type": "audio"}], 64.0),
+    ([{"codec_type": "video", "width": 1280, "height": 720}, {"codec_type": "audio", "duration": "2"}], 2.0),
+    ([{"codec_type": "video", "width": 1280, "height": 720}, {"codec_type": "audio"}], None),
+])
+def test_probe_does_not_confuse_container_length_with_short_audio(monkeypatch, tmp_path, streams, expected):
+    monkeypatch.setattr("lingnian_worker.media.subprocess.run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stdout=json.dumps({"format": {"duration": "64"}, "streams": streams})))
+    result = MediaRenderer(ffmpeg="ffmpeg", ffprobe="ffprobe").probe(tmp_path / "input")
+    assert result["has_audio"] is True
+    assert result["audio_duration"] == expected

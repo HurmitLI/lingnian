@@ -194,6 +194,26 @@ def test_verified_recovery_activates_real_encryption_and_preserves_api_reads(cli
         assert stored_path.read_bytes().startswith(b"NNMEDIA1")
         assert not stored_path.read_bytes().startswith(b"RIFF")
 
+        # 早期正式数据里可能只有加密媒体，没有原文件名密文字段；
+        # 这类旧录音仍应能打开采访详情并播放。
+        filename_field = db.scalar(
+            select(EncryptedField).where(
+                EncryptedField.family_id == family["id"],
+                EncryptedField.object_type == "media_assets",
+                EncryptedField.object_id == uploaded["id"],
+                EncryptedField.field_name == "original_filename",
+            )
+        )
+        assert filename_field is not None
+        db.delete(filename_field)
+        db.commit()
+        legacy_detail = client.get(f"/api/v1/memory-sessions/{session['id']}")
+        assert legacy_detail.status_code == 200, legacy_detail.text
+        legacy_asset = next(
+            item for item in legacy_detail.json()["media_assets"] if item["id"] == uploaded["id"]
+        )
+        assert legacy_asset["original_filename"] == "原始录音.wav"
+
         readable_profile = client.get(f"/api/v1/elder-profiles/{profile['id']}")
         assert readable_profile.status_code == 200, readable_profile.text
         assert readable_profile.json()["display_name"] == "机密测试姓名"

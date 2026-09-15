@@ -48,17 +48,36 @@ class DocumentaryExecutor:
     ) -> RenderReport:
         if task.generation_type != "scene_video":
             raise ConfigurationError("当前 v2 执行器只启用了纪实故事影片。")
-        if package.plan.get("format") != "lingnian-documentary-storyboard" or int(package.plan.get("version", 0)) != 2:
-            raise PackageError("纪实影片分镜不是 v2 格式。")
+        if package.plan.get("version") == 4:
+            from .memory_executor import NativeMemoryExecutor
+            return NativeMemoryExecutor(renderer=self.renderer, comfyui=self.comfyui,
+                                        work_dir=self.work_dir).execute(task, package, progress)
+        plan_version = int(package.plan.get("version", 0))
+        if package.plan.get("format") != "lingnian-documentary-storyboard" or plan_version not in {2, 3}:
+            raise PackageError("纪实影片分镜版本不受支持。")
         spec = dict(package.plan.get("production_spec") or task.production_spec)
         width = int((spec.get("output") or {}).get("width", 0))
         height = int((spec.get("output") or {}).get("height", 0))
         fps = int((spec.get("output") or {}).get("fps", 24))
         target_duration = int(spec.get("target_duration_seconds", 0))
-        if (width, height) not in {(1280, 720), (720, 1280)} or fps != 24 or target_duration not in {45, 60, 90}:
+        visual_strategy = str(spec.get("visual_strategy", "generated_motion"))
+        if (width, height) not in {(1280, 720), (720, 1280)} or fps != 24 or target_duration not in {30, 45, 60, 90}:
             raise PackageError("影片规格不在允许范围内。")
+        if target_duration == 30 and (plan_version != 3 or visual_strategy != "stable_montage"):
+            raise PackageError("30秒影片必须使用稳定画面分镜。")
+        if visual_strategy not in {"stable_montage", "generated_motion"}:
+            raise PackageError("影片画面策略不受支持。")
         if spec.get("synthetic_voice_allowed") is not False:
             raise PackageError("影片规格没有明确关闭声音克隆。")
+        if visual_strategy == "stable_montage" and any(
+            spec.get(key) is not False
+            for key in (
+                "generated_face_motion_allowed",
+                "generated_eye_motion_allowed",
+                "generated_head_turn_allowed",
+            )
+        ):
+            raise PackageError("稳定故事片没有明确关闭脸部、眼睛和转头生成。")
         scenes = list(package.plan.get("scenes") or [])
         if not 3 <= len(scenes) <= 10:
             raise PackageError("分镜数量不正确。")
@@ -100,6 +119,7 @@ class DocumentaryExecutor:
                 height=height,
                 fps=fps,
                 generated_visual_hashes=generated_visual_hashes,
+                visual_strategy=visual_strategy,
                 keepalive=lambda: progress(
                     10 + round(75 * (index - 1) / total),
                     f"正在生成第 {index}/{total} 个镜头",
@@ -161,6 +181,10 @@ class DocumentaryExecutor:
                 report.get("source_type") == "generated_video"
                 for report in context_reports
             ),
+            stable_visual_scene_count=sum(
+                report.get("source_type") == "generated_still"
+                for report in context_reports
+            ),
             unique_generated_visual_count=len(unique_visuals),
             duplicate_visual_check_passed=(
                 bool(context_reports) and len(unique_visuals) == len(context_reports)
@@ -213,6 +237,7 @@ class DocumentaryExecutor:
         height: int,
         fps: int,
         generated_visual_hashes: set[str],
+        visual_strategy: str,
         keepalive: Callable[[], None],
     ) -> dict[str, str]:
         kind = str(scene.get("kind", ""))
@@ -258,6 +283,8 @@ class DocumentaryExecutor:
             raise PackageError("分镜包含未知镜头类型。")
         self.comfyui.doctor()
         generated: Path | None = None
+        generated_frame: Path | None = None
+        visual_hash = ""
         for seed_offset in range(2):
             candidate = self.comfyui.generate_scene(
                 scene=scene,
@@ -269,17 +296,42 @@ class DocumentaryExecutor:
                 seed_offset=seed_offset,
                 on_wait=keepalive,
             )
-            if candidate.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
-                raise StaticWorkflowError(
-                    "纪实空镜工作流只输出静态图片；请改用能输出 MP4、WebM 或 GIF 的动态视频工作流。"
+            if visual_strategy == "stable_montage":
+                frame = clip.with_suffix(f".stable-{seed_offset}.png")
+                self.renderer.extract_stable_frame(
+                    candidate,
+                    frame,
+                    width=width,
+                    height=height,
                 )
-            visual_hash = self.renderer.visual_fingerprint(candidate)
+                visual_hash = self.renderer.image_fingerprint(frame)
+            else:
+                if candidate.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                    raise StaticWorkflowError(
+                        "纪实空镜工作流只输出静态图片；请改用能输出 MP4、WebM 或 GIF 的动态视频工作流。"
+                    )
+                visual_hash = self.renderer.visual_fingerprint(candidate)
             if visual_hash not in generated_visual_hashes:
                 generated_visual_hashes.add(visual_hash)
                 generated = candidate
+                generated_frame = frame if visual_strategy == "stable_montage" else None
                 break
         if generated is None:
             raise PackageError("多个纪实空镜生成了相同画面，已阻止低质量重复成片。")
+        if visual_strategy == "stable_montage":
+            if generated_frame is None:
+                raise PackageError("稳定故事片没有取得可用固定画面。")
+            self.renderer.image_clip(
+                generated_frame,
+                clip,
+                subtitle=subtitle,
+                duration=duration,
+                width=width,
+                height=height,
+                fps=fps,
+                motion=motion,
+            )
+            return {"source_type": "generated_still", "visual_sha256": visual_hash}
         self.renderer.video_clip(
             generated,
             clip,

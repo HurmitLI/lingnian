@@ -53,6 +53,7 @@ import type {
   MemoryBook,
   MemorySession,
   MediaLink,
+  MediaAsset,
   Reminder,
   SessionDetail,
   TimelineItem,
@@ -92,6 +93,8 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
   const [formalMemberCount, setFormalMemberCount] = useState<number | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioPreview, setAudioPreview] = useState<string | null>(null);
+  const [narrationText, setNarrationText] = useState("");
+  const [narrationConsent, setNarrationConsent] = useState(false);
   const [triggerPreview, setTriggerPreview] = useState<string | null>(null);
   const [correctedText, setCorrectedText] = useState("");
   const [savedCorrectedText, setSavedCorrectedText] = useState("");
@@ -644,7 +647,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
     }
   }
 
-  async function startMemory(lifeStage: string) {
+  async function startMemory(lifeStage: string, mode: "guided_voice" | "single" = "guided_voice") {
     if (!selectedProfileId) return;
     const needsConfirmation = topicPreference(lifeStage) === "ask_first";
     if (needsConfirmation && !window.confirm(`请先询问讲述者：现在愿意聊“${lifeStage}”吗？\n\n只有对方明确同意后再继续。`)) return;
@@ -656,7 +659,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
         body: JSON.stringify({
           elder_id: selectedProfileId,
           narrator_person_id: effectiveNarratorPersonId,
-          interview_mode: "guided_voice",
+          interview_mode: mode,
           life_stage: lifeStage,
           topic_confirmed: needsConfirmation,
         }),
@@ -673,9 +676,30 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
       await loadSession(session.id);
       setAudioFile(null);
       setAudioNeedsRetry(false);
-      setNotice("采访已经准备好。点击一次“开始连续采访”，后面只需要慢慢回答。 ");
+      setNarrationText("");
+      setNarrationConsent(false);
+      setNotice(mode === "single" ? "可以导入完整录音，也可以展开“只有文字”生成清楚标注的 AI 配音。" : "采访已经准备好。点击一次“开始连续采访”，后面只需要慢慢回答。");
     } catch (value) {
       showError(value);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function generateTextNarration() {
+    if (!detail || !narrationConsent || narrationText.trim().length < 10) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api<MediaAsset>(`/api/v1/memory-sessions/${detail.session.id}/text-narration`, {
+        method: "POST",
+        body: JSON.stringify({ text: narrationText.trim(), external_speech_authorized: true }),
+      });
+      await loadSession(detail.session.id);
+      setNotice("AI 配音已保存。请先试听，再识别文字、确认故事并制作影片；这不是家人的真实录音。");
+    } catch (value) {
+      showError(value);
+      await loadSession(detail.session.id);
     } finally {
       setBusy(false);
     }
@@ -2160,6 +2184,9 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
           </label>
           <button type="button" className="button primary" disabled={!activeLifeStage || !selectedProfileId || !effectiveNarratorPersonId || busy} onClick={() => activeLifeStage && startMemory(activeLifeStage)}>{comfortMode ? "就聊这个" : "开始语音采访"}</button>
         </div>
+        <label className="field"><span>已有录音的话题</span><select aria-label="已有录音的话题" value={selectedLifeStage} onChange={(event) => setSelectedLifeStage(event.target.value)}>{availableStages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select></label>
+        <button type="button" className="button secondary" disabled={!activeLifeStage || !selectedProfileId || !effectiveNarratorPersonId || busy} onClick={() => activeLifeStage && startMemory(activeLifeStage, "single")}>导入一段完整录音</button>
+        <button type="button" className="button secondary" disabled={!activeLifeStage || !selectedProfileId || !effectiveNarratorPersonId || busy} onClick={() => activeLifeStage && startMemory(activeLifeStage, "single")}>用已有文字制作</button>
         {selectedProfile && (
           <details className="secondary-entry">
             <summary>也可以用一张照片或老物件开始</summary>
@@ -2322,12 +2349,20 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 {!isRecording ? <button type="button" className="button secondary" onClick={() => startRecording()} disabled={busy}>开始录音</button> : <button type="button" className="button recording" onClick={stopRecording}>停止录音</button>}
                 <label className={`button secondary file-button${isRecording ? " disabled" : ""}`}>选择已有音频<input aria-label="选择已有音频" type="file" accept="audio/*" disabled={busy || isRecording} onChange={(event) => event.target.files?.[0] && setPreviewFile(event.target.files[0])} /></label>
               </div>
+              {!existingAudio && ["PROMPT_READY", "RECORDING_PENDING"].includes(detail.session.status) && <details className="workflow-block">
+                <summary>只有文字？先生成 AI 配音</summary>
+                <p className="hint">使用晓晓声线自然朗读，不克隆家人的声音。建议先准备一段完整的小故事；实际时长以试听为准，影片不会截断配音。</p>
+                <label className="field"><span>要朗读的故事</span><textarea aria-label="要朗读的故事" rows={7} maxLength={1500} value={narrationText} disabled={busy || isRecording} onChange={(event) => setNarrationText(event.target.value)} /></label>
+                <label className="checkbox-label"><input type="checkbox" checked={narrationConsent} disabled={busy || isRecording} onChange={(event) => setNarrationConsent(event.target.checked)} />同意将这段文字发送到微软语音服务生成 AI 配音，确认拥有文字的使用权</label>
+                <button type="button" className="button secondary" disabled={busy || isRecording || Boolean(audioFile) || !narrationConsent || narrationText.trim().length < 10} onClick={generateTextNarration}>生成并保存 AI 配音</button>
+              </details>}
               {isRecording && <div className="recording-live" role="status" aria-live="polite"><span aria-hidden="true" /><strong>正在录音 {formatRecordingDuration(recordingSeconds)}</strong><small>讲完后请点“停止录音”</small></div>}
               {audioPreview && <audio controls src={audioPreview} className="audio-player" />}
               {audioFile && <div className="file-line"><span>{audioFile.name}</span><div className="button-row compact-row"><button type="button" className="button quiet danger" disabled={busy} onClick={discardAudio}>移除这段音频</button><button type="button" className="button primary" disabled={busy || isRecording} onClick={uploadAudio}>确认上传到{IS_FORMAL_CLOUD ? "家庭空间" : "本机档案"}</button></div></div>}
-              {existingAudio && <p className="hint">已保留原始音频：{existingAudio.original_filename}</p>}
+              {existingAudio && <><p className="hint">{existingAudio.is_original ? "已保留原始音频" : "已保存 AI 合成配音（非家人原声）"}：{existingAudio.original_filename}</p>{!audioPreview && <audio controls src={mediaUrl(existingAudio.content_url) ?? existingAudio.content_url} className="audio-player" />}</>}
+              {detail.tasks.some((task) => task.task_type === "text_narration" && task.status === "needs_attention") && <p role="alert">这次配音结果尚未确认，原任务已保留，不会自动重复合成。可以刷新查看或改用已有录音继续。</p>}
               {processingTask && <div className="task-progress" role="status" aria-live="polite"><div><strong>{taskStatusLabel(processingTask.status)}</strong><span>{Math.max(0, Math.min(100, processingTask.progress))}%</span></div><progress max="100" value={Math.max(0, Math.min(100, processingTask.progress))} /><p>可以留在当前页面等待；如果刷新或离开，任务仍会继续。</p><button type="button" className="button secondary" disabled={busy} onClick={refreshCurrentSession}>刷新处理状态</button></div>}
-              {detail.session.status === "AUDIO_UPLOADED" && !processingTask && <button type="button" className="button primary" disabled={busy} onClick={() => runTask("transcription")}>开始本地转写</button>}
+              {detail.session.status === "AUDIO_UPLOADED" && !processingTask && <button type="button" className="button primary" disabled={busy} onClick={() => runTask("transcription")}>识别录音文字</button>}
               {latestFailedTask && (!requiresCloudConsent || latestFailedTask.task_type === "transcription") && <button className="button secondary" disabled={busy} onClick={() => retryTask(latestFailedTask)}>重试失败任务</button>}
             </div>
           )}
@@ -2339,7 +2374,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 <div><h4>ASR 原始转写</h4><p className="evidence-text">{detail.transcript.raw_text}</p></div>
                 <label><h4>{detail.session.interview_mode === "guided_voice" ? "整场采访整理稿" : "人工校对稿"}</h4><textarea aria-label="人工校对稿" value={correctedText} onChange={(event) => { setCorrectedText(event.target.value); setOrganizationError(""); }} rows={8} /></label>
               </div>
-              {existingAudio && <TimedAudioTranscript audioUrl={mediaUrl(existingAudio.content_url) ?? existingAudio.content_url} metadata={detail.transcript.asr_metadata} fallbackText={detail.transcript.raw_text} label="按句回听采访原声" />}
+              {existingAudio && <TimedAudioTranscript audioUrl={mediaUrl(existingAudio.content_url) ?? existingAudio.content_url} metadata={detail.transcript.asr_metadata} fallbackText={detail.transcript.raw_text} label={existingAudio.is_original ? "按句回听采访原声" : "按句回听 AI 合成配音"} />}
               {unsaved && <p className="unsaved">有尚未保存的修改</p>}
               <div className="button-row">
                 <button className="button secondary" disabled={busy || !unsaved} onClick={saveTranscript}>保存校对稿</button>
@@ -2360,7 +2395,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
             <div className="workflow-block" data-state={currentWorkflowStep === 3 ? "current" : "upcoming"}>
               <div className="block-title"><h3>故事草稿</h3><span>{detail.story_draft.provider} / {detail.story_draft.model}</span></div>
               <div className="story-source-status">
-                <span><CheckCircle2 size={15} aria-hidden="true" />原始录音已保留</span>
+                <span><CheckCircle2 size={15} aria-hidden="true" />{existingAudio?.is_original === false ? "AI 合成配音已保留" : "原始录音已保留"}</span>
                 <span><CheckCircle2 size={15} aria-hidden="true" />校对稿版本 {detail.transcript?.version ?? 1}</span>
                 <span>{detail.session.status === "ARCHIVED" ? "家人已确认归档" : "等待家人最后确认"}</span>
               </div>
@@ -2452,7 +2487,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                 <article key={item.story.id}>
                   <div className="archive-story-meta">
                     <time>{new Date(item.story.confirmed_at).toLocaleDateString("zh-CN")}</time>
-                    <span>{item.life_stage} · {item.narration_kind === "family_recollection" ? `${item.narrator_label ?? "家人"}回忆讲述` : `${item.narrator_label ?? selectedProfileLabel}亲口讲述`} · 故事 {String(filteredTimeline.length - index).padStart(2, "0")}</span>
+                    <span>{item.life_stage} · {item.audio_is_original === false ? "文字故事 · AI 配音" : item.narration_kind === "family_recollection" ? `${item.narrator_label ?? "家人"}回忆讲述` : `${item.narrator_label ?? selectedProfileLabel}的回忆记录`} · 故事 {String(filteredTimeline.length - index).padStart(2, "0")}</span>
                   </div>
                   <div className={`archive-story-body${item.image_url ? " with-image" : ""}`}>
                     {item.image_url && (
@@ -2477,7 +2512,7 @@ export default function WorkspaceApp({ view }: { view: WorkspaceView }) {
                     )}
                   </details>
                   {mediaUrl(item.audio_url) && (
-                    <div className="archive-story-audio"><span>{item.interview_mode === "guided_voice" ? "完整采访录音 · 含提问与回答" : item.narration_kind === "family_recollection" ? `${item.narrator_label ?? "家人"}的回忆` : "亲口讲述"}</span><audio controls preload="metadata" src={mediaUrl(item.audio_url) ?? undefined} /></div>
+                    <div className="archive-story-audio"><span>{item.audio_is_original === false ? "AI 合成配音 · 非家人原声" : item.interview_mode === "guided_voice" ? "完整采访录音 · 含提问与回答" : "保存的录音"}</span><audio controls preload="metadata" src={mediaUrl(item.audio_url) ?? undefined} /></div>
                   )}
                   <div className="archive-interview-entry">
                     <button type="button" className="button quiet" disabled={archiveInterviewLoadingId === item.story.id} onClick={() => toggleArchivedInterview(item)}>

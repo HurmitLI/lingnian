@@ -1,0 +1,50 @@
+{
+  "format": "lingnian-continuity-trial",
+  "version": 1,
+  "fictional_only": true,
+  "reference_sha256": "ebfb9f80a9dfaf174777bc5787a27fa5ee9cad15e5ddeb41d43d290909a54dd7",
+  "reference_policy": "first_reference_then_previous_last_frame",
+  "review_notes": [
+    "仅重试 v2 的第二段动作；输入为方案 81b756df5bcf0a08 的第一段真实尾帧，不是换人物。",
+    "v2 第二段朝镜头靠近，不符合朝车门行进，不能批准；本方案保留原故事，明确画面左侧方向与固定摄影机。",
+    "先运行一段并核对方向，未通过不得继续第二段。本方案 id 1 对应原整片第二段。"
+  ],
+  "source_text": "沈素琴（虚构演示）回忆道，那个蓝布包她一直没舍得扔。1982年春天，她19岁，第一次一个人坐火车去无锡的纺织厂。",
+  "film_bible": {
+    "summary": "延续同一次出发前的站台片刻，年轻女性抱着蓝包走向身旁车门。",
+    "character": "同一位虚构年轻成人女性，保持输入图面容和黑色双辫子。",
+    "wardrobe": "输入图浅色小花长袖衬衫与深蓝裤子。",
+    "prop": "同一个深蓝帆布旅行包、灰色布提手，不增减包和肩带。",
+    "era": "1982年春，保留绿色普通客车，不新增未经证实的机车。",
+    "location": "同一湿润站台，车门在画面左侧人物身旁，出发城市未知。",
+    "journey": "即将去无锡的纺织厂，不是离开无锡；不表现到达。",
+    "visual_style": "同一阴天中性冷光、蓝绿色低饱和画面，固定机位、曝光和白平衡。",
+    "forbidden_changes": "禁止人物、包、衣服、列车或场地改变；不杜撰家属和新历史事件。"
+  },
+  "opening_state": "她抱着蓝包侧脸看向画面左侧身旁的车门。",
+  "segments": [
+    {
+      "id": 1,
+      "duration_seconds": 5,
+      "source_quotes": ["第一次一个人坐火车去无锡的纺织厂。"],
+      "before": "她抱着蓝包侧脸看向画面左侧身旁的车门。",
+      "action": "她保持目光朝左，身体转向左侧车厢并向左迈一步，不回头看镜头。",
+      "camera": "固定摄影机和中景，不跟拍、不推进、不变焦。人物在画面中向左移动，车门位置不变。",
+      "after": "她抱着蓝包朝画面左侧车门迈出一步，侧身或背侧朝向镜头，仍在站台。",
+      "staging_note": "此动作仅为出发前的影像演绎，不回写为家族事实。",
+      "render_action": "Locked-off camera. The woman is already looking LEFT toward the train door at screen-left. Keeping her face pointed LEFT, she rotates her shoulders LEFT toward the carriage and takes one slow sideways step to screen-LEFT, nearer that visible door. We see her left-facing profile then the back of her shoulder. Her body moves LEFT across the frame, never toward the viewer. She cradles the same bag throughout. The camera and the train remain stationary."
+    },
+    {
+      "id": 2,
+      "duration_seconds": 5,
+      "source_quotes": ["第一次一个人坐火车去无锡的纺织厂。"],
+      "before": "她抱着蓝包朝画面左侧车门迈出一步，侧身或背侧朝向镜头，仍在站台。",
+      "action": "延续左向姿态，抱包再向同一扇车门迈一小步，在车门旁停下，仍在站台。",
+      "camera": "固定原机位，不跟拍、不切镜、不换轴。",
+      "after": "她侧身抱包停在同一扇车门旁，尚未上车。",
+      "staging_note": "只有前段方向通过才运行，不生成未知的车内或目的地场景。",
+      "render_action": "Continue the existing LEFTWARD movement with a locked camera. Seen in left-facing profile or rear three-quarter view, she makes one more small step toward the same train door on screen-left, then pauses beside it on the platform, still holding the same bag. Her face remains directed toward that door. No turn toward the camera, no forward approach, no boarding yet."
+    }
+  ],
+  "render_bible": "One continuous live-action moment before boarding in spring 1982. Same fictional young adult Chinese woman, black twin braids, pale patterned long-sleeved shirt, navy trousers, same dark blue canvas bag with gray cloth handles. Preserve the input face, bag shape, clothes and neutral cool overcast colors. Same stationary green carriage and wet platform. Her destination is Wuxi; the departure city is unknown. Closed relaxed lips, no talking. Natural small movement. No cut, no zoom, no pan, no color shift, no new people, no new objects, no change of place."
+}

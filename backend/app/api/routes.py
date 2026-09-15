@@ -15,6 +15,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, Uplo
 from fastapi.responses import FileResponse, Response
 from starlette.background import BackgroundTask
 from sqlalchemy import delete, func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -165,6 +166,8 @@ from app.services.generative_media import (
 )
 from app.services.asr import get_asr_provider
 from app.services.asr.audio import get_ffmpeg_binary, normalize_audio
+from app.services.asr.timing import bound_answer_timing, pcm_evidence
+from app.services.memory.short_scene import propose_short_scenes, with_sentence_timing
 from app.services.llm import (
     clean_local_interview_transcript,
     generate_local_interview_followup,
@@ -300,6 +303,33 @@ def secure_value(
         ) from exc
 
 
+def media_filename(db: Session, asset: MediaAsset, store: SecretStore) -> str:
+    family = asset.session.elder.person.family
+    filename = secure_value(db, family, asset, "original_filename", store)
+    if isinstance(filename, str) and filename.strip():
+        return filename
+
+    extension = {
+        "audio/mpeg": ".mp3",
+        "audio/mp4": ".m4a",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "video/mp4": ".mp4",
+    }.get(asset.mime_type, Path(asset.relative_path).suffix)
+    stem = {
+        "audio_original": "原始录音",
+        "audio_normalized": "整理后的录音",
+        "interview_question_audio": "采访提问",
+        "interview_turn_audio": "采访回答",
+        "photo_original": "家庭照片",
+        "generated_short_scene": "回忆短片",
+        "generated_short_reference": "场景参考图",
+    }.get(asset.kind, "家庭记忆文件")
+    return f"{stem}{extension}"
+
+
 def elder_read(
     db: Session, profile: ElderProfile, store: SecretStore
 ) -> ElderProfileRead:
@@ -334,11 +364,10 @@ def family_read(
 
 
 def media_read(db: Session, asset: MediaAsset, store: SecretStore) -> MediaAssetRead:
-    family = asset.session.elder.person.family
     return MediaAssetRead(
         id=asset.id,
         kind=asset.kind,
-        original_filename=secure_value(db, family, asset, "original_filename", store),
+        original_filename=media_filename(db, asset, store),
         mime_type=asset.mime_type,
         size_bytes=asset.size_bytes,
         sha256=asset.sha256,
@@ -3318,6 +3347,7 @@ def _create_complete_interview_audio(
     db: Session,
     session: MemorySession,
     store: SecretStore,
+    transcript: Transcript,
 ) -> MediaAsset | None:
     existing = db.scalar(
         select(MediaAsset).where(
@@ -3328,7 +3358,10 @@ def _create_complete_interview_audio(
     )
     if existing:
         return existing
-    turns = [turn for turn in session.interview_turns if turn.audio_asset_id]
+    turns = sorted(
+        (turn for turn in session.interview_turns if turn.audio_asset_id),
+        key=lambda turn: turn.turn_index,
+    )
     if not turns:
         return None
     settings = get_settings()
@@ -3342,6 +3375,8 @@ def _create_complete_interview_audio(
         with tempfile.TemporaryDirectory(prefix="lingnian-interview-merge-") as temp_name:
             temp_dir = Path(temp_name)
             normalized_paths: list[Path] = []
+            timeline: list[dict] = []
+            total_frames = 0
             for index, turn in enumerate(turns):
                 sequence = (
                     ("question", turn.question_audio_asset),
@@ -3372,6 +3407,17 @@ def _create_complete_interview_audio(
                     normalized = temp_dir / f"turn-{index}-{segment}.wav"
                     normalize_audio(source_path, normalized)
                     normalized_paths.append(normalized)
+                    evidence = pcm_evidence(normalized)
+                    entry = {"turn_id": turn.id, "turn_index": turn.turn_index,
+                             "role": segment, "asset_id": source_asset.id,
+                             "start_frame": total_frames,
+                             "end_frame": total_frames + evidence["frames"],
+                             "pcm_sha256": evidence["pcm_sha256"]}
+                    if segment == "answer":
+                        metadata = secure_value(db, family, turn, "asr_metadata", store, master_key=key)
+                        entry["asr_timing"] = bound_answer_timing(metadata, evidence)
+                    timeline.append(entry)
+                    total_frames += evidence["frames"]
             if not normalized_paths:
                 return None
             concat_file = temp_dir / "inputs.txt"
@@ -3407,6 +3453,9 @@ def _create_complete_interview_audio(
             )
             if completed.returncode != 0 or not final_path.is_file():
                 raise RuntimeError("INTERVIEW_AUDIO_MERGE_FAILED")
+            merged_evidence = pcm_evidence(final_path)
+            if merged_evidence["frames"] != total_frames:
+                raise RuntimeError("INTERVIEW_AUDIO_TIMELINE_MISMATCH")
         final_path.chmod(0o600)
         asset = MediaAsset(
             id=asset_id,
@@ -3430,6 +3479,16 @@ def _create_complete_interview_audio(
             store,
         )
         encrypt_asset_if_needed(db, asset, family, store)
+        metadata = secure_value(db, family, transcript, "asr_metadata", store, master_key=key)
+        merged_metadata = {
+            **metadata, "interview_timeline": {
+                "version": 1, "clock": "merged_audio_pcm", "asset_id": asset.id,
+                **merged_evidence, "segments": timeline, "review_status": "unreviewed",
+                "notice": "时间依据对应原始问答音频，不适用于改写后的故事旁白。",
+            },
+        }
+        transcript.asr_metadata = merged_metadata
+        protect_values(db, family, transcript, {"asr_metadata": merged_metadata}, store)
         return asset
     except Exception:
         final_path.unlink(missing_ok=True)
@@ -3510,7 +3569,7 @@ def finalize_guided_interview(
         secret_store,
     )
     try:
-        _create_complete_interview_audio(db, session, secret_store)
+        _create_complete_interview_audio(db, session, secret_store, transcript)
     except Exception as exc:
         db.rollback()
         raise DomainError(
@@ -4134,8 +4193,7 @@ def get_timeline(
             .where(
                 MemorySession.id == story.source_draft.session_id,
                 MediaAsset.kind == "audio_original",
-                MediaAsset.is_original.is_(True),
-            )
+                )
             .order_by(MediaAsset.created_at.desc())
         )
         trigger_image = db.scalar(
@@ -4173,6 +4231,7 @@ def get_timeline(
                     for event in story.timeline_events
                 ],
                 audio_url=f"/api/v1/media-assets/{original.id}/content" if original else None,
+                audio_is_original=original.is_original if original else None,
                 image_url=(
                     f"/api/v1/media-assets/{trigger_image.id}/content"
                     if trigger_image
@@ -4238,8 +4297,7 @@ def ask_family_archive(
             .where(
                 MediaAsset.session_id == session.id,
                 MediaAsset.kind == "audio_original",
-                MediaAsset.is_original.is_(True),
-            )
+                )
             .order_by(MediaAsset.created_at.desc())
         )
         image = db.scalar(
@@ -4678,8 +4736,7 @@ def download_heritage_package(
                 .where(
                     MediaAsset.session_id == session.id,
                     MediaAsset.kind == "audio_original",
-                    MediaAsset.is_original.is_(True),
-                )
+                    )
                 .order_by(MediaAsset.created_at.desc())
             )
             image = db.scalar(
@@ -4798,6 +4855,26 @@ def download_heritage_package(
     )
 
 
+@router.get("/memory-sessions/{session_id}/short-scene-preview")
+def preview_short_scene(
+    session_id: str,
+    db: Session = Depends(get_db),
+    secret_store: SecretStore = Depends(get_secret_store),
+) -> dict:
+    """Local timing proposals only: no upload, generation, consent or DB write."""
+    session = require(db, MemorySession, session_id, "SESSION_NOT_FOUND", "没有找到这次记录。")
+    audio = db.scalar(select(MediaAsset).where(
+        MediaAsset.session_id == session.id, MediaAsset.kind == "audio_original",
+        MediaAsset.status == "ready",
+    ).order_by(MediaAsset.created_at.desc()))
+    metadata = transcript_read(db, session.transcript, secret_store).asr_metadata if session.transcript else {}
+    family = session.elder.person.family
+    raw_answers = {turn.id: secure_value(db, family, turn, "raw_answer_text", secret_store)
+                   for turn in session.interview_turns}
+    metadata = with_sentence_timing(metadata, raw_answers)
+    return propose_short_scenes(metadata, audio_asset_id=audio.id if audio else "")
+
+
 @router.post(
     "/elder-profiles/{profile_id}/documentary-plan-preview",
     response_model=DocumentaryPlanPreviewRead,
@@ -4834,6 +4911,9 @@ def preview_documentary_plan(
         production_spec={
             "target_duration_seconds": payload.target_duration_seconds,
             "aspect_ratio": payload.aspect_ratio,
+            "render_mode": payload.render_mode,
+            "reference_mode": payload.reference_mode,
+            "model_planning_authorized": payload.model_planning_authorized,
         },
     )
     return DocumentaryPlanPreviewRead.model_validate(plan)
@@ -4865,8 +4945,7 @@ def download_generation_production_package(
         .where(
             MediaAsset.session_id == session.id,
             MediaAsset.kind == "audio_original",
-            MediaAsset.is_original.is_(True),
-        )
+            )
         .order_by(MediaAsset.created_at.desc())
     )
     image = db.scalar(
@@ -4972,6 +5051,9 @@ def download_generation_production_package(
                 {
                     "target_duration_seconds": payload.target_duration_seconds,
                     "aspect_ratio": payload.aspect_ratio,
+            "render_mode": payload.render_mode,
+            "reference_mode": payload.reference_mode,
+            "model_planning_authorized": payload.model_planning_authorized,
                 },
             ),
         )
@@ -5156,6 +5238,11 @@ def create_generative_media_request(
     db: Session = Depends(get_db),
     secret_store: SecretStore = Depends(get_secret_store),
 ) -> GenerativeMediaRequestRead:
+    if payload.generation_type == "scene_video" and payload.render_mode == "native_memory":
+        if not payload.model_planning_authorized:
+            raise DomainError("MEMORY_PLANNING_CONSENT_REQUIRED", "请先同意本次分镜模型处理。", 409)
+        if payload.aspect_ratio != "16:9":
+            raise DomainError("MEMORY_ASPECT_RATIO_UNSUPPORTED", "原生回忆影片当前支持横屏。", 422)
     profile = require(db, ElderProfile, profile_id, "ELDER_NOT_FOUND", "没有找到这位讲述者。")
     family = profile.person.family
     if payload.story_id:
@@ -5209,8 +5296,18 @@ def create_generative_media_request(
         {
             "target_duration_seconds": payload.target_duration_seconds,
             "aspect_ratio": payload.aspect_ratio,
+            "render_mode": payload.render_mode,
+            "reference_mode": payload.reference_mode,
+            "model_planning_authorized": payload.model_planning_authorized,
         },
     )
+    if payload.story_id and payload.render_mode == "native_memory":
+        source_audio = db.scalar(select(MediaAsset).where(
+            MediaAsset.session_id == story.source_draft.session_id,
+            MediaAsset.kind == "audio_original",
+        ).order_by(MediaAsset.created_at.desc()))
+        if source_audio is not None and not source_audio.is_original:
+            production_spec.update(source_audio_origin="synthetic_narration", voice_strategy="provided_synthetic_narration")
     canonical = json.dumps(
         {
             "elder_id": profile.id,
@@ -5219,12 +5316,24 @@ def create_generative_media_request(
             "allow_external_upload": payload.allow_external_upload,
             "max_cost_cents": payload.max_cost_cents,
             "production_spec": production_spec,
+            "actor_label": payload.actor_label.strip(),
+            "subject_consent": payload.subject_consent,
+            "rights_confirmed": payload.rights_confirmed,
+            "no_impersonation": payload.no_impersonation,
         },
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     )
+    request_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    if payload.idempotency_key:
+        prior = db.scalar(select(GenerativeMediaRequest).where(GenerativeMediaRequest.idempotency_key == payload.idempotency_key))
+        if prior:
+            if prior.elder_id != profile.id or prior.request_sha256 != request_hash:
+                raise DomainError("GENERATION_KEY_CONFLICT", "提交标识对应另一份输入，请保留原任务并重新确认制作内容。", 409)
+            return generative_request_read(db, prior, secret_store)
     request = GenerativeMediaRequest(
+        idempotency_key=payload.idempotency_key,
         elder_id=profile.id,
         story_id=payload.story_id,
         generation_type=payload.generation_type,
@@ -5243,11 +5352,18 @@ def create_generative_media_request(
         progress_stage="等待家用生成节点" if status == "queued" else None,
         progress_detail={},
         result_report={},
-        request_sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        request_sha256=request_hash,
         error_code=None if status == "queued" else "PROVIDER_NOT_CONFIGURED",
     )
     db.add(request)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        prior = db.scalar(select(GenerativeMediaRequest).where(GenerativeMediaRequest.idempotency_key == payload.idempotency_key)) if payload.idempotency_key else None
+        if prior and prior.elder_id == profile.id and prior.request_sha256 == request_hash:
+            return generative_request_read(db, prior, secret_store)
+        raise DomainError("GENERATION_KEY_CONFLICT", "提交标识已被使用，请查看原任务。", 409)
     protect_values(
         db,
         family,
@@ -5451,7 +5567,7 @@ def get_media_content(
     asset.integrity_checked_at = now_utc()
     db.commit()
     family = asset.session.elder.person.family
-    filename = secure_value(db, family, asset, "original_filename", secret_store)
+    filename = media_filename(db, asset, secret_store)
     if asset.encryption_version == 0:
         return FileResponse(path, media_type=asset.mime_type, filename=filename)
     if asset.encryption_version != 1:

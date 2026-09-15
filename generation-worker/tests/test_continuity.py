@@ -65,6 +65,22 @@ def test_short_generation_cannot_be_looped_to_meet_requested_length(tmp_path):
         normalize_segment(ShortRenderer(), tmp_path / "short.mp4", tmp_path / "out.mp4", 5)
 
 
+def test_camera_exclusions_reach_negative_conditioning_without_losing_identity_guards(plan):
+    plan["render_negative"] = "camera pan, zoom out, dolly, tracking shot, walking toward camera"
+    validate_plan(plan, ROOT / "frontend/public/showcase/shen-suqin-station-1982.png")
+    graph = build_wan_graph(plan, plan["segments"][0], image_name="ref.png", prefix="test")
+    assert plan["render_negative"] in graph["6"]["inputs"]["text"]
+    assert "换脸" in graph["6"]["inputs"]["text"]
+    assert graph["9"]["inputs"]["negative"] == ["6", 0]
+
+
+@pytest.mark.parametrize("value", ["", " " * 2, [], "x" * 2001])
+def test_invalid_camera_exclusions_are_rejected(plan, value):
+    plan["render_negative"] = value
+    with pytest.raises(PackageError, match="反向约束"):
+        validate_plan(plan, ROOT / "frontend/public/showcase/shen-suqin-station-1982.png")
+
+
 def test_normalization_never_uses_loop_or_slow_motion(monkeypatch, tmp_path):
     class Renderer:
         ffmpeg = "ffmpeg"
@@ -103,7 +119,8 @@ def test_trial_carries_tail_forward_and_resumes_verified_segments(plan, tmp_path
             uploads.append(path)
             return path.name
 
-        def run_workflow(self, graph, *, output_path):
+        def run_workflow(self, graph, *, output_path, journal_path):
+            assert journal_path.name.startswith("segment-") and journal_path.name.endswith("-job.json")
             graphs.append(graph)
             output_path.write_bytes(f"raw-{len(graphs)}".encode())
             return output_path
@@ -186,3 +203,24 @@ def test_young_v2_has_own_reference_and_compact_whole_story_treatment():
     del p["segments"][1]["render_action"]
     with pytest.raises(PackageError, match="每一段"):
         validate_plan(p, ref)
+
+
+def test_generic_graph_does_not_invent_props_for_empty_handed_scene(plan):
+    plan["render_bible"] = "Two adult women saying goodbye outside a station, empty hands."
+    plan["segments"][0]["render_action"] = "The daughter takes one small step away from her mother."
+    graph = build_wan_graph(plan, plan["segments"][0], image_name="empty-hands.png", prefix="test")
+    for node in ("5", "6"):
+        text = graph[node]["inputs"]["text"]
+        for unintended in ("bag", "包", "皮质肩带", "刺绣图案", "蒸汽机车", "现代高铁"):
+            assert unintended not in text
+    assert plan["render_bible"] in graph["5"]["inputs"]["text"]
+    assert "换脸" in graph["6"]["inputs"]["text"]
+
+
+def test_explicit_scene_prop_requirements_are_not_removed(plan):
+    plan["render_bible"] = "Keep the same soft blue duffel bag and its two worn short handles."
+    plan["render_negative"] = "extra shoulder strap, new front pocket"
+    plan["segments"][0]["render_action"] = "She holds her bag without changing her grip."
+    graph = build_wan_graph(plan, plan["segments"][0], image_name="bag.png", prefix="test")
+    assert plan["render_bible"] in graph["5"]["inputs"]["text"]
+    assert plan["render_negative"] in graph["6"]["inputs"]["text"]

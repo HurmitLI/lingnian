@@ -13,8 +13,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
+from app.api.narration_routes import router as narration_router
 from app.api.auth_routes import router as auth_router
 from app.api.generation_node_routes import router as generation_node_router
+from app.api.short_scene_routes import router as short_scene_router
+from app.api.short_scene_export_routes import router as short_scene_export_router
+from app.api.short_scene_job_routes import router as short_scene_job_router
+from app.api.short_scene_reference_routes import router as short_scene_reference_router
+from app.api.short_scene_reference_job_routes import router as short_scene_reference_job_router
+from app.api.short_scene_reference_worker_routes import router as short_scene_reference_worker_router
+from app.api.short_scene_reference_result_routes import router as short_scene_reference_result_router
+from app.api.short_scene_reference_review_routes import router as short_scene_reference_review_router
 from app.core.config import get_settings
 from app.core.database import SessionLocal, initialize_database
 from app.core.errors import (
@@ -52,6 +61,14 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.include_router(short_scene_router)
+app.include_router(short_scene_export_router)
+app.include_router(short_scene_job_router)
+app.include_router(short_scene_reference_router)
+app.include_router(short_scene_reference_job_router)
+app.include_router(short_scene_reference_worker_router)
+app.include_router(short_scene_reference_result_router)
+app.include_router(short_scene_reference_review_router)
 
 settings = get_settings()
 app.add_middleware(
@@ -104,13 +121,9 @@ async def formal_auth_middleware(request: Request, call_next):
 @app.middleware("http")
 async def formal_database_snapshot_middleware(request: Request, call_next):
     response = await call_next(request)
-    high_frequency_worker_update = (
-        request.url.path == "/api/v1/generation-worker/heartbeat"
-        or (
-            request.url.path.startswith("/api/v1/generation-worker/tasks/")
-            and request.url.path.endswith("/progress")
-        )
-    )
+    # Task progress renews the lease and records reusable checkpoints. Persist it
+    # before acknowledging, otherwise a cold start restores an expired lease.
+    high_frequency_worker_update = request.url.path == "/api/v1/generation-worker/heartbeat"
     if (
         settings.formal_auth_required
         and request.method in {"POST", "PUT", "PATCH", "DELETE"}
@@ -159,4 +172,5 @@ async def request_observability_middleware(request: Request, call_next):
 
 app.include_router(auth_router)
 app.include_router(router)
+app.include_router(narration_router)
 app.include_router(generation_node_router)

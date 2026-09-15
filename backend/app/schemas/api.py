@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
@@ -360,33 +361,39 @@ class HeritageExportCreate(BaseModel):
 
 
 class ProductionPackageCreate(BaseModel):
+    render_mode: Literal["documentary", "native_memory"] = "documentary"
+    reference_mode: Literal["illustrative", "user_photo"] = "illustrative"
+    model_planning_authorized: bool = False
     story_id: str
     generation_type: str = Field(pattern="^(photo_restore|portrait_video|scene_video)$")
     actor_label: str = Field(min_length=1, max_length=80)
     subject_consent: bool
     rights_confirmed: bool
     no_impersonation: bool
-    target_duration_seconds: int = Field(default=60, ge=45, le=90)
+    target_duration_seconds: int = Field(default=60, ge=30, le=90)
     aspect_ratio: str = Field(default="16:9", pattern="^(16:9|9:16)$")
 
     @field_validator("target_duration_seconds")
     @classmethod
     def validate_documentary_duration(cls, value: int) -> int:
-        if value not in {45, 60, 90}:
-            raise ValueError("故事影片时长只能选择 45、60 或 90 秒。")
+        if value not in {30, 45, 60, 90}:
+            raise ValueError("故事影片时长只能选择 30、45、60 或 90 秒。")
         return value
 
 
 class DocumentaryPlanPreviewCreate(BaseModel):
+    render_mode: Literal["documentary", "native_memory"] = "documentary"
+    reference_mode: Literal["illustrative", "user_photo"] = "illustrative"
+    model_planning_authorized: bool = False
     story_id: str
-    target_duration_seconds: int = Field(default=60, ge=45, le=90)
+    target_duration_seconds: int = Field(default=60, ge=30, le=90)
     aspect_ratio: str = Field(default="16:9", pattern="^(16:9|9:16)$")
 
     @field_validator("target_duration_seconds")
     @classmethod
     def validate_preview_duration(cls, value: int) -> int:
-        if value not in {45, 60, 90}:
-            raise ValueError("故事影片时长只能选择 45、60 或 90 秒。")
+        if value not in {30, 45, 60, 90}:
+            raise ValueError("故事影片时长只能选择 30、45、60 或 90 秒。")
         return value
 
 
@@ -678,6 +685,10 @@ class GenerativeMediaCapability(BaseModel):
 
 
 class GenerativeMediaRequestCreate(BaseModel):
+    idempotency_key: str | None = Field(default=None, min_length=16, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+    render_mode: Literal["documentary", "native_memory"] = "documentary"
+    reference_mode: Literal["illustrative", "user_photo"] = "illustrative"
+    model_planning_authorized: bool = False
     story_id: str | None = None
     generation_type: str = Field(
         pattern="^(photo_restore|portrait_video|scene_video|voice_replica)$"
@@ -688,14 +699,14 @@ class GenerativeMediaRequestCreate(BaseModel):
     no_impersonation: bool
     allow_external_upload: bool
     max_cost_cents: int = Field(default=0, ge=0, le=100_000)
-    target_duration_seconds: int = Field(default=60, ge=45, le=90)
+    target_duration_seconds: int = Field(default=60, ge=30, le=90)
     aspect_ratio: str = Field(default="16:9", pattern="^(16:9|9:16)$")
 
     @field_validator("target_duration_seconds")
     @classmethod
     def validate_target_duration(cls, value: int) -> int:
-        if value not in {45, 60, 90}:
-            raise ValueError("故事影片时长只能选择 45、60 或 90 秒。")
+        if value not in {30, 45, 60, 90}:
+            raise ValueError("故事影片时长只能选择 30、45、60 或 90 秒。")
         return value
 
 
@@ -770,6 +781,7 @@ class TimelineItem(BaseModel):
     narration_kind: str = "first_person"
     events: list[TimelineEventRead]
     audio_url: str | None = None
+    audio_is_original: bool | None = None
     image_url: str | None = None
     image_asset_id: str | None = None
     image_annotation: str | None = None

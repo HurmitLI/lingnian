@@ -56,3 +56,6 @@ generation-worker/build/
 
 # Cloud deployment bindings are account and environment specific
 .vefaas/
+
+# Local generated films, review artifacts and worker packages
+outputs/

@@ -11,8 +11,10 @@ from lingnian_worker.models import AuthorizedPackage, PackageError, StaticWorkfl
 
 
 class FakeRenderer:
-    def __init__(self) -> None:
+    def __init__(self, duration: float = 45.0) -> None:
         self.rendered: list[str] = []
+        self.duration = duration
+        self.extracted: list[str] = []
 
     def image_clip(self, image: Path, target: Path, **kwargs) -> Path:
         self.rendered.append(target.name)
@@ -29,9 +31,17 @@ class FakeRenderer:
         return target
 
     def probe(self, path: Path) -> dict:
-        return {"duration": 45.0, "width": 1280, "height": 720}
+        return {"duration": self.duration, "width": 1280, "height": 720}
 
     def visual_fingerprint(self, path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def extract_stable_frame(self, source: Path, target: Path, **kwargs) -> Path:
+        self.extracted.append(source.name)
+        target.write_bytes(source.read_bytes() + b":fixed-frame")
+        return target
+
+    def image_fingerprint(self, path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -85,6 +95,33 @@ def make_task() -> WorkerTask:
     )
 
 
+def make_stable_package(tmp_path: Path) -> AuthorizedPackage:
+    package = make_package(tmp_path)
+    package.plan["version"] = 3
+    package.plan["production_spec"] = {
+        **package.plan["production_spec"],
+        "target_duration_seconds": 30,
+        "visual_strategy": "stable_montage",
+        "generated_face_motion_allowed": False,
+        "generated_eye_motion_allowed": False,
+        "generated_head_turn_allowed": False,
+    }
+    package.plan["scenes"] = [
+        {**package.plan["scenes"][0], "duration_seconds": 4},
+        {**package.plan["scenes"][1], "duration_seconds": 7},
+        {**package.plan["scenes"][2], "duration_seconds": 7},
+        {
+            **package.plan["scenes"][2],
+            "scene": 4,
+            "duration_seconds": 7,
+            "subtitle": "蓝布包放在木桌上",
+            "visual_direction": "只表现蓝布包与木桌。",
+        },
+        {**package.plan["scenes"][3], "scene": 5, "duration_seconds": 5},
+    ]
+    return package
+
+
 def test_executes_all_scenes_and_reports_exact_output(tmp_path, monkeypatch):
     monkeypatch.setattr("lingnian_worker.executor.make_card", lambda path, **kwargs: path.write_bytes(b"card") or path)
     renderer = FakeRenderer()
@@ -101,6 +138,22 @@ def test_executes_all_scenes_and_reports_exact_output(tmp_path, monkeypatch):
     assert report.duplicate_visual_check_passed is True
     assert comfy.generated == 1
     assert updates[-1][2:] == (4, 4, "scene-04")
+
+
+def test_thirty_second_mode_freezes_generated_results_before_final_motion(tmp_path, monkeypatch):
+    monkeypatch.setattr("lingnian_worker.executor.make_card", lambda path, **kwargs: path.write_bytes(b"card") or path)
+    renderer = FakeRenderer(duration=30.0)
+    comfy = FakeComfy()
+    report = DocumentaryExecutor(renderer=renderer, comfyui=comfy, work_dir=tmp_path / "worker").execute(
+        make_task(), make_stable_package(tmp_path), lambda *args: None
+    )
+    assert report.duration_seconds == 30.0
+    assert report.generated_context_scene_count == 2
+    assert report.generated_video_scene_count == 0
+    assert report.stable_visual_scene_count == 2
+    assert report.unique_generated_visual_count == 2
+    assert report.duplicate_visual_check_passed is True
+    assert len(renderer.extracted) == 2
 
 
 def test_reuses_verified_scene_checkpoints_after_restart(tmp_path, monkeypatch):

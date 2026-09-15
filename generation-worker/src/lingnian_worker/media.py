@@ -21,16 +21,20 @@ def _run(command: list[str], *, description: str) -> None:
         raise PackageError(f"{description}失败。")
 
 
-def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+def _font(size: int, *, require_cjk: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     candidates = (
         "C:/Windows/Fonts/msyh.ttc",
         "C:/Windows/Fonts/simhei.ttf",
         "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     )
     for candidate in candidates:
         if Path(candidate).is_file():
             return ImageFont.truetype(candidate, size=size)
+    if require_cjk:
+        raise PackageError("缺少可用的中文字体，不能输出方块字幕。")
     return ImageFont.load_default()
 
 
@@ -72,7 +76,8 @@ def burn_subtitle(source: Path, target: Path, *, subtitle: str) -> Path:
     with Image.open(source) as image:
         canvas = image.convert("RGBA" if image.mode == "RGBA" else "RGB")
     draw = ImageDraw.Draw(canvas, "RGBA")
-    font = _font(max(22, min(canvas.width, canvas.height) // 28))
+    font = _font(max(22, min(canvas.width, canvas.height) // 28),
+                 require_cjk=any("\u3400" <= character <= "\u9fff" for character in subtitle))
     wrapped = _wrap_text(subtitle, canvas.width)
     box = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=10, align="center")
     text_width = box[2] - box[0]
@@ -98,7 +103,7 @@ class MediaRenderer:
 
     def probe(self, path: Path) -> dict:
         completed = subprocess.run(
-            [self.ffprobe, "-v", "error", "-show_entries", "format=duration", "-show_entries", "stream=width,height", "-of", "json", str(path)],
+            [self.ffprobe, "-v", "error", "-show_entries", "format=duration", "-show_entries", "stream=width,height,codec_type,duration", "-of", "json", str(path)],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -109,10 +114,20 @@ class MediaRenderer:
         try:
             value = json.loads(completed.stdout)
             video = next((item for item in value.get("streams", []) if item.get("width")), {})
+            audio_stream = next((item for item in value.get("streams", []) if item.get("codec_type") == "audio"), None)
+            audio_duration = None
+            if audio_stream is not None:
+                reported = audio_stream.get("duration")
+                if reported in (None, "N/A") and not video:
+                    reported = (value.get("format") or {}).get("duration")
+                if reported not in (None, "N/A"):
+                    audio_duration = float(reported)
             return {
                 "duration": float((value.get("format") or {}).get("duration", 0)),
                 "width": int(video.get("width", 0)),
                 "height": int(video.get("height", 0)),
+                "has_audio": audio_stream is not None,
+                "audio_duration": audio_duration,
             }
         except (ValueError, TypeError) as exc:
             raise PackageError("成片信息格式不正确。") from exc
@@ -160,6 +175,59 @@ class MediaRenderer:
             raise PackageError("动态镜头无法提取画面指纹。")
         return hashlib.sha256(b"".join(signatures)).hexdigest()
 
+    def extract_stable_frame(
+        self,
+        source: Path,
+        target: Path,
+        *,
+        width: int,
+        height: int,
+    ) -> Path:
+        """Turn one generated result into a fixed frame before any story motion.
+
+        The final clip is animated only by deterministic pan/zoom. Generated
+        eyes, mouths and head turns can therefore never enter the output.
+        """
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+            with Image.open(source) as image:
+                image.convert("RGB").save(target, format="PNG")
+            return target
+        _run(
+            [
+                self.ffmpeg,
+                "-y",
+                "-ss",
+                "0.2",
+                "-i",
+                str(source),
+                "-frames:v",
+                "1",
+                "-vf",
+                f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
+                str(target),
+            ],
+            description="稳定画面提取",
+        )
+        return target
+
+    @staticmethod
+    def image_fingerprint(path: Path) -> str:
+        with Image.open(path) as image:
+            rgb = image.convert("RGB")
+            gray = rgb.resize((32, 32), Image.Resampling.LANCZOS).convert("L")
+            pixels = list(gray.get_flattened_data())
+            average = sum(pixels) / len(pixels)
+            shape = bytes(1 if pixel >= average else 0 for pixel in pixels)
+            color = rgb.resize((8, 8), Image.Resampling.LANCZOS)
+            palette = bytes(
+                channel // 16
+                for pixel in color.get_flattened_data()
+                for channel in pixel
+            )
+        return hashlib.sha256(shape + palette).hexdigest()
+
     def image_clip(
         self,
         image: Path,
@@ -204,24 +272,29 @@ class MediaRenderer:
         width: int,
         height: int,
         fps: int,
+        allow_loop: bool = True,
+        subtitle_segments: list[dict] | None = None,
     ) -> Path:
-        subtitle_image = target.with_suffix(".subtitle.png")
-        Image.new("RGBA", (width, height), (0, 0, 0, 0)).save(subtitle_image)
-        if subtitle:
-            burn_subtitle(subtitle_image, subtitle_image, subtitle=subtitle)
-        filter_graph = (
-            f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
-            f"fps={fps},trim=duration={duration},setpts=PTS-STARTPTS[base];"
-            f"[1:v]format=rgba[overlay];[base][overlay]overlay=0:0:format=auto,format=yuv420p[v]"
-        )
-        _run(
-            [
-                self.ffmpeg, "-y", "-stream_loop", "-1", "-i", str(source), "-loop", "1", "-i", str(subtitle_image),
-                "-filter_complex", filter_graph, "-map", "[v]", "-t", str(duration), "-an",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "20", str(target),
-            ],
-            description="动态镜头整理",
-        )
+        if not allow_loop:
+            actual = self.probe(source)
+            if actual["duration"] + 1 / fps < duration:
+                raise PackageError("原生动态镜头短于分镜时长，不能循环或静帧补足。")
+        segments = subtitle_segments if subtitle_segments is not None else [{"text": subtitle, "start_seconds": 0, "end_seconds": duration}]
+        inputs = []
+        filters = [f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},fps={fps},trim=duration={duration},setpts=PTS-STARTPTS[base0]"]
+        for i, segment in enumerate(segments):
+            begin, end = float(segment['start_seconds']), float(segment['end_seconds'])
+            if not 0 <= begin < end <= duration: raise PackageError('字幕时间超出镜头。')
+            subtitle_image = target.with_suffix(f".subtitle-{i}.png")
+            Image.new("RGBA", (width, height), (0, 0, 0, 0)).save(subtitle_image)
+            burn_subtitle(subtitle_image, subtitle_image, subtitle=segment['text'])
+            inputs.extend(["-loop", "1", "-i", str(subtitle_image)])
+            filters.append(f"[{i+1}:v]format=rgba[overlay{i}];[base{i}][overlay{i}]overlay=0:0:format=auto:enable='gte(t,{begin})*lt(t,{end})'[base{i+1}]")
+        filters.append(f"[base{len(segments)}]format=yuv420p[v]")
+        _run([self.ffmpeg, "-y", *(["-stream_loop", "-1"] if allow_loop else []),
+              "-i", str(source), *inputs, "-filter_complex", ";".join(filters),
+              "-map", "[v]", "-t", str(duration), "-r", str(fps), "-fps_mode", "cfr", "-an", "-c:v", "libx264", "-preset", "medium", "-crf", "20", str(target)],
+             description="动态镜头整理")
         return target
 
     def assemble(self, clips: list[Path], target: Path, *, audio: Path | None, duration: int) -> Path:

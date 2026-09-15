@@ -1,0 +1,109 @@
+{
+  "format": "lingnian-production-blueprint",
+  "version": 1,
+  "fictional_only": true,
+  "title": "蓝布包：出发与后来",
+  "duration_seconds": 70,
+  "reference_sha256": "ebfb9f80a9dfaf174777bc5787a27fa5ee9cad15e5ddeb41d43d290909a54dd7",
+  "narration_sha256": "69bdacab8dc06e4edc70c73bbe90b521568eeb60199b95db8ea9a9eee93658a5",
+  "character_requirements": [
+    {"id": "suqin-young", "identity": "既有参考中的年轻成年女性，十九岁、双辫、小花长袖衬衫、深蓝裤。保持参考脸型，不随机换成另一位年轻女性。", "source": "现有虚构参考；不是用户家人的照片", "needed_views": "现有侧脸不足以核对所有正面镜头；先准备同一人物正面或四分之三侧面，不能自动声称身份保持。"},
+    {"id": "mother-1982", "identity": "年轻沈素琴的母亲，独立于女儿的面部；家中与月台必须同一个人，同一件日常衣服。", "source": "原文明确母亲存在；长相、准确年龄及服装未知，待生成演绎参考", "needed_views": "先建立一张角色参考，再在家中和月台复用；不要每场重新文生一个母亲。"},
+    {"id": "suqin-later", "identity": "多年后的同一位沈素琴，已是成年女儿的母亲；保持年轻版的骨相，不套用她母亲的脸。", "source": "年龄跨度未明确；表现成年阶段，不标注推测年份", "needed_views": "从 suqin-young 有依据地生成成年版本，独立核查相似性。"},
+    {"id": "daughter", "identity": "沈素琴的成年女儿，独立的新角色，不是十九岁的沈素琴换套衣服。", "source": "原文只有女儿离家读书；成年形象为本演示的选角设定，不增加为家庭事实", "needed_views": "短暂侧背面离开；先锁定衣着与发型，不用母亲脸做年轻女儿。"}
+  ],
+  "prop_requirements": "始终是参考中同一只褪色深蓝旅行布包：双短提手、可见车缝线及拉链结构。不要改成手提箱、登山包、手袋或新增肩带。鸡蛋只有两个；搪瓷缸与红线手帕只出现在原文相应场景。母亲手帕四针细节无法可靠生成时，不用假文字或字幕在物体上替代。",
+  "film_bible": {
+    "summary": "一只蓝布包串起1982年第一次远行、母亲送别、多年后送女儿时的领悟，以及抵达后才发现压裂的鸡蛋。",
+    "character": "年轻沈素琴、1982年的母亲、成年沈素琴、成年女儿分别锁定；年轻与成年沈素琴属于同一人物。所有人物均为虚构演示。",
+    "wardrobe": "年轻版始终保持已核对参考的浅色小花长袖衬衫、深蓝裤、双辫。其他角色衣服属于待锁定的演绎设计。",
+    "prop": "复用既有深蓝布包的结构、提手、拉链和车缝线；两个鸡蛋、一个搪瓷缸、一块红线缝过的手帕。",
+    "era": "1982年春天的年轻阶段；多年后的母女送别不杜撰准确年份。",
+    "location": "出发城市未知；原文目的地是无锡。家中、出发站台、车内、后来车站外、抵达后停留处，不能混成同一空间。",
+    "journey": "1982年从未说明的出发城市去无锡纺织厂，不是离开无锡；后来女儿离家读书。",
+    "visual_style": "写实彩色生活场景、自然光、克制表情。不是口型采访，不用黑白照片、蒸汽火车或文字卡替代动态场景。",
+    "forbidden_changes": "不随机换脸、年龄、包或服装；不添加站名、车次、厂名、车头型号。室内布置与动作是影像演绎，不写入记忆事实。"
+  },
+  "render_bible": "A coherent fictional family recollection in natural color. Stable character identities and props across scenes. Modest everyday gestures, subtle breathing, relaxed closed mouths. Narration is off-screen, never lip-synced. Do not add historical names, dates or signs that the source does not state.",
+  "render_negative": "random face change, changing bag shape, extra shoulder strap, changing clothes within a scene, duplicated person, fused hands, extra fingers, duplicated eggs, steam locomotive, black and white photo, montage inside a shot, sudden zoom, flicker, title card, subtitles in generated image, brand logo, exaggerated crying, speaking, chewing, repeated waving",
+  "scenes": [
+    {
+      "id": "platform", "start_shot": 1, "end_shot": 2, "transition": "opening",
+      "transition_reason": "蓝布包与第一次远行开场，沿用已核对站台空间。",
+      "identity_notes": "suqin-young；仅复用既有虚构年轻参考。",
+      "source_quotes": ["头一回一个人坐火车，去无锡的纺织厂。"],
+      "opening_state": "年轻沈素琴抱包站在车厢旁，脸朝左侧车门，身体仍朝向镜头。",
+      "render_bible": "Same young adult woman as the reference, twin braids, pale patterned shirt, navy trousers, same faded blue travel bag. Wet platform, green passenger carriage on screen-left. Overcast daylight, fixed medium shot, original face, clothing, bag seams and handles. No train movement in this scene.",
+      "reference_prompt": "Reuse the verified existing platform reference without editing. Inspect face, bag, clothing and carriage geometry against the supplied source before accepting this scene. This establishes the same starting pose as the existing v5 turn-in-place candidate.",
+      "required_character_ids": ["suqin-young"]
+    },
+    {
+      "id": "home", "start_shot": 3, "end_shot": 6, "transition": "match_cut",
+      "transition_reason": "从包匹配剪切到出门前，不让站台在镜头内融化成家中。",
+      "identity_notes": "suqin-young与mother-1982双角色；年轻角色、衣服和蓝包依据同一参考，母亲另有固定参考。",
+      "source_quotes": ["出门前，我妈也没说什么，就往包里塞了两个煮鸡蛋，一个搪瓷缸，还有一块手帕。"],
+      "opening_state": "出门前家中桌边，同一个蓝包已敞开，母亲的手停在包旁；年轻沈素琴坐在桌边。",
+      "render_bible": "Before departure in a modest home, daytime. Same young woman, braids and patterned shirt. Her mother is a distinct older adult woman whose face and clothes stay fixed. The same blue zippered travel bag lies open on a plain table. Exactly two boiled eggs, one enamel cup, one handkerchief. Calm close medium view, neutral natural light. All room dressing is illustrative, no signs or text.",
+      "reference_prompt": "Create one coherent opening frame using both locked character references and the original blue bag. Daughter at screen-right, mother at screen-left beside the same open blue bag on a table. Mother's hands rest outside the bag, ready to put in the two eggs; do not already place all objects inside. Enamel cup and folded handkerchief remain on the table. Preserve the young woman's face, braids, shirt pattern and bag handles/seams. Mother must match the separately approved mother reference, not an aged copy of the daughter. No collage, extra objects, writing, tears or talking.",
+      "required_character_ids": ["suqin-young", "mother-1982"]
+    },
+    {
+      "id": "train-window", "start_shot": 7, "end_shot": 9, "transition": "location_cut",
+      "transition_reason": "从家中跳至已上车的送别时刻；窗框明确划分车内女儿与月台母亲。",
+      "identity_notes": "同一年轻沈素琴在窗内；同一家中母亲在窗外，不能交换脸或位置。",
+      "source_quotes": ["火车开的时候，我隔着车窗，看见她还站在月台上。她没追，就抬了一下手。"],
+      "opening_state": "年轻沈素琴坐在车内右侧，蓝包在膝上；左侧车窗外，母亲站在月台，手尚未抬起。",
+      "render_bible": "Inside the same period green passenger carriage. Young woman screen-right holding the closed original blue bag on her lap; her mother stands OUTSIDE beyond the window on screen-left. Mother is the same person and clothes as the home scene. Window frame separates interior and exterior. Slow coherent platform drift, restrained gestures, steady interior camera and natural color. No locomotive or new signage.",
+      "reference_prompt": "Using the approved young woman and mother references, establish inside/outside geography in a single natural shot. View from inside the carriage: young woman at screen-right in three-quarter side view, closed blue bag on her lap; her mother visible outside through the left window, arms down, not yet waving. Keep all identity and costume details from the home scene. No mother inside the carriage, no duplicated daughter outside, no reflections that look like another person. Match the original carriage window shape and weather. Establish room for the mother to raise one hand later.",
+      "required_character_ids": ["suqin-young", "mother-1982"]
+    },
+    {
+      "id": "later-departure", "start_shot": 10, "end_shot": 12, "transition": "time_cut",
+      "transition_reason": "原文进入多年后自己做母亲；硬切至成年角色，禁止一个镜头内突然变老。",
+      "identity_notes": "suqin-later是年轻沈素琴的成年版本；daughter是另一个成年角色，不能复用1982年母亲的脸。",
+      "source_quotes": ["后来，我自己也做了母亲。女儿第一次离家去读书，我在车站外面一直等，等到车开远了才回去。"],
+      "opening_state": "多年后车站外，成年沈素琴站在近景，成年女儿在远一点的位置朝离开方向站立。",
+      "render_bible": "Years later outside an unspecified station. The older Suqin retains the young Suqin's facial identity, using the reviewed age-stage reference. Her adult daughter is a distinct person. Same restrained natural-color style. Suqin stays near the camera; daughter moves away toward screen-left. Fixed medium-wide framing, generic architecture, no legible station or date. Both women keep their hands empty, matching this scene's reviewed reference.",
+      "render_negative": "identity swap, face morphing, sudden age change, clothing change, objects appearing in empty hands, extra people, extra limbs, extra fingers, abrupt camera cuts, flickering background, text, watermark",
+      "reference_prompt": "Use the approved older-Suqin reference and the distinct adult-daughter reference. Outside a generic station, older Suqin in the foreground at screen-right and her adult daughter a few steps behind at screen-left, facing away, not embracing or speaking. Establish enough space for the daughter to walk farther away. The mother is visibly the older version of the young woman, not the 1982 grandmother. Keep age, hair and clothes constant for all later shots. No invented year, station name, school logo, luggage history or blue bag transfer.",
+      "required_character_ids": ["suqin-later", "daughter"]
+    },
+    {
+      "id": "train-recalled", "start_shot": 13, "end_shot": 13, "transition": "time_cut",
+      "transition_reason": "成年人的心声回到1982年途中；鸡蛋在车上未吃，不提前打开包。",
+      "identity_notes": "恢复年轻版本、同一车内位置和同一未打开的蓝包；不是年长人物突然换脸。",
+      "source_quotes": ["那两个鸡蛋，我在车上一个都没舍得吃。"],
+      "opening_state": "回忆切回1982年车内，年轻沈素琴双手抱住闭合的蓝包，目光垂向包。",
+      "render_bible": "Back in 1982, the SAME young Suqin, exact youthful reference face, braids, shirt and bag. Same carriage interior and window as train-window scene, mother no longer visible outside. The blue bag is still CLOSED on her lap. Gentle breathing and one small hand adjustment only. Steady camera, no talking or eating.",
+      "reference_prompt": "Reuse the established 1982 carriage interior and young character identity; do not use the older character reference. Same closed blue bag on her lap, both hands around it, gaze lowered. Window view no longer includes mother. Bag remains fully closed, no eggs outside, no eating, no invented new passenger interaction. Match the train-window scene's seat, window orientation, costume and daylight.",
+      "required_character_ids": ["suqin-young"]
+    },
+    {
+      "id": "arrival", "start_shot": 14, "end_shot": 15, "transition": "location_cut",
+      "transition_reason": "原文明说抵达无锡后打开包；切到抵达后的停留处，不能继续在行驶列车上演开包。",
+      "identity_notes": "同一年轻角色及服装；包的提手、拉链与车缝结构匹配原参考。地点细部只作演绎。",
+      "source_quotes": ["到了无锡，打开包才发现，都压裂了。", "那是我这一辈子，吃过最香的两个鸡蛋。"],
+      "opening_state": "抵达后的简单停留处，年轻沈素琴坐在桌边，同一个蓝包闭合放在面前，双手准备拉开包。",
+      "render_bible": "After arriving at the destination, young Suqin sits at a plain table in a modest unspecified interior. Same youthful face, braids, pale patterned shirt and original blue bag. Neutral daylight, medium-close framing showing hands, bag and face. Preserve the visible state from the current shot input; only the current shot action specifies changes. No train motion, invented signs or exaggerated tears.",
+      "reference_prompt": "Place the same young woman and exact blue bag at a simple plain table after arrival. Do not recreate the departure-home table with the mother present. Preserve her face, shirt, braids, bag seams, zippers and short handles. Opening frame: bag still closed; her hands poised near the zipper but no egg is visible yet. Leave clear framing for opening the bag and lifting one of two eggs later. No lodging name, station name, factory name or location text. Modest interior is illustrative, not a factual reconstruction.",
+      "required_character_ids": ["suqin-young"]
+    }
+  ],
+  "shots": [
+    {"id": 1, "duration_seconds": 4, "source_quotes": ["这个蓝布包啊，我一直没舍得扔。"], "action": "抱包向左侧车厢原地转肩，不迈步。", "after": "她双脚仍在原位，肩膀与脸朝左侧车厢，双手抱包。", "render_action": "Turn in place slowly toward the carriage on SCREEN-LEFT, not toward the viewer. Keep feet planted and both hands holding the bag. End side-on facing the carriage. Camera and train remain fixed."},
+    {"id": 2, "duration_seconds": 4, "source_quotes": ["头一回一个人坐火车，去无锡的纺织厂。"], "action": "抱稳包向同一车门挪半步停下。", "after": "她仍在站台，抱包停在同一门边，没有越过车门。", "render_action": "Continue the exact pose, take ONE small half-step toward the carriage at screen-left, then stop beside the same door. No walking along the platform, no passing the door, no tracking or zoom."},
+    {"id": 3, "duration_seconds": 4, "source_quotes": ["出门前，我妈也没说什么，"], "action": "母亲手从桌边拿起两个鸡蛋，靠近敞开的包。", "after": "母亲双手拿着两个鸡蛋，停在包口上方。", "render_action": "Mother picks up the two eggs together and slowly brings them just above the open bag. Daughter remains beside the table, attentive. Keep bag, cup, handkerchief and table layout stable; no dialogue."},
+    {"id": 4, "duration_seconds": 4, "source_quotes": ["就往包里塞了两个煮鸡蛋，一个搪瓷缸，"], "action": "母亲将两个鸡蛋放入包内，随后轻放搪瓷缸。", "after": "两个鸡蛋与搪瓷缸已在包中，手帕还在桌面，母亲手离开包口。", "render_action": "Mother lowers the TWO eggs into the same open bag, releases them, then puts the enamel cup beside them gently. No new eggs appear, do not remove the eggs again. Keep daughter and framing stable."},
+    {"id": 5, "duration_seconds": 4, "source_quotes": ["还有一块手帕。手帕边上啊，她用红线缝了四针。"], "action": "母亲拿起有红线的手帕，折好放入包内。", "after": "手帕已放入同一包中，母亲的手停在包口边缘。", "render_action": "Mother lifts the existing handkerchief, folds it once and places it into the open blue bag. Preserve its small red stitched edge; do not draw letters or captions on fabric. One simple continuous movement, no repeated packing."},
+    {"id": 6, "duration_seconds": 5, "source_quotes": ["到了宿舍，先给家里写封信。"], "action": "母亲合上包，将包交到女儿双手里，女儿接稳。", "after": "年轻沈素琴已抱稳闭合蓝包，母亲松手，仍在家中桌边。", "render_action": "Mother closes the same bag and passes it a short distance to the daughter's waiting hands. Daughter receives it securely; mother releases only after the daughter holds it. No extra bag, merged hands or talking. Remain in the home until the cut."},
+    {"id": 7, "duration_seconds": 5, "source_quotes": ["我隔着车窗，看见她还站在月台上。她没追，就抬了一下手。"], "action": "车内年轻沈素琴隔窗看母亲，母亲在本段最后一秒左右抬手一次。", "after": "月台母亲的一只手刚抬起，年轻沈素琴仍在车窗内。", "render_action": "Keep daughter INSIDE and mother OUTSIDE the window. For the first four seconds mother stands with arms down as the platform drifts very slowly. Only near the final second mother raises ONE hand once. No chasing, repeated waving, moving through glass or camera movement."},
+    {"id": 8, "duration_seconds": 5, "source_quotes": ["那时候年轻啊，心里想的都是远方。"], "action": "年轻沈素琴转看车厢前方，母亲刚抬起的手自然放下。", "after": "女儿视线离开窗外，母亲手已放下，月台缓慢远去。", "render_action": "Mother's already-raised hand settles down, without a second wave. Daughter turns her gaze gently away from the window toward the carriage interior while holding the bag. Maintain interior/exterior positions and consistent slow platform drift."},
+    {"id": 9, "duration_seconds": 5, "source_quotes": ["我甚至觉得，她一直站在那儿，好像有点多余。"], "action": "月台慢慢离开视野，年轻沈素琴握包的手略松。", "after": "年轻沈素琴坐在同一车内抱包，月台母亲已远离视野。", "render_action": "Continue the same window view as the platform slowly moves out of view in the existing direction. Daughter relaxes her grip slightly, staying seated with the same closed bag. No new train, sudden acceleration, steam engine or scene morph."},
+    {"id": 10, "duration_seconds": 5, "source_quotes": ["女儿第一次离家去读书，"], "action": "成年女儿向远处走几步，成年沈素琴留在原处目送。", "after": "成年女儿已经更远，成年沈素琴仍站在近景原处。", "render_action": "Adult daughter takes a few natural steps away toward screen-left into the established space. Older Suqin remains on her ground mark watching quietly. Fixed camera; no daughter returning, no age morph, no face swap or embracing."},
+    {"id": 11, "duration_seconds": 5, "source_quotes": ["我在车站外面一直等，等到车开远了才回去。", "我突然明白，"], "action": "女儿远去后，成年沈素琴仍停留，手与目光慢慢放松。", "after": "成年沈素琴独留近景，目光仍朝女儿离开的方向，手渐渐垂下。", "render_action": "Daughter continues out of the established frame without re-entering. Older Suqin stays, watching the same direction; her hands and shoulders gradually relax. Gentle breathing and subtle expression only, no crying performance, no zoom."},
+    {"id": 12, "duration_seconds": 5, "source_quotes": ["不是舍不得你走，是想让你放心走。"], "action": "成年沈素琴缓缓垂手，留住克制表情。", "after": "成年沈素琴手已垂下，仍站在同一车站外。", "render_action": "Continue the same older woman and framing. Finish lowering her hand naturally, then let subtle breathing and a small thoughtful gaze shift carry the moment. No speaking, chewing, tears, frozen frame or repeated gesture."},
+    {"id": 13, "duration_seconds": 5, "source_quotes": ["那两个鸡蛋，我在车上一个都没舍得吃。"], "action": "年轻沈素琴手轻拢着闭合蓝包，不打开、不吃。", "after": "她双手仍拢住闭合的蓝包，目光落在包上，仍在车内。", "render_action": "Young Suqin gently adjusts one hand on the CLOSED blue bag and looks down at it, breathing naturally. Keep the bag closed for the entire shot. No eggs visible, no eating, no aged face or change of seat."},
+    {"id": 14, "duration_seconds": 5, "source_quotes": ["到了无锡，打开包才发现，都压裂了。"], "action": "抵达后，前两秒停留，随后拉开包，显露压裂的两个鸡蛋。", "after": "蓝包已打开，两个压裂蛋壳的鸡蛋和同一手帕可见，她的手停在其中一个鸡蛋边。", "render_action": "At the arrival table, hold the prepared pose with gentle natural motion for about two seconds. Then open the same bag, revealing exactly TWO boiled eggs with cracked shells beside the same handkerchief. Her hand comes to rest near one egg. No egg multiplication, eating or moving train."},
+    {"id": 15, "duration_seconds": 5, "source_quotes": ["那是我这一辈子，吃过最香的两个鸡蛋。"], "action": "她捧起其中一个鸡蛋，低头停留，保留自然呼吸。", "after": "她手中只有一个鸡蛋，另一个留在敞开蓝包里；画面在克制表情中结束。", "render_action": "Lift ONE cracked-shell boiled egg gently into both hands; the second remains in the open bag. Look down with a small restrained expression and natural breathing. Finish without biting, exaggerated smile, new action, fade inside the generated clip or frozen-frame padding."}
+  ]
+}

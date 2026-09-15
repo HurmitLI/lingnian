@@ -112,3 +112,33 @@ def test_date_only_shot_reuses_grounded_object_but_unknown_story_is_not_invented
     assert "satchel" in prompt and "1982" in prompt and "spring" in prompt
     with pytest.raises(ConfigurationError, match="分镜翻译"):
         _english_scene_prompt({"narration": "她终于懂得了那句话的意思。"})
+
+
+def test_window_story_uses_grounded_empty_room_visual():
+    prompt = _english_scene_prompt({
+        "narration": "那个秋天的下午，我坐在窗边的木椅上，慢慢望向窗外。",
+        "visual_direction": "只使用固定环境画面，不生成眨眼、说话或转头。",
+    })
+    assert prompt.startswith("a completely empty quiet room")
+    assert "zero humans" in prompt
+    assert not any("\u4e00" <= char <= "\u9fff" for char in prompt)
+
+
+@pytest.mark.parametrize(
+    "narration",
+    (
+        "【虚构测试素材：通用 AI 女声，",
+        "不是真实人物采访或经历。】那个秋天的下午，",
+    ),
+)
+def test_non_visual_provenance_scene_reuses_story_subject(narration):
+    prompt = _english_scene_prompt({
+        "narration": narration,
+        "visual_direction": (
+            "整段已确认故事仅为「【虚构测试素材：通用 AI 女声，不是真实人物采访或经历。】"
+            "\n那个秋天的下午，我坐在窗边的木椅上，慢慢转过头，望向窗外。」；"
+            f"当前镜头必须直接对应「{narration}」。"
+        ),
+    })
+    assert "sunlit window" in prompt
+    assert "zero humans" in prompt

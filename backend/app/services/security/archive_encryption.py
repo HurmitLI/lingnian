@@ -24,6 +24,7 @@ from app.models import (
     MemoryFact,
     MemorySession,
     ModelConsentEvent,
+    ShortScenePlan,
     Person,
     PersonRelationship,
     Story,
@@ -361,6 +362,11 @@ def activate_archive_encryption(
                 fields={"actor_label": TEXT_PLACEHOLDER},
                 master_key=master_key,
             )
+        for plan in db.scalars(select(ShortScenePlan).where(ShortScenePlan.family_id == family.id)):
+            field_count += _protect_object(
+                db, family=family, obj=plan,
+                fields={"request_payload": {}, "result_payload": {}}, master_key=master_key,
+            )
         legacy_plan = db.scalar(select(LegacyPlan).where(LegacyPlan.family_id == family.id))
         if legacy_plan:
             field_count += _protect_object(
@@ -405,6 +411,7 @@ def activate_archive_encryption(
                 obj=request,
                 fields={
                     "actor_label": TEXT_PLACEHOLDER,
+                    "production_direction": {},
                     "reviewed_by": TEXT_PLACEHOLDER,
                     "review_notes": TEXT_PLACEHOLDER,
                 },

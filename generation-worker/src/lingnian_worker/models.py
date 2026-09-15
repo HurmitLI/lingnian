@@ -48,6 +48,7 @@ class RenderReport:
     height: int
     generated_context_scene_count: int
     generated_video_scene_count: int
+    stable_visual_scene_count: int
     unique_generated_visual_count: int
     duplicate_visual_check_passed: bool
 

@@ -45,6 +45,7 @@ from app.services.archive.assets import (
 )
 from app.services.auth import current_auth, session_token_hash
 from app.services.generative_media import upgrade_requirements, worker_supports
+from app.services.generation_capacity import lock_node_for_claim, node_has_unresolved_work
 from app.services.memory import ProductionMedia, build_production_package, file_sha256
 from app.services.security import SecretStore, decrypt_media_file, get_secret_store, media_context
 
@@ -150,8 +151,8 @@ class WorkerTaskRead(BaseModel):
 class WorkerProgress(BaseModel):
     progress_percent: int = Field(ge=0, le=99)
     progress_stage: str = Field(min_length=1, max_length=80)
-    completed_scene_count: int | None = Field(default=None, ge=0, le=10)
-    total_scene_count: int | None = Field(default=None, ge=1, le=10)
+    completed_scene_count: int | None = Field(default=None, ge=0, le=30)
+    total_scene_count: int | None = Field(default=None, ge=1, le=30)
     checkpoint_key: str | None = Field(default=None, min_length=1, max_length=120)
 
 
@@ -403,6 +404,7 @@ def retry_family_generation_request(
     request.lease_token_hash = None
     request.lease_expires_at = None
     request.attempt_count = 0
+    request.progress_detail = {k: v for k, v in (request.progress_detail or {}).items() if k != "package_error"}
     has_checkpoint = bool((request.progress_detail or {}).get("checkpoint_key"))
     request.progress_percent = request.progress_percent if has_checkpoint else 0
     request.progress_stage = "等待节点从已完成镜头继续" if has_checkpoint else "等待家用生成节点"
@@ -468,23 +470,6 @@ def worker_heartbeat(
     )
 
 
-def release_expired_leases(db: Session, now: datetime) -> None:
-    expired = db.scalars(
-        select(GenerativeMediaRequest).where(
-            GenerativeMediaRequest.status == "processing",
-            GenerativeMediaRequest.lease_expires_at < now,
-        )
-    ).all()
-    for request in expired:
-        request.status = "queued" if request.attempt_count < MAX_ATTEMPTS else "failed"
-        request.progress_stage = "节点中断，正在重新排队" if request.status == "queued" else "多次中断，等待人工处理"
-        request.error_code = "GENERATION_LEASE_EXPIRED"
-        request.last_error_message = "生成节点未在租约时间内继续报告进度。"
-        request.assigned_node_id = None
-        request.lease_token_hash = None
-        request.lease_expires_at = None
-
-
 @router.post("/generation-worker/tasks/claim", response_model=WorkerTaskRead | None)
 def claim_worker_task(
     response: Response,
@@ -493,7 +478,10 @@ def claim_worker_task(
 ) -> WorkerTaskRead | None:
     node, _ = authenticate_node(db, authorization)
     now = utc_now()
-    release_expired_leases(db, now)
+    lock_node_for_claim(db, node.id, now)
+    if node_has_unresolved_work(db, node.id, now):
+        db.commit()
+        return None
     capabilities = [
         capability
         for capability in sorted(set(node.capabilities or []).intersection(WORKER_CAPABILITIES))
@@ -512,6 +500,11 @@ def claim_worker_task(
         .limit(5)
     ).all()
     for candidate in candidates:
+        if (candidate.production_spec or {}).get("visual_strategy") == "native_memory":
+            from app.services.generative_media.compatibility import parse_worker_version
+            required = parse_worker_version((candidate.production_spec or {}).get("minimum_worker_version")) or (2, 2, 1)
+            if (parse_worker_version(node.software_version) or (0, 0, 0)) < required:
+                continue
         lease_token = secrets.token_urlsafe(32)
         lease_expires = now + LEASE_WINDOW
         result = db.execute(
@@ -535,7 +528,8 @@ def claim_worker_task(
             )
         )
         if result.rowcount != 1:
-            db.rollback()
+            # Keep the per-node lock while trying another candidate; rollback
+            # here would allow another queue to claim for this same node.
             continue
         node.last_seen_at = now
         db.commit()
@@ -583,7 +577,6 @@ def build_authorized_package(
         .where(
             MediaAsset.session_id == session.id,
             MediaAsset.kind == "audio_original",
-            MediaAsset.is_original.is_(True),
         )
         .order_by(MediaAsset.created_at.desc())
     )
@@ -628,6 +621,22 @@ def build_authorized_package(
         extension = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}.get(image.mime_type, ".image")
         path = materialize(image, f"authorized-image{extension}")
         image_media = ProductionMedia(path, f"sources/authorized-image{extension}", image.mime_type, file_sha256(path))
+    direction = None
+    if (request.production_spec or {}).get("visual_strategy") == "native_memory":
+        from app.services.memory.memory_direction_cache import prepare_direction
+        if request.production_spec.get("reference_mode") != "user_photo":
+            image_media = None
+        elif not image_media:
+            raise DomainError("PORTRAIT_IMAGE_REQUIRED", "使用照片人物模式需要已授权的原照片。", 409)
+        from app.services.memory.recorded_direction import recorded_slots
+        from app.services.asr.audio import normalize_audio
+        normalized = root / 'source-timing.wav'
+        normalize_audio(audio_media.source_path, normalized)
+        recording = recorded_slots(db, session, family, store, normalized, audio.id,
+                                   request.production_spec['target_duration_seconds'])
+        direction = prepare_direction(db, request, store, body=story_view.body,
+                                      photo_sha256=image_media.sha256 if image_media else None,
+                                      recording=recording)
     detail = story_detail_read(db, story.detail, store) if story.detail else None
     output = root / f"lingnian-generation-{request.id}.zip"
     return build_production_package(
@@ -650,6 +659,7 @@ def build_authorized_package(
         production_spec=request.production_spec or {},
         external_upload_authorized=True,
         package_status="authorized_node_job",
+        memory_direction=direction,
     )
 
 
@@ -693,6 +703,12 @@ def download_worker_package(
         request.lease_expires_at = utc_now() + LEASE_WINDOW
         node.last_seen_at = utc_now()
         db.commit()
+    except DomainError as exc:
+        request.progress_detail = {**(request.progress_detail or {}),
+                                   "package_error": {"code": exc.code, "message": exc.message}}
+        db.commit()
+        shutil.rmtree(root, ignore_errors=True)
+        raise
     except Exception:
         shutil.rmtree(root, ignore_errors=True)
         raise
@@ -745,7 +761,8 @@ def fail_worker_task(
 ) -> WorkerAck:
     node, _ = authenticate_node(db, authorization)
     request = require_lease(db, node, request_id, lease_token)
-    retrying = payload.retryable and request.attempt_count < MAX_ATTEMPTS
+    package_error = (request.progress_detail or {}).get("package_error")
+    retrying = payload.retryable and request.attempt_count < MAX_ATTEMPTS and not package_error
     request.status = "queued" if retrying else "failed"
     has_checkpoint = bool((request.progress_detail or {}).get("checkpoint_key"))
     if retrying and has_checkpoint:
@@ -760,6 +777,9 @@ def fail_worker_task(
         payload.error_code,
         "家用生成节点没有完成这项任务。",
     )
+    if package_error:
+        request.error_code = package_error["code"]
+        request.last_error_message = package_error["message"]
     request.assigned_node_id = None
     request.lease_token_hash = None
     request.lease_expires_at = None
@@ -779,6 +799,7 @@ async def upload_worker_result(
     height: int = Form(default=0),
     generated_context_scene_count: int = Form(default=0),
     generated_video_scene_count: int = Form(default=0),
+    stable_visual_scene_count: int = Form(default=0),
     unique_generated_visual_count: int = Form(default=0),
     duplicate_visual_check_passed: bool = Form(default=False),
     authorization: str | None = Header(default=None),
@@ -795,20 +816,34 @@ async def upload_worker_result(
         raise DomainError("GENERATION_COST_LIMIT_EXCEEDED", "生成费用超过了本次授权上限。", 409)
     if request.generation_type == "scene_video":
         quality_failure = None
+        visual_strategy = str((request.production_spec or {}).get("visual_strategy", "generated_motion"))
         if rendered_scene_count < 3 or generated_context_scene_count < 1:
             quality_failure = "成片没有包含完整的纪实分镜。"
         elif (
             unique_generated_visual_count > generated_context_scene_count
             or generated_video_scene_count > generated_context_scene_count
+            or stable_visual_scene_count > generated_context_scene_count
         ):
             quality_failure = "生成节点回传的镜头质量报告无效。"
         elif not duplicate_visual_check_passed:
             quality_failure = "生成节点没有完成重复画面检查。"
         elif unique_generated_visual_count < generated_context_scene_count:
             quality_failure = "纪实空镜存在重复画面。"
-        elif generated_video_scene_count < 1:
+        elif visual_strategy == "stable_montage" and stable_visual_scene_count != generated_context_scene_count:
+            quality_failure = "30秒稳定故事片没有把全部纪实画面固化，已阻止脸部生成运动进入成片。"
+        elif visual_strategy == "stable_montage" and generated_video_scene_count != 0:
+            quality_failure = "30秒稳定故事片仍包含生成式动态镜头。"
+        elif visual_strategy != "stable_montage" and generated_video_scene_count < 1:
             quality_failure = "纪实影片没有生成任何动态空镜，已阻止纯静态图片成片。"
         target_duration = int((request.production_spec or {}).get("target_duration_seconds", 0))
+        if visual_strategy == "native_memory":
+            expected_scenes = target_duration // 5
+            if (rendered_scene_count != expected_scenes or generated_video_scene_count != expected_scenes
+                    or generated_context_scene_count != expected_scenes or stable_visual_scene_count != 0
+                    or unique_generated_visual_count != expected_scenes):
+                quality_failure = "动态回忆影片必须包含全部独立生成的动态镜头，不能用静帧或重复片段补足。"
+            elif (width, height) != (1280, 720):
+                quality_failure = "动态回忆影片的画幅与制作规格不一致。"
         if target_duration and abs(duration_seconds - target_duration) > 0.75:
             quality_failure = "成片时长与本次授权规格不一致。"
         if quality_failure:
@@ -860,9 +895,13 @@ async def upload_worker_result(
         result_report.update(
             generated_context_scene_count=max(0, generated_context_scene_count),
             generated_video_scene_count=max(0, generated_video_scene_count),
+            stable_visual_scene_count=max(0, stable_visual_scene_count),
             unique_generated_visual_count=max(0, unique_generated_visual_count),
             duplicate_visual_check_passed=duplicate_visual_check_passed,
             automated_quality_status="passed",
+            visual_strategy=str((request.production_spec or {}).get("visual_strategy", "generated_motion")),
+            generated_face_motion=visual_strategy == "native_memory",
+            review_scope="structure_only_requires_visual_review",
         )
     request.result_report = result_report
     request.status = "pending_human_review"

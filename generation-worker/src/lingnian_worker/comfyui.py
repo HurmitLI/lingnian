@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -50,6 +51,11 @@ def _english_scene_prompt(scene: dict[str, Any]) -> str:
         "河流": "river",
         "老屋": "old family house",
         "厨房": "traditional kitchen",
+        "窗边": "a completely empty quiet room, one wooden chair beside a sunlit window, still life interior photography, zero humans",
+        "窗户": "a completely empty quiet room with a sunlit wooden window, still life interior photography, zero humans",
+        "窗外": "close-up of yellow autumn leaves beyond a closed wooden window, empty interior, still life photography, zero humans",
+        "木椅": "one empty worn wooden chair in a quiet room, still life interior photography, zero humans",
+        "椅子": "one empty wooden chair in a quiet room, still life interior photography, zero humans",
         "学校": "old school",
         "工厂": "old factory",
         "山脉": "mountains",
@@ -62,10 +68,15 @@ def _english_scene_prompt(scene: dict[str, Any]) -> str:
 
     detail = subject(focus)
     # A date/age-only shot may use an object explicitly present in the approved
-    # story; unknown prose must not silently become unrelated generic imagery.
+    # story. Test/provenance labels are also non-visual narration, so they inherit
+    # a concrete subject from the approved story instead of aborting the job.
+    # Unknown prose must not silently become unrelated generic imagery.
     temporal_only = bool(re.fullmatch(r"[\d\s年岁春夏秋冬天季年月日她他那时当时，。、；：]+", focus))
-    if not detail and temporal_only:
-        context = re.search(r"整段已确认故事仅为「(.*?)」", direction)
+    provenance_only = bool(
+        re.search(r"虚构测试素材|通用\s*AI\s*女声|不是真实人物(?:采访|经历)", focus)
+    )
+    if not detail and (temporal_only or provenance_only):
+        context = re.search(r"整段已确认故事仅为「(.*?)」", direction, re.DOTALL)
         detail = subject(context.group(1)) if context else ""
     if not detail and re.search(r"[A-Za-z]{3,}", focus) and not re.search(r"[\u4e00-\u9fff]", focus):
         detail = focus
@@ -248,6 +259,32 @@ class ComfyUiClient:
             raise ConfigurationError("纪实空镜工作流必须是 ComfyUI API 格式。")
         return _adapt_common_workflow(workflow, replacements)
 
+    def check_reference_graph(self, graph: dict[str, Any]) -> None:
+        """Read-only preflight of explicit still-image nodes/models and current queue."""
+        try:
+            response = self._client.get("/object_info")
+            response.raise_for_status()
+            available = response.json()
+            for node in graph.values():
+                schema = available.get(node["class_type"])
+                if not isinstance(schema, dict):
+                    raise ConfigurationError("参考工作流缺少节点；不会自动安装或升级。")
+                required = schema.get("input", {}).get("required", {})
+                for field in ("unet_name", "clip_name", "vae_name"):
+                    if field in node["inputs"]:
+                        choices = required.get(field)
+                        if not isinstance(choices, list) or not choices or not isinstance(choices[0], list) or node["inputs"][field] not in choices[0]:
+                            raise ConfigurationError("已授权参考模型未在当前节点就绪；不会自动下载。")
+            response = self._client.get("/queue")
+            response.raise_for_status()
+            queue = response.json()
+            if not isinstance(queue, dict) or any(not isinstance(queue.get(key), list) for key in ("queue_running", "queue_pending")):
+                raise TemporaryWorkerError("不能确认当前显卡队列，不提交参考请求。")
+            if queue["queue_running"] or queue["queue_pending"]:
+                raise TemporaryWorkerError("显卡已有任务，先完成原任务，不叠加参考生成。")
+        except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            raise TemporaryWorkerError("无法核对参考模型或显卡队列，本次未提交。") from exc
+
     def upload_image(self, path: Path) -> str:
         try:
             with path.open("rb") as source:
@@ -286,8 +323,9 @@ class ComfyUiClient:
             {
                 "__LINGNIAN_PROMPT__": prompt,
                 "__LINGNIAN_NEGATIVE_PROMPT__": (
-                    "subtitles, watermark, logo, abstract art, colored noise, grid artifacts, "
-                    "deformed people, recognizable face, identity mismatch, modern objects, "
+                    "human, person, people, man, woman, child, baby, face, head, body, hand, arm, "
+                    "portrait, family photo, crowd, subtitles, watermark, logo, abstract art, "
+                    "colored noise, grid artifacts, deformed people, recognizable face, identity mismatch, modern objects, "
                     "invented event, generic city skyline, duplicate scene, frozen motion"
                 ),
                 "__LINGNIAN_WIDTH__": width,
@@ -310,13 +348,74 @@ class ComfyUiClient:
         *,
         output_path: Path,
         on_wait: Callable[[], None] | None = None,
+        journal_path: Path | None = None,
     ) -> Path:
         """Execute an explicit graph without legacy prompt/dimension rewriting."""
+        if journal_path is None:
+            return self._execute_workflow(workflow, output_path=output_path, on_wait=on_wait)
+        # Opt-in for isolated trials. Never infer completion from a filename or
+        # blindly submit again after a lost response / interrupted download.
+        journal_path.parent.mkdir(parents=True, exist_ok=True)
+        lock = journal_path.with_suffix(journal_path.suffix + ".lock")
         try:
-            submitted = self._client.post("/prompt", json={"prompt": workflow, "client_id": self.client_id})
-            submitted.raise_for_status()
-            prompt_id = str(submitted.json()["prompt_id"])
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError as exc:
+            raise TemporaryWorkerError("这个镜头已有执行锁；先核对原进程，不重复生成。") from exc
+        try:
+            os.close(fd)
+            binding = hashlib.sha256(json.dumps(
+                {"graph": workflow, "server": self.base_url, "output": str(output_path.resolve())},
+                sort_keys=True, ensure_ascii=False,
+            ).encode()).hexdigest()
+            if journal_path.exists():
+                try:
+                    state = json.loads(journal_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as exc:
+                    raise ConfigurationError("镜头任务记录损坏，不能自动重发。") from exc
+                if not isinstance(state, dict) or state.get("binding") != binding:
+                    raise ConfigurationError("镜头任务记录与当前方案不一致，不能复用。")
+                if not isinstance(state.get("prompt_id"), str) or not state["prompt_id"]:
+                    raise TemporaryWorkerError("上次提交结果未知；需核对 ComfyUI 队列，不自动重发。")
+            else:
+                state = {"version": 1, "binding": binding, "stage": "submitting"}
+                self._save_journal(journal_path, state)
+            return self._execute_workflow(workflow, output_path=output_path, on_wait=on_wait,
+                                          journal_path=journal_path, state=state)
+        finally:
+            lock.unlink(missing_ok=True)
+
+    @staticmethod
+    def _save_journal(path: Path, state: dict[str, Any]) -> None:
+        # Store identifiers and stages, not prompts, interview text or secrets.
+        temporary = path.with_name(path.name + ".tmp")
+        with temporary.open("w", encoding="utf-8") as target:
+            json.dump({**state, "updated_at": time.time()}, target, ensure_ascii=False, indent=2)
+            target.flush()
+            os.fsync(target.fileno())
+        temporary.replace(path)
+
+    def _execute_workflow(
+        self, workflow: dict[str, Any], *, output_path: Path,
+        on_wait: Callable[[], None] | None = None,
+        journal_path: Path | None = None, state: dict[str, Any] | None = None,
+    ) -> Path:
+        state = state if state is not None else {}
+        def record(stage: str, **fields: Any) -> None:
+            state.update(stage=stage, **fields)
+            if journal_path:
+                self._save_journal(journal_path, state)
+
+        prompt_id = state.get("prompt_id")
+        try:
+            if not prompt_id:
+                submitted = self._client.post("/prompt", json={"prompt": workflow, "client_id": self.client_id})
+                submitted.raise_for_status()
+                prompt_id = submitted.json()["prompt_id"]
+                if not isinstance(prompt_id, str) or not prompt_id:
+                    raise ValueError("Missing prompt id")
+                record("waiting", prompt_id=prompt_id)
         except (httpx.HTTPError, KeyError, ValueError) as exc:
+            record("submission_unknown")
             raise TemporaryWorkerError("ComfyUI 未能启动这个镜头。") from exc
 
         deadline = time.monotonic() + self.timeout_seconds
@@ -331,12 +430,23 @@ class ComfyUiClient:
                 raise TemporaryWorkerError("读取 ComfyUI 镜头进度失败。") from exc
             if history:
                 status = history.get("status") or {}
-                if status.get("status_str") == "error" or status.get("completed") is False:
+                if status.get("status_str") == "error":
+                    record("generation_failed")
                     raise TemporaryWorkerError("ComfyUI 镜头生成失败。")
+                if status.get("completed") is False:
+                    time.sleep(2)
+                    continue
                 artifact = self._first_artifact(history.get("outputs") or {})
                 if artifact:
-                    return self._download_artifact(artifact, output_path)
+                    record("downloading")
+                    result = self._download_artifact(artifact, output_path)
+                    record("downloaded", output_sha256=hashlib.sha256(result.read_bytes()).hexdigest())
+                    return result
+                if status.get("completed") is True:
+                    record("missing_output")
+                    raise TemporaryWorkerError("ComfyUI 已结束但未返回支持的媒体结果；需核对输出，不能自动重生。")
             time.sleep(2)
+        record("timed_out")
         raise TemporaryWorkerError("ComfyUI 镜头生成超时。")
 
     @staticmethod
@@ -352,6 +462,53 @@ class ComfyUiClient:
                             "type": str(item.get("type", "output")),
                         }
         return None
+
+    def recover_completed_video(
+        self, prompt_id: str, *, expected_prefix: str, expected_sha256: str, output_path: Path,
+    ) -> Path:
+        """Recover an independently reviewed legacy result; never submit a job.
+
+        Prefix, unique video and byte hash must all agree. This is file recovery,
+        not a checkpoint or visual acceptance of the generated scene.
+        """
+        if not re.fullmatch(r"[A-Za-z0-9-]+", prompt_id) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+            raise ConfigurationError("恢复任务编号或结果摘要无效。")
+        try:
+            response = self._client.get(f"/history/{prompt_id}")
+            response.raise_for_status()
+            entry = response.json().get(prompt_id) or {}
+            status = entry.get("status") or {}
+            if status.get("completed") is not True or status.get("status_str") != "success":
+                raise TemporaryWorkerError("该历史任务尚未确认成功，不重新生成。")
+            prompt = entry.get("prompt", [])
+            graph = prompt[2] if isinstance(prompt, list) and len(prompt) > 2 else {}
+            node_ids = [str(key) for key, node in graph.items() if isinstance(node, dict)
+                        and node.get("inputs", {}).get("filename_prefix") == expected_prefix] if isinstance(graph, dict) else []
+            candidates = []
+            for node_id in node_ids:
+                output = (entry.get("outputs") or {}).get(node_id, {})
+                for key in ("videos", "gifs", "images"):
+                    for media in output.get(key) or []:
+                        if isinstance(media, dict) and str(media.get("filename", "")).lower().endswith(".mp4"):
+                            candidates.append({"filename": media["filename"], "subfolder": media.get("subfolder", ""),
+                                               "type": media.get("type", "output")})
+            if len(candidates) != 1:
+                raise ConfigurationError("历史任务未找到唯一匹配的视频，不猜测或重生。")
+            media = self._client.get(f"/view?{urlencode(candidates[0])}")
+            media.raise_for_status()
+            data = media.content
+            if hashlib.sha256(data).hexdigest() != expected_sha256:
+                raise ConfigurationError("恢复视频与已核对摘要不符，保留现有文件。")
+            if output_path.exists():
+                if hashlib.sha256(output_path.read_bytes()).hexdigest() == expected_sha256:
+                    return output_path
+                raise ConfigurationError("恢复目标已有不同文件，拒绝覆盖。")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with output_path.open("xb") as target:
+                target.write(data)
+            return output_path
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            raise TemporaryWorkerError("历史视频恢复失败；没有重新提交生成。") from exc
 
     def _download_artifact(self, artifact: dict[str, str], output_path: Path) -> Path:
         suffix = Path(artifact["filename"]).suffix.lower() or ".bin"

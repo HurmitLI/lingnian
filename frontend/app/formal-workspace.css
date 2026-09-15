@@ -1023,8 +1023,8 @@ html[data-comfort-mode="on"] .app-shell .memory-answer-text { font-size: 19px; }
 .app-shell .memory-hub-main { width: min(1320px, calc(100% - 64px)); }
 .app-shell .memory-hub-header { margin-bottom: 18px; }
 .app-shell .memory-hub-tabs {
-  position: sticky;
-  top: 12px;
+  position: relative;
+  top: 0;
   z-index: 5;
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));

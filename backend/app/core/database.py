@@ -43,6 +43,7 @@ def initialize_database() -> None:
     for relative in ("db", "assets/original", "assets/derived", "quarantine"):
         (settings.resolved_asset_root / relative).mkdir(parents=True, exist_ok=True)
     _upgrade_compatible_runtime_schema()
+    _upgrade_short_scene_schema()
     Base.metadata.create_all(bind=engine)
     _ensure_generation_queue_indexes()
     with SessionLocal() as db:
@@ -103,6 +104,8 @@ def _upgrade_compatible_runtime_schema() -> None:
             "completed_at": "DATETIME",
             "last_error_message": "VARCHAR(500)",
             "production_spec": "JSON NOT NULL DEFAULT '{}'",
+            "production_direction": "JSON NOT NULL DEFAULT '{}'",
+            "idempotency_key": "VARCHAR(100)",
             "progress_detail": "JSON NOT NULL DEFAULT '{}'",
             "result_report": "JSON NOT NULL DEFAULT '{}'",
         }
@@ -114,6 +117,7 @@ def _upgrade_compatible_runtime_schema() -> None:
                         f"ADD COLUMN {name} {definition}"
                     )
                 )
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_generative_request_key ON generative_media_requests(idempotency_key)"))
 
 
 def _ensure_generation_queue_indexes() -> None:
@@ -129,3 +133,25 @@ def _ensure_generation_queue_indexes() -> None:
             "ON generative_media_requests (queued_at)",
         ):
             connection.execute(text(statement))
+
+
+def _upgrade_short_scene_schema() -> None:
+    """Add nullable review/recovery fields to restored pre-integration snapshots."""
+    if not settings.resolved_database_url.startswith("sqlite:///"):
+        return
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        tables = set(inspector.get_table_names())
+        for table in ("short_scene_jobs", "short_scene_reference_jobs"):
+            if table not in tables:
+                continue
+            columns = {c["name"] for c in inspector.get_columns(table)}
+            additions = {"claim_request_key": "VARCHAR(80)"}
+            if table == "short_scene_jobs":
+                additions.update(input_review="JSON NOT NULL DEFAULT '{}'", reference_review_sha256="VARCHAR(64)")
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+            connection.execute(text(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{table}_claim ON {table} (claim_request_key)"))
+            if table == "short_scene_jobs":
+                connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_short_job_reference_review ON short_scene_jobs (reference_review_sha256)"))

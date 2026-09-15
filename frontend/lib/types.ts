@@ -290,6 +290,7 @@ export type TimelineItem = {
     confidence: string;
   }>;
   audio_url: string | null;
+  audio_is_original?: boolean | null;
   image_url: string | null;
   image_asset_id: string | null;
   image_annotation: string | null;
@@ -397,10 +398,12 @@ export type GenerativeMediaRequest = {
   max_cost_cents: number;
   production_spec: {
     target_duration_seconds?: number;
-    visual_strategy?: "stable_montage" | "generated_motion";
+    visual_strategy?: "stable_montage" | "generated_motion" | "native_memory";
+  render_mode?: "documentary" | "native_memory";
     aspect_ratio?: "16:9" | "9:16";
     narrative_style?: string;
     voice_strategy?: string;
+    source_audio_origin?: "synthetic_narration";
     synthetic_voice_allowed?: boolean;
     single_photo_max_screen_ratio?: number;
     subtitles_required?: boolean;

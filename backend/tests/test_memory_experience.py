@@ -423,6 +423,31 @@ def test_documentary_package_has_exact_duration_source_mapping_and_single_photo_
     assert photo_seconds / 45 <= 0.35
 
 
+def test_thirty_second_documentary_plan_forbids_generated_face_motion(client):
+    profile = create_profile(client)
+    story, _ = create_confirmed_story(client, profile, with_photo=True)
+    preview = client.post(
+        f"/api/v1/elder-profiles/{profile['id']}/documentary-plan-preview",
+        json={
+            "story_id": story["id"],
+            "target_duration_seconds": 30,
+            "aspect_ratio": "16:9",
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    plan = preview.json()
+    assert plan["version"] == 3
+    assert plan["production_spec"]["visual_strategy"] == "stable_montage"
+    assert plan["production_spec"]["generated_face_motion_allowed"] is False
+    assert plan["production_spec"]["generated_eye_motion_allowed"] is False
+    assert plan["production_spec"]["generated_head_turn_allowed"] is False
+    assert 3 <= len(plan["scenes"]) <= 6
+    assert sum(scene["duration_seconds"] for scene in plan["scenes"]) == 30
+    context = [scene for scene in plan["scenes"] if scene["kind"] == "documentary_context"]
+    assert context
+    assert all("禁止生成眨眼、眼球、说话、转头" in scene["visual_direction"] for scene in context)
+
+
 def test_local_generation_production_package_has_sources_and_reviewable_storyboard(client):
     profile = create_profile(client)
     story, _ = create_confirmed_story(client, profile, with_photo=True)

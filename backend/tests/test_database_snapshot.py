@@ -54,3 +54,29 @@ def test_restore_skips_corrupt_newer_snapshot(tmp_path):
     assert restore_latest_database_snapshot(restored, snapshot_dir) is True
     with sqlite3.connect(restored) as connection:
         assert connection.execute("SELECT value FROM state").fetchone() == ("safe",)
+
+
+def test_worker_progress_ack_persists_lease_before_restart(monkeypatch):
+    import asyncio
+    import app.main as main
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+    persisted = []
+    monkeypatch.setattr(main.settings, "formal_auth_required", True)
+    monkeypatch.setattr(main, "persist_configured_database_snapshot", lambda _: persisted.append(True))
+
+    async def success(_):
+        return Response(status_code=200)
+
+    async def check():
+        request = Request({"type": "http", "method": "PATCH", "path": "/api/v1/generation-worker/tasks/test/progress", "headers": []})
+        result = await main.formal_database_snapshot_middleware(request, success)
+        assert result.status_code == 200
+        assert persisted == [True]
+        persisted.clear()
+        heartbeat = Request({"type": "http", "method": "POST", "path": "/api/v1/generation-worker/heartbeat", "headers": []})
+        await main.formal_database_snapshot_middleware(heartbeat, success)
+        assert persisted == []
+
+    asyncio.run(check())
